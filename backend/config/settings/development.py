@@ -21,3 +21,6 @@ CORS_ALLOWED_ORIGINS = [
 
 # Email to console in dev
 EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+
+# Disable throttling in dev/test so tests don't get rate-limited
+REST_FRAMEWORK["DEFAULT_THROTTLE_CLASSES"] = []  # noqa: F405

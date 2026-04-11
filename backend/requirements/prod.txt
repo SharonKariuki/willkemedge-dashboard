@@ -1,4 +1,7 @@
 -r base.txt
 
-# Production-only extras land here as we add them (Sentry, Celery, etc.)
-sentry-sdk>=2.0
+# Error tracking
+sentry-sdk[django]>=2.0
+
+# PDF generation (receipts + reports — Day 6)
+weasyprint>=62.0

@@ -12,4 +12,15 @@ export default defineConfig({
   server: {
     port: 5173,
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          "chart-vendor": ["chart.js", "react-chartjs-2"],
+          "form-vendor": ["react-hook-form", "@hookform/resolvers", "zod"],
+          "query-vendor": ["@tanstack/react-query"],
+        },
+      },
+    },
+  },
 });
