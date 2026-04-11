@@ -1,0 +1,11 @@
+3. Africa's Talking (SMS)
+Go to https://account.africastalking.com/auth/register and create an account
+After login, you land on the Sandbox dashboard (sandbox is free, no payment needed)
+Click your username (top right) → Settings → API Key → Generate
+Copy the API key
+Your username is shown in the top-right corner (e.g. sandbox)
+Update backend\.env:
+
+AT_API_KEY=your-api-key-here
+AT_USERNAME=sandbox
+To test SMS in sandbox, go to Sandbox → Launch Simulator → add a test phone number there first (SMS won't go to real phones in sandbox mode — that's expected)

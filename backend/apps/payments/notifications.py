@@ -22,9 +22,16 @@ logger = logging.getLogger(__name__)
 
 def send_sms(phone: str, message: str) -> None:
     """
-    Send an SMS via Africa's Talking.
+    Send an SMS via Africa's Talking REST API (using httpx).
+
+    We call the API directly instead of the `africastalking` SDK because
+    the SDK's `requests` dependency hits an SSL error on Windows with
+    urllib3 2.x.  httpx works reliably.
+
     Phone should be in international format: +2547XXXXXXXX
     """
+    import httpx
+
     api_key = getattr(settings, "AT_API_KEY", "")
     username = getattr(settings, "AT_USERNAME", "sandbox")
 
@@ -32,13 +39,22 @@ def send_sms(phone: str, message: str) -> None:
         logger.warning("SMS skipped (AT_API_KEY not set): to=%s msg=%s", phone, message)
         return
 
+    env = "sandbox" if username == "sandbox" else "live"
+    base = f"https://api.{env}.africastalking.com" if env == "sandbox" else "https://api.africastalking.com"
+
     try:
-        import africastalking
-        africastalking.initialize(username, api_key)
-        sms = africastalking.SMS
-        sender = getattr(settings, "AT_SENDER_ID", None)
-        response = sms.send(message, [phone], sender_id=sender)
-        logger.info("SMS sent to %s: %s", phone, response)
+        resp = httpx.post(
+            f"{base}/version1/messaging",
+            headers={
+                "apiKey": api_key,
+                "Accept": "application/json",
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+            data={"username": username, "to": phone, "message": message},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        logger.info("SMS sent to %s: %s", phone, resp.json())
     except Exception as exc:
         logger.error("SMS failed to %s: %s", phone, exc)
         raise

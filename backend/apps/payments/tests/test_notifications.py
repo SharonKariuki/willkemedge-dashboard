@@ -102,8 +102,12 @@ class TestSendPaymentConfirmation:
 
 
 class TestSendSmsSkippedWithoutApiKey:
-    def test_logs_warning_when_no_api_key(self, caplog):
+    @patch("apps.payments.notifications.settings")
+    def test_logs_warning_when_no_api_key(self, mock_settings, caplog):
         import logging
+
+        mock_settings.AT_API_KEY = ""
+        mock_settings.AT_USERNAME = "sandbox"
 
         from apps.payments.notifications import send_sms
         with caplog.at_level(logging.WARNING):

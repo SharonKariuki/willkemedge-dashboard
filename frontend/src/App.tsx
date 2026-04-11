@@ -8,6 +8,7 @@ import LoginPage from "@/pages/LoginPage";
 import PasswordResetPage from "@/pages/PasswordResetPage";
 import PasswordResetConfirmPage from "@/pages/PasswordResetConfirmPage";
 import PaymentsPage from "@/pages/PaymentsPage";
+import ReportsPage from "@/pages/ReportsPage";
 import TenantsPage from "@/pages/TenantsPage";
 import UnitsPage from "@/pages/UnitsPage";
 
@@ -31,6 +32,7 @@ export default function App() {
         <Route path="/units" element={<UnitsPage />} />
         <Route path="/tenants" element={<TenantsPage />} />
         <Route path="/payments" element={<PaymentsPage />} />
+        <Route path="/reports" element={<ReportsPage />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
