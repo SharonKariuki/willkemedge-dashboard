@@ -11,6 +11,9 @@ dj-database-url>=2.2
 # Config
 python-decouple>=3.8
 
+# Security
+django-ratelimit>=4.1
+
 # Production server / static
 gunicorn>=22.0
 whitenoise>=6.7
