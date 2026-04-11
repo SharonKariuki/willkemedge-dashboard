@@ -16,7 +16,10 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 # ---------------------------------------------------------------------------
 # Core
 # ---------------------------------------------------------------------------
-SECRET_KEY = config("DJANGO_SECRET_KEY", default="insecure-dev-key-change-me")
+SECRET_KEY = config(
+    "DJANGO_SECRET_KEY",
+    default="insecure-dev-key-change-me-at-least-32-bytes-long-aaaaaaaa",
+)
 DEBUG = config("DJANGO_DEBUG", default=False, cast=bool)
 ALLOWED_HOSTS = config("DJANGO_ALLOWED_HOSTS", default="localhost,127.0.0.1", cast=Csv())
 
@@ -35,6 +38,7 @@ DJANGO_APPS = [
 THIRD_PARTY_APPS = [
     "rest_framework",
     "rest_framework_simplejwt",
+    "rest_framework_simplejwt.token_blacklist",
     "corsheaders",
 ]
 
