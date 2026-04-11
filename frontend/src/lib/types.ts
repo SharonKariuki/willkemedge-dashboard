@@ -25,7 +25,7 @@ export interface Unit {
   label: string;
   floor: number;
   unit_type: UnitType;
-  monthly_rent: string; // decimal from DRF
+  monthly_rent: string;
   status: UnitStatus;
   status_display: string;
   notes: string;
@@ -56,4 +56,49 @@ export interface UnitStatusSummary {
   occupied_partial: number;
   occupied_unpaid: number;
   arrears: number;
+}
+
+// --- Tenants ---
+
+export type TenantStatus = "active" | "moved_out" | "archived";
+
+export type DocumentType = "id_front" | "id_back" | "passport" | "lease" | "other";
+
+export interface TenantDocument {
+  id: number;
+  tenant: number;
+  doc_type: DocumentType;
+  doc_type_display: string;
+  file: string;
+  original_name: string;
+  uploaded_at: string;
+}
+
+export interface TenantListItem {
+  id: number;
+  full_name: string;
+  first_name: string;
+  last_name: string;
+  phone: string;
+  unit: number;
+  unit_label: string;
+  building_name: string;
+  monthly_rent: string;
+  status: TenantStatus;
+  status_display: string;
+  move_in_date: string;
+  move_out_date: string | null;
+}
+
+export interface TenantDetail extends TenantListItem {
+  id_number: string;
+  email: string;
+  emergency_contact: string;
+  emergency_phone: string;
+  deposit_paid: string;
+  move_out_notes: string;
+  notes: string;
+  documents: TenantDocument[];
+  created_at: string;
+  updated_at: string;
 }
