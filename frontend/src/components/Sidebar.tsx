@@ -1,4 +1,4 @@
-import { Building2, LayoutDashboard, Home, Users, CreditCard, BarChart3 } from "lucide-react";
+import { Building2, LayoutDashboard, Home, Users, CreditCard, BarChart3, Settings } from "lucide-react";
 import { NavLink } from "react-router-dom";
 
 const NAV_ITEMS = [
@@ -8,6 +8,7 @@ const NAV_ITEMS = [
   { to: "/tenants", label: "Tenants", icon: Users },
   { to: "/payments", label: "Payments", icon: CreditCard },
   { to: "/reports", label: "Reports", icon: BarChart3 },
+  { to: "/settings", label: "Settings", icon: Settings },
 ];
 
 export default function Sidebar() {

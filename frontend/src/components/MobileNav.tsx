@@ -5,6 +5,7 @@ import {
   Home,
   LayoutDashboard,
   Menu,
+  Settings,
   Users,
   X,
 } from "lucide-react";
@@ -18,6 +19,7 @@ const NAV_ITEMS = [
   { to: "/tenants", label: "Tenants", icon: Users },
   { to: "/payments", label: "Payments", icon: CreditCard },
   { to: "/reports", label: "Reports", icon: BarChart3 },
+  { to: "/settings", label: "Settings", icon: Settings },
 ];
 
 export default function MobileNav() {
