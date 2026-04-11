@@ -61,3 +61,23 @@ class UserSerializer(serializers.ModelSerializer):
         model = User
         fields = ("id", "email", "username", "date_joined", "last_login")
         read_only_fields = fields
+
+
+# ---------------------------------------------------------------------------
+# Password Reset Serializers
+# ---------------------------------------------------------------------------
+
+class PasswordResetRequestSerializer(serializers.Serializer):
+    """Accepts an email address and triggers the reset flow."""
+    email = serializers.EmailField()
+
+
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    """Accepts a token + new password and completes the reset."""
+    token    = serializers.CharField()
+    password = serializers.CharField(write_only=True, min_length=12, trim_whitespace=False)
+
+    def validate_password(self, value):
+        from django.contrib.auth.password_validation import validate_password
+        validate_password(value)
+        return value

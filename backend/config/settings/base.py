@@ -40,12 +40,14 @@ THIRD_PARTY_APPS = [
     "rest_framework_simplejwt",
     "rest_framework_simplejwt.token_blacklist",
     "corsheaders",
+    "django_celery_beat",
 ]
 
 LOCAL_APPS = [
     "apps.accounts",
     "apps.buildings",
     "apps.tenants",
+    "apps.payments",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -153,3 +155,40 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 # ---------------------------------------------------------------------------
 CORS_ALLOWED_ORIGINS: list[str] = []
 CORS_ALLOW_CREDENTIALS = True
+
+# ---------------------------------------------------------------------------
+# Celery
+# ---------------------------------------------------------------------------
+CELERY_BROKER_URL = config("REDIS_URL", default="redis://localhost:6379/0")
+CELERY_RESULT_BACKEND = config("REDIS_URL", default="redis://localhost:6379/0")
+CELERY_ACCEPT_CONTENT = ["json"]
+CELERY_TASK_SERIALIZER = "json"
+CELERY_RESULT_SERIALIZER = "json"
+CELERY_TIMEZONE = "Africa/Nairobi"
+CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
+
+# ---------------------------------------------------------------------------
+# M-Pesa Daraja
+# ---------------------------------------------------------------------------
+MPESA_CONSUMER_KEY = config("MPESA_CONSUMER_KEY", default="")
+MPESA_CONSUMER_SECRET = config("MPESA_CONSUMER_SECRET", default="")
+MPESA_SHORTCODE = config("MPESA_SHORTCODE", default="")
+MPESA_ENV = config("MPESA_ENV", default="sandbox")
+MPESA_CONFIRM_URL = config("MPESA_CONFIRM_URL", default="")
+MPESA_VALIDATE_URL = config("MPESA_VALIDATE_URL", default="")
+
+# ---------------------------------------------------------------------------
+# Notifications
+# ---------------------------------------------------------------------------
+AT_API_KEY = config("AT_API_KEY", default="")
+AT_USERNAME = config("AT_USERNAME", default="sandbox")
+AT_SENDER_ID = config("AT_SENDER_ID", default="")
+SENDGRID_API_KEY = config("SENDGRID_API_KEY", default="")
+DEFAULT_FROM_EMAIL = config("DEFAULT_FROM_EMAIL", default="noreply@willkemedge.co.ke")
+FRONTEND_URL = config("FRONTEND_URL", default="http://localhost:5173")
+
+# ---------------------------------------------------------------------------
+# Bank webhook
+# ---------------------------------------------------------------------------
+BANK_WEBHOOK_SECRET = config("BANK_WEBHOOK_SECRET", default="")
+BANK_API_KEY = config("BANK_API_KEY", default="")
