@@ -31,6 +31,17 @@ class Command(BaseCommand):
         username = os.environ.get("INITIAL_ADMIN_USERNAME", "").strip()
         password = os.environ.get("INITIAL_ADMIN_PASSWORD", "")
 
+        # Skip silently if no env vars are set — makes this safe to leave
+        # in the build command permanently. The command only does something
+        # on deploys where the INITIAL_ADMIN_* vars are temporarily present.
+        if not (email or username or password):
+            self.stdout.write(
+                self.style.NOTICE(
+                    "create_initial_admin: no INITIAL_ADMIN_* env vars set, skipping."
+                )
+            )
+            return
+
         missing = [
             name for name, val in [
                 ("INITIAL_ADMIN_EMAIL", email),
