@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
-import type { Building, BuildingDetail } from "@/lib/types";
+import type { Building, BuildingDetail, Unit } from "@/lib/types";
 
 export function useBuildings() {
   return useQuery<Building[]>({
@@ -45,6 +45,30 @@ export function useUpdateBuilding(id: number | string) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["buildings"] });
       qc.invalidateQueries({ queryKey: ["buildings", id] });
+    },
+  });
+}
+
+export function useDeleteBuilding() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: number | string) => {
+      await api.delete(`/buildings/${id}/`);
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["buildings"] }),
+  });
+}
+
+export function useBulkCreateUnits(buildingId: number | string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (units: Partial<Unit>[]) => {
+      const { data } = await api.post(`/buildings/${buildingId}/bulk-create-units/`, { units });
+      return data as BuildingDetail;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["buildings"] });
+      qc.invalidateQueries({ queryKey: ["units"] });
     },
   });
 }

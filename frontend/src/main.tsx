@@ -8,6 +8,17 @@ import App from "./App";
 import { AuthProvider } from "./hooks/useAuth";
 import "./index.css";
 
+// Apply saved theme before first paint to avoid flash.
+try {
+  const saved = localStorage.getItem("willkemedge-theme");
+  const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+  if (saved === "dark" || (!saved && prefersDark)) {
+    document.documentElement.classList.add("dark");
+  }
+} catch {
+  // ignore
+}
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
