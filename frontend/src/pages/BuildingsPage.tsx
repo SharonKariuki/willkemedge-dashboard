@@ -30,7 +30,7 @@ import {
   useDeleteBuilding,
   useUpdateBuilding,
 } from "@/hooks/useBuildings";
-import type { Building, Unit } from "@/lib/types";
+import type { Building, Unit, UnitType } from "@/lib/types";
 
 // ─── Zod schemas ────────────────────────────────────────────────────────────
 
@@ -308,7 +308,7 @@ function CreateBuildingWizard({ onClose }: { onClose: () => void }) {
         unitsData.map((u) => ({
           label: u.label,
           floor: u.floor,
-          unit_type: u.unit_type,
+          unit_type: u.unit_type as UnitType,
           monthly_rent: String(u.monthly_rent),
           notes: u.notes || "",
         }))
