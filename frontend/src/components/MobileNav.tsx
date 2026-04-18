@@ -5,6 +5,7 @@ import {
   Home,
   LayoutDashboard,
   Menu,
+  Receipt,
   Settings,
   Users,
   X,
@@ -18,6 +19,7 @@ const NAV_ITEMS = [
   { to: "/units", label: "Units", icon: Home },
   { to: "/tenants", label: "Tenants", icon: Users },
   { to: "/payments", label: "Payments", icon: CreditCard },
+  { to: "/expenses", label: "Expenses", icon: Receipt },
   { to: "/reports", label: "Reports", icon: BarChart3 },
   { to: "/settings", label: "Settings", icon: Settings },
 ];

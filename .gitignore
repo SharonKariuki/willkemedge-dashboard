@@ -77,3 +77,6 @@ frontend/.turbo/
 frontend/.eslintcache
 frontend/*.tsbuildinfo
 frontend/.cache/
+
+# ----- Claude Code local settings -----
+.claude/settings.local.json

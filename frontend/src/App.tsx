@@ -4,6 +4,7 @@ import AuthLayout from "@/components/AuthLayout";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import BuildingsPage from "@/pages/BuildingsPage";
 import DashboardPage from "@/pages/DashboardPage";
+import ExpensesPage from "@/pages/ExpensesPage";
 import LoginPage from "@/pages/LoginPage";
 import PasswordResetPage from "@/pages/PasswordResetPage";
 import PasswordResetConfirmPage from "@/pages/PasswordResetConfirmPage";
@@ -33,6 +34,7 @@ export default function App() {
         <Route path="/units" element={<UnitsPage />} />
         <Route path="/tenants" element={<TenantsPage />} />
         <Route path="/payments" element={<PaymentsPage />} />
+        <Route path="/expenses" element={<ExpensesPage />} />
         <Route path="/reports" element={<ReportsPage />} />
         <Route path="/settings" element={<SettingsPage />} />
       </Route>

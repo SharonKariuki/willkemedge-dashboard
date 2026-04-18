@@ -66,3 +66,43 @@ export function useMoveLog() {
     },
   });
 }
+
+export function useProfitLoss(month: number, year: number) {
+  return useQuery({
+    queryKey: ["reports", "profit-loss", "monthly", month, year],
+    queryFn: async () => {
+      const { data } = await api.get("/reports/profit-loss/", { params: { month, year, mode: "monthly" } });
+      return data;
+    },
+  });
+}
+
+export function useProfitLossAnnual(year: number) {
+  return useQuery({
+    queryKey: ["reports", "profit-loss", "annual", year],
+    queryFn: async () => {
+      const { data } = await api.get("/reports/profit-loss/", { params: { year, mode: "annual" } });
+      return data;
+    },
+  });
+}
+
+export function useTrialBalance(month: number, year: number) {
+  return useQuery({
+    queryKey: ["reports", "trial-balance", month, year],
+    queryFn: async () => {
+      const { data } = await api.get("/reports/trial-balance/", { params: { month, year } });
+      return data;
+    },
+  });
+}
+
+export function useExpenseBreakdown(month: number, year: number) {
+  return useQuery({
+    queryKey: ["reports", "expense-breakdown", month, year],
+    queryFn: async () => {
+      const { data } = await api.get("/reports/expense-breakdown/", { params: { month, year } });
+      return data;
+    },
+  });
+}

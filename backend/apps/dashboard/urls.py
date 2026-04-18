@@ -5,10 +5,13 @@ from .views import (
     AnnualIncomeSummaryView,
     ArrearsReportView,
     DashboardSummaryView,
+    ExpenseBreakdownReportView,
     MonthlyCollectionReportView,
     MoveInOutLogView,
     OccupancyHistoryView,
+    ProfitLossReportView,
     TenantPaymentHistoryView,
+    TrialBalanceView,
 )
 
 app_name = "dashboard"
@@ -21,4 +24,7 @@ urlpatterns = [
     path("reports/tenant-history/<int:tenant_id>/", TenantPaymentHistoryView.as_view(), name="tenant-history"),
     path("reports/occupancy/", OccupancyHistoryView.as_view(), name="occupancy"),
     path("reports/move-log/", MoveInOutLogView.as_view(), name="move-log"),
+    path("reports/profit-loss/", ProfitLossReportView.as_view(), name="profit-loss"),
+    path("reports/trial-balance/", TrialBalanceView.as_view(), name="trial-balance"),
+    path("reports/expense-breakdown/", ExpenseBreakdownReportView.as_view(), name="expense-breakdown"),
 ]
