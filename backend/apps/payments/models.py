@@ -7,6 +7,7 @@ a reverse entry.
 
 Arrears track outstanding balances per tenant per month.
 """
+from django.conf import settings
 from django.db import models
 
 from apps.tenants.models import Tenant
@@ -96,3 +97,61 @@ class Arrears(models.Model):
     def __str__(self) -> str:
         status = "cleared" if self.is_cleared else f"KES {self.balance} owed"
         return f"{self.tenant} — {self.period_month}/{self.period_year} ({status})"
+
+
+class NotificationChannel(models.TextChoices):
+    SMS = "sms", "SMS"
+    EMAIL = "email", "Email"
+    BOTH = "both", "SMS + Email"
+
+
+class NotificationStatus(models.TextChoices):
+    PENDING = "pending", "Pending"
+    SENT = "sent", "Sent"
+    FAILED = "failed", "Failed"
+
+
+class TenantNotification(models.Model):
+    """A message sent (or attempted) to a tenant by the admin."""
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.PROTECT,
+        related_name="notifications_received",
+    )
+    channel = models.CharField(
+        max_length=10,
+        choices=NotificationChannel.choices,
+        default=NotificationChannel.SMS,
+    )
+    subject = models.CharField(max_length=200, blank=True)
+    body = models.TextField()
+
+    status = models.CharField(
+        max_length=10,
+        choices=NotificationStatus.choices,
+        default=NotificationStatus.PENDING,
+    )
+    sent_at = models.DateTimeField(null=True, blank=True)
+    error = models.TextField(blank=True)
+
+    template_key = models.CharField(
+        max_length=50,
+        blank=True,
+        help_text="Identifier of the template used (blank if custom).",
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="notifications_sent",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "payments_notification"
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.get_channel_display()} → {self.tenant} ({self.status})"

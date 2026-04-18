@@ -128,3 +128,19 @@ def payment_email_html(tenant_name: str, amount, unit_label: str,
   </table>
   <p style="margin-top:16px">Dr. Osoro Properties</p>
 </body></html>"""
+
+
+def custom_email_html(subject: str, body: str) -> str:
+    """Wrap a plain-text body as a simple branded HTML email."""
+    paragraphs = "".join(
+        f"<p style=\"margin:0 0 12px\">{line}</p>"
+        for line in body.strip().split("\n\n")
+        if line.strip()
+    )
+    return f"""
+<html><body style="font-family:sans-serif;color:#1e293b;padding:24px;max-width:560px">
+  <h2 style="color:#16a34a;margin:0 0 16px">{subject}</h2>
+  {paragraphs}
+  <hr style="border:none;border-top:1px solid #e2e8f0;margin:24px 0" />
+  <p style="font-size:12px;color:#64748b;margin:0">Dr. Osoro Properties</p>
+</body></html>"""

@@ -73,7 +73,7 @@ RefreshView = TokenRefreshView
 class PasswordResetRequestView(APIView):
     """
     POST /api/auth/password-reset/
-    Body: {"email": "owner@example.com"}
+    Body: {"email": "william@gmail.com"}
 
     Generates a PasswordResetToken, emails the link via SendGrid.
     Always returns 200 regardless of whether the email exists

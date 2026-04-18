@@ -1,54 +1,91 @@
-/**
- * Reports page with tab navigation across 9 report types.
- */
-import {
-  ArcElement,
-  BarElement,
-  CategoryScale,
-  Chart as ChartJS,
-  Legend,
-  LinearScale,
-  Title,
-  Tooltip,
-} from "chart.js";
-
+import { Download, FileText } from "lucide-react";
 import { useState } from "react";
-import { Bar, Doughnut } from "react-chartjs-2";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Line,
+  LineChart,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip as RcTooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 
+import {
+  Badge,
+  Button,
+  Card,
+  CardHeader,
+  CardTitle,
+  EmptyState,
+  PageHeader,
+  Skeleton,
+  Table,
+  TBody,
+  TD,
+  TH,
+  THead,
+  TR,
+} from "@/components/ui";
 import { useBuildings } from "@/hooks/useBuildings";
 import { useTenants } from "@/hooks/useTenants";
 import {
   useAnnualIncome,
   useArrearsReport,
   useExpenseBreakdown,
-  useMoveLog,
   useMonthlyCollection,
+  useMoveLog,
   useOccupancyReport,
   useProfitLoss,
   useProfitLossAnnual,
   useTenantHistory,
   useTrialBalance,
 } from "@/hooks/useReports";
-
-ChartJS.register(CategoryScale, LinearScale, BarElement, ArcElement, Title, Tooltip, Legend);
+import { cn } from "@/lib/cn";
 
 const TABS = [
-  { key: "monthly", label: "Monthly Collection" },
-  { key: "annual", label: "Annual Income" },
+  { key: "monthly", label: "Monthly" },
+  { key: "annual", label: "Annual" },
   { key: "arrears", label: "Arrears" },
-  { key: "tenant", label: "Tenant History" },
+  { key: "tenant", label: "Tenant" },
   { key: "occupancy", label: "Occupancy" },
   { key: "moves", label: "Move Log" },
-  { key: "pnl", label: "Profit & Loss" },
+  { key: "pnl", label: "P&L" },
   { key: "trial", label: "Trial Balance" },
   { key: "breakdown", label: "Expense Breakdown" },
 ] as const;
 
 type TabKey = (typeof TABS)[number]["key"];
 
-// ---------------------------------------------------------------------------
-// Export helpers
-// ---------------------------------------------------------------------------
+const CHART_COLORS = [
+  "rgb(216,154,58)",   // amber gold (primary)
+  "rgb(170,100,75)",   // deep rust
+  "rgb(70,65,60)",     // charcoal
+  "rgb(140,120,105)",  // taupe
+  "rgb(200,195,190)",  // warm grey
+  "rgb(180,124,40)",   // deep gold
+  "rgb(225,220,214)",  // light warm grey
+  "rgb(105,88,75)",    // espresso taupe
+];
+
+const GRID_STROKE = "rgba(128,132,150,0.15)";
+const AXIS_TICK = { fill: "rgb(140,144,158)", fontSize: 11 };
+const TOOLTIP_STYLE = {
+  background: "rgba(255,255,255,0.95)",
+  border: "1px solid rgba(0,0,0,0.06)",
+  borderRadius: 12,
+  fontSize: 12,
+  boxShadow: "0 10px 30px rgba(0,0,0,0.08)",
+};
+
+const selectCls =
+  "glass rounded-md px-3 py-2 text-sm text-ink-900 focus:outline-none";
+
+// ─── Export helpers ─────────────────────────────────────────────────────────
 function exportCSV(filename: string, headers: string[], rows: (string | number)[][]) {
   const lines = [headers.join(","), ...rows.map((r) => r.map((c) => `"${c}"`).join(","))];
   const blob = new Blob([lines.join("\n")], { type: "text/csv" });
@@ -64,13 +101,15 @@ function exportPDF(title: string, headers: string[], rows: (string | number)[][]
   const html = `
     <html><head><title>${title}</title>
     <style>
-      body { font-family: Arial, sans-serif; font-size: 12px; margin: 24px; }
-      h1 { font-size: 16px; margin-bottom: 16px; }
+      body { font-family: -apple-system, system-ui, sans-serif; font-size: 12px; margin: 24px; color: #181821; }
+      h1 { font-size: 18px; margin-bottom: 6px; letter-spacing: -0.01em; }
+      .sub { color: #636776; font-size: 11px; margin-bottom: 20px; text-transform: uppercase; letter-spacing: 0.14em; }
       table { width: 100%; border-collapse: collapse; }
-      th { background: #f1f5f9; text-align: left; padding: 8px; font-size: 11px; text-transform: uppercase; }
-      td { padding: 8px; border-bottom: 1px solid #e2e8f0; }
+      th { background: #F0EDE5; text-align: left; padding: 10px 12px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; color: #636776; }
+      td { padding: 10px 12px; border-bottom: 1px solid #E1E1E6; }
     </style>
     </head><body>
+    <div class="sub">Willkemedge Property Suite</div>
     <h1>${title}</h1>
     <table>
       <thead><tr>${headers.map((h) => `<th>${h}</th>`).join("")}</tr></thead>
@@ -84,35 +123,62 @@ function exportPDF(title: string, headers: string[], rows: (string | number)[][]
   win.print();
 }
 
-// ---------------------------------------------------------------------------
-// Page
-// ---------------------------------------------------------------------------
+function ExportBar({
+  title,
+  headers,
+  rows,
+  filename,
+}: {
+  title: string;
+  headers: string[];
+  rows: (string | number)[][];
+  filename: string;
+}) {
+  return (
+    <div className="flex gap-2">
+      <Button variant="glass" size="sm" onClick={() => exportCSV(filename, headers, rows)}>
+        <Download className="h-3.5 w-3.5" />
+        CSV
+      </Button>
+      <Button variant="glass" size="sm" onClick={() => exportPDF(title, headers, rows)}>
+        <FileText className="h-3.5 w-3.5" />
+        PDF
+      </Button>
+    </div>
+  );
+}
+
+// ─── Page ───────────────────────────────────────────────────────────────────
 export default function ReportsPage() {
   const [tab, setTab] = useState<TabKey>("monthly");
 
   return (
     <div className="space-y-6">
-      <h2 className="text-2xl font-bold text-slate-900 dark:text-slate-100">Reports</h2>
+      <PageHeader
+        eyebrow="Analytics"
+        title="Reports"
+        description="Financial statements, collections, occupancy — export any view as CSV or PDF."
+      />
 
-      {/* Tab nav */}
-      <div className="flex flex-wrap gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-800">
+      {/* Segmented tabs — horizontally scrollable on mobile */}
+      <div className="glass -mx-1 flex gap-1 overflow-x-auto rounded-xl p-1">
         {TABS.map((t) => (
           <button
             key={t.key}
             onClick={() => setTab(t.key)}
-            className={`rounded-lg px-3 py-2 text-xs font-medium transition-colors ${
+            className={cn(
+              "whitespace-nowrap rounded-md px-4 py-2 text-xs font-medium transition-all",
               tab === t.key
-                ? "bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-slate-100"
-                : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100"
-            }`}
+                ? "bg-ink-900 text-canvas shadow-float dark:bg-ink-100 dark:text-canvas"
+                : "text-ink-600 hover:text-ink-900"
+            )}
           >
             {t.label}
           </button>
         ))}
       </div>
 
-      {/* Tab content */}
-      <div className="rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-900">
+      <div className="animate-fade-up">
         {tab === "monthly" && <MonthlyTab />}
         {tab === "annual" && <AnnualTab />}
         {tab === "arrears" && <ArrearsTab />}
@@ -127,9 +193,7 @@ export default function ReportsPage() {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Existing tabs (unchanged)
-// ---------------------------------------------------------------------------
+// ─── Tabs ───────────────────────────────────────────────────────────────────
 function MonthlyTab() {
   const now = new Date();
   const [month, setMonth] = useState(now.getMonth() + 1);
@@ -137,35 +201,56 @@ function MonthlyTab() {
   const { data, isLoading } = useMonthlyCollection(month, year);
 
   const headers = ["Tenant", "Unit", "Amount", "Source", "Date", "Reference"];
-  const rows = data?.payments.map((p: Record<string, unknown>) => [
-    p.tenant, p.unit, `KES ${Number(p.amount).toLocaleString()}`, p.source, p.date, p.reference || "—",
-  ]) ?? [];
+  const rows =
+    data?.payments.map((p: Record<string, unknown>) => [
+      p.tenant,
+      p.unit,
+      `KES ${Number(p.amount).toLocaleString()}`,
+      p.source,
+      p.date,
+      p.reference || "—",
+    ]) ?? [];
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-3">
-        <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">Monthly Collection</h3>
-        <select value={month} onChange={(e) => setMonth(Number(e.target.value))} className="rounded border px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100">
-          {Array.from({ length: 12 }, (_, i) => <option key={i} value={i + 1}>{i + 1}</option>)}
-        </select>
-        <input type="number" value={year} onChange={(e) => setYear(Number(e.target.value))} className="w-20 rounded border px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100" />
-        {data && (
-          <div className="ml-auto flex gap-2">
-            <button onClick={() => exportCSV(`collection-${month}-${year}.csv`, headers, rows)} className="rounded border px-2 py-1 text-xs hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800">Export CSV</button>
-            <button onClick={() => exportPDF(`Monthly Collection ${month}/${year}`, headers, rows)} className="rounded border px-2 py-1 text-xs hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800">Export PDF</button>
-          </div>
-        )}
-      </div>
-      {isLoading ? <p className="text-slate-500">Loading...</p> : data && (
-        <>
-          <div className="flex gap-6 text-sm">
-            <span className="font-medium text-slate-700 dark:text-slate-300">Total: <strong className="text-green-700">KES {data.total.toLocaleString()}</strong></span>
-            <span className="text-slate-500">{data.count} payments</span>
-          </div>
-          <ReportTable headers={headers} rows={rows} />
-        </>
-      )}
-    </div>
+    <Card variant="glass" padding="md">
+      <CardHeader>
+        <div>
+          <CardTitle>Monthly Collection</CardTitle>
+          {data && (
+            <p className="mt-1 text-xs text-ink-500">
+              {data.count} payments · Total{" "}
+              <span className="font-medium text-sage-700 dark:text-sage-400">
+                KES {data.total.toLocaleString()}
+              </span>
+            </p>
+          )}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <select value={month} onChange={(e) => setMonth(Number(e.target.value))} className={selectCls}>
+            {Array.from({ length: 12 }, (_, i) => (
+              <option key={i + 1} value={i + 1}>
+                {new Date(2000, i).toLocaleString("default", { month: "short" })}
+              </option>
+            ))}
+          </select>
+          <input
+            type="number"
+            value={year}
+            onChange={(e) => setYear(Number(e.target.value))}
+            className={selectCls + " w-24"}
+          />
+          {data && (
+            <ExportBar
+              title={`Monthly Collection ${month}/${year}`}
+              headers={headers}
+              rows={rows}
+              filename={`collection-${month}-${year}.csv`}
+            />
+          )}
+        </div>
+      </CardHeader>
+      {isLoading ? <Skeleton className="h-48" /> : <ReportTable headers={headers} rows={rows} />}
+    </Card>
   );
 }
 
@@ -174,59 +259,99 @@ function AnnualTab() {
   const { data, isLoading } = useAnnualIncome(year);
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-3">
-        <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">Annual Income</h3>
-        <input type="number" value={year} onChange={(e) => setYear(Number(e.target.value))} className="w-20 rounded border px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100" />
-      </div>
-      {isLoading ? <p className="text-slate-500">Loading...</p> : data && (
-        <>
-          <p className="text-sm font-medium text-slate-700 dark:text-slate-300">Grand Total: <strong className="text-green-700">KES {data.grand_total.toLocaleString()}</strong></p>
-          <Bar
-            data={{
-              labels: data.monthly.map((m: { month: number }) => `Month ${m.month}`),
-              datasets: [{ label: "Income (KES)", data: data.monthly.map((m: { total: number }) => m.total), backgroundColor: "#2563eb" }],
-            }}
-            options={{ responsive: true, plugins: { legend: { display: false } } }}
-          />
-        </>
-      )}
-    </div>
+    <Card variant="glass" padding="md">
+      <CardHeader>
+        <div>
+          <CardTitle>Annual Income · {year}</CardTitle>
+          {data && (
+            <p className="mt-1 text-xs text-ink-500">
+              Grand total{" "}
+              <span className="font-medium text-sage-700 dark:text-sage-400">
+                KES {data.grand_total.toLocaleString()}
+              </span>
+            </p>
+          )}
+        </div>
+        <input
+          type="number"
+          value={year}
+          onChange={(e) => setYear(Number(e.target.value))}
+          className={selectCls + " w-24"}
+        />
+      </CardHeader>
+      {isLoading ? (
+        <Skeleton className="h-64" />
+      ) : data ? (
+        <div className="h-[320px]">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart
+              data={data.monthly.map((m: { month: number; total: number }) => ({
+                month: new Date(2000, m.month - 1).toLocaleString("default", { month: "short" }),
+                total: m.total,
+              }))}
+              margin={{ top: 10, right: 8, left: -20, bottom: 0 }}
+            >
+              <defs>
+                <linearGradient id="barGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="rgb(216,154,58)" stopOpacity={0.95} />
+                  <stop offset="100%" stopColor="rgb(216,154,58)" stopOpacity={0.5} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} vertical={false} />
+              <XAxis dataKey="month" tickLine={false} axisLine={false} tick={AXIS_TICK} />
+              <YAxis tickLine={false} axisLine={false} tick={AXIS_TICK} />
+              <RcTooltip
+                cursor={{ fill: "rgba(107,142,127,0.06)" }}
+                contentStyle={TOOLTIP_STYLE}
+                formatter={(v) => [`KES ${Number(v).toLocaleString()}`, "Income"]}
+              />
+              <Bar dataKey="total" fill="url(#barGrad)" radius={[8, 8, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      ) : null}
+    </Card>
   );
 }
 
 function ArrearsTab() {
   const { data, isLoading } = useArrearsReport();
-
   const headers = ["Tenant", "Unit", "Period", "Expected", "Paid", "Balance"];
-  const rows = data?.arrears.map((a: Record<string, unknown>) => [
-    a.tenant, a.unit, a.period,
-    `KES ${Number(a.expected).toLocaleString()}`,
-    `KES ${Number(a.paid).toLocaleString()}`,
-    `KES ${Number(a.balance).toLocaleString()}`,
-  ]) ?? [];
+  const rows =
+    data?.arrears.map((a: Record<string, unknown>) => [
+      a.tenant,
+      a.unit,
+      a.period,
+      `KES ${Number(a.expected).toLocaleString()}`,
+      `KES ${Number(a.paid).toLocaleString()}`,
+      `KES ${Number(a.balance).toLocaleString()}`,
+    ]) ?? [];
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-3">
-        <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">Outstanding Arrears</h3>
+    <Card variant="glass" padding="md">
+      <CardHeader>
+        <div>
+          <CardTitle>Outstanding Arrears</CardTitle>
+          {data && (
+            <p className="mt-1 text-xs text-ink-500">
+              <span className="font-medium text-status-unpaid">
+                KES {data.total_balance.toLocaleString()}
+              </span>{" "}
+              across {data.count} record{data.count === 1 ? "" : "s"}
+            </p>
+          )}
+        </div>
         {data && (
-          <div className="ml-auto flex gap-2">
-            <button onClick={() => exportCSV("arrears.csv", headers, rows)} className="rounded border px-2 py-1 text-xs hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800">Export CSV</button>
-            <button onClick={() => exportPDF("Outstanding Arrears", headers, rows)} className="rounded border px-2 py-1 text-xs hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800">Export PDF</button>
-          </div>
+          <ExportBar
+            title="Outstanding Arrears"
+            headers={headers}
+            rows={rows}
+            filename="arrears.csv"
+          />
         )}
-      </div>
-      {isLoading ? <p className="text-slate-500">Loading...</p> : data && (
-        <>
-          <div className="flex gap-6 text-sm">
-            <span className="font-medium text-red-700">Total: KES {data.total_balance.toLocaleString()}</span>
-            <span className="text-slate-500">{data.count} records</span>
-          </div>
-          <ReportTable headers={headers} rows={rows} />
-        </>
-      )}
-    </div>
+      </CardHeader>
+      {isLoading ? <Skeleton className="h-48" /> : <ReportTable headers={headers} rows={rows} />}
+    </Card>
   );
 }
 
@@ -236,92 +361,125 @@ function TenantTab() {
   const { data, isLoading } = useTenantHistory(selectedTenant || null);
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-3">
-        <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">Tenant Payment History</h3>
-        <select value={selectedTenant} onChange={(e) => setSelectedTenant(e.target.value)} className="rounded border px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100">
-          <option value="">Select tenant...</option>
-          {tenants?.map((t) => <option key={t.id} value={t.id}>{t.full_name}</option>)}
+    <Card variant="glass" padding="md">
+      <CardHeader>
+        <CardTitle>Tenant Payment History</CardTitle>
+        <select
+          value={selectedTenant}
+          onChange={(e) => setSelectedTenant(e.target.value)}
+          className={selectCls}
+        >
+          <option value="">Select tenant…</option>
+          {tenants?.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.full_name}
+            </option>
+          ))}
         </select>
-      </div>
-      {selectedTenant && isLoading && <p className="text-slate-500">Loading...</p>}
+      </CardHeader>
+      {selectedTenant && isLoading && <Skeleton className="h-48" />}
       {data && (
-        <>
-          <p className="text-sm text-slate-700 dark:text-slate-300">
-            {data.tenant.name} — {data.tenant.unit} — Rent: KES {data.tenant.monthly_rent.toLocaleString()}
-          </p>
-          <p className="text-sm font-medium text-green-700">Total Paid: KES {data.total_paid.toLocaleString()}</p>
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <div>
+              <p className="font-display text-xl font-semibold text-ink-900">
+                {data.tenant.name}
+              </p>
+              <p className="text-xs text-ink-500">{data.tenant.unit}</p>
+            </div>
+            <div className="ml-auto text-right">
+              <p className="text-[11px] uppercase tracking-wider text-ink-500">Total paid</p>
+              <p className="font-display text-2xl font-semibold text-sage-700 dark:text-sage-400">
+                KES {data.total_paid.toLocaleString()}
+              </p>
+            </div>
+          </div>
           {data.chart_data.length > 0 && (
-            <Bar
-              data={{
-                labels: data.chart_data.map((d: { month: string }) => d.month),
-                datasets: [
-                  {
-                    label: "Paid",
-                    data: data.chart_data.map((d: { paid: number }) => d.paid),
-                    backgroundColor: data.chart_data.map((d: { paid: number; expected: number }) =>
-                      d.paid >= d.expected ? "#22c55e" : d.paid > 0 ? "#f59e0b" : "#ef4444"
-                    ),
-                  },
-                  {
-                    label: "Expected",
-                    data: data.chart_data.map((d: { expected: number }) => d.expected),
-                    backgroundColor: "rgba(100,116,139,0.15)",
-                    borderColor: "#64748b",
-                  },
-                ],
-              }}
-              options={{ responsive: true, plugins: { legend: { position: "bottom", labels: { boxWidth: 12 } } } }}
-            />
+            <div className="h-[280px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart
+                  data={data.chart_data}
+                  margin={{ top: 10, right: 8, left: -20, bottom: 0 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} vertical={false} />
+                  <XAxis dataKey="month" tickLine={false} axisLine={false} tick={AXIS_TICK} />
+                  <YAxis tickLine={false} axisLine={false} tick={AXIS_TICK} />
+                  <RcTooltip contentStyle={TOOLTIP_STYLE} />
+                  <Bar dataKey="expected" fill="rgba(148,152,164,0.28)" radius={[6, 6, 0, 0]} />
+                  <Bar dataKey="paid" radius={[6, 6, 0, 0]}>
+                    {data.chart_data.map((d: { paid: number; expected: number }, i: number) => (
+                      <Cell
+                        key={i}
+                        fill={
+                          d.paid >= d.expected
+                            ? "rgb(90,160,110)"
+                            : d.paid > 0
+                              ? "rgb(218,163,70)"
+                              : "rgb(218,88,88)"
+                        }
+                      />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
           )}
-        </>
+        </div>
       )}
-    </div>
+    </Card>
   );
 }
 
 function OccupancyTab() {
   const { data, isLoading } = useOccupancyReport();
-
   return (
-    <div className="space-y-4">
-      <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">Occupancy Overview</h3>
-      {isLoading ? <p className="text-slate-500">Loading...</p> : data && (
-        <>
-          <p className="text-sm text-slate-700 dark:text-slate-300">Total Units: {data.total_units}</p>
-          <ReportTable
-            headers={["Building", "Total", "Occupied", "Occupancy Rate"]}
-            rows={data.buildings.map((b: { name: string; total: number; occupied: number; rate: number }) => [
-              b.name, b.total, b.occupied, `${b.rate}%`,
-            ])}
-          />
-        </>
-      )}
-    </div>
+    <Card variant="glass" padding="md">
+      <CardHeader>
+        <CardTitle>Occupancy Overview</CardTitle>
+        {data && <Badge tone="peri">{data.total_units} units total</Badge>}
+      </CardHeader>
+      {isLoading ? (
+        <Skeleton className="h-48" />
+      ) : data ? (
+        <ReportTable
+          headers={["Building", "Total", "Occupied", "Rate"]}
+          rows={data.buildings.map((b: { name: string; total: number; occupied: number; rate: number }) => [
+            b.name,
+            b.total,
+            b.occupied,
+            `${b.rate}%`,
+          ])}
+        />
+      ) : null}
+    </Card>
   );
 }
 
 function MoveLogTab() {
   const { data, isLoading } = useMoveLog();
-
   return (
-    <div className="space-y-4">
-      <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">Move-in / Move-out Log</h3>
-      {isLoading ? <p className="text-slate-500">Loading...</p> : data && (
+    <Card variant="glass" padding="md">
+      <CardHeader>
+        <CardTitle>Move-in / Move-out log</CardTitle>
+      </CardHeader>
+      {isLoading ? (
+        <Skeleton className="h-48" />
+      ) : data ? (
         <ReportTable
           headers={["Tenant", "Unit", "Move In", "Move Out", "Status"]}
           rows={data.entries.map((e: { tenant: string; unit: string; move_in: string; move_out: string | null; status: string }) => [
-            e.tenant, e.unit, e.move_in, e.move_out || "—", e.status,
+            e.tenant,
+            e.unit,
+            e.move_in,
+            e.move_out || "—",
+            e.status,
           ])}
         />
-      )}
-    </div>
+      ) : null}
+    </Card>
   );
 }
 
-// ---------------------------------------------------------------------------
-// New financial tabs
-// ---------------------------------------------------------------------------
 function ProfitLossTab() {
   const now = new Date();
   const [mode, setMode] = useState<"monthly" | "annual">("monthly");
@@ -331,95 +489,112 @@ function ProfitLossTab() {
 
   const monthly = useProfitLoss(month, year, building);
   const annual = useProfitLossAnnual(year, building);
-
   const data = mode === "monthly" ? monthly.data : annual.data;
   const isLoading = mode === "monthly" ? monthly.isLoading : annual.isLoading;
 
-  // CSV / PDF helpers
-  const getExportRows = () => {
-    if (!data) return { headers: [] as string[], rows: [] as (string | number)[][] };
-    if (mode === "annual") {
-      return {
-        headers: ["Month", "Income (KES)", "Expenses (KES)", "Net Profit (KES)"],
-        rows: data.monthly.map((r: { month: number; income: number; expenses: number; net: number }) => [
-          r.month, r.income, r.expenses, r.net,
-        ]),
-      };
-    }
-    return {
-      headers: ["Category", "Amount (KES)"],
-      rows: [
-        ["INCOME", ""],
-        ["Rent Collected", data.income],
-        ["", ""],
-        ["EXPENSES", ""],
-        ...(data.expense_breakdown ?? []).map((e: { category: string; amount: number }) => [e.category, e.amount]),
-        ["", ""],
-        ["NET PROFIT", data.net_profit],
-      ],
-    };
-  };
-
-  const { headers: exportHeaders, rows: exportRows } = getExportRows();
+  const exportHeaders =
+    mode === "annual"
+      ? ["Month", "Income (KES)", "Expenses (KES)", "Net Profit (KES)"]
+      : ["Category", "Amount (KES)"];
+  const exportRows =
+    mode === "annual" && data
+      ? data.monthly.map((r: { month: number; income: number; expenses: number; net: number }) => [
+          r.month,
+          r.income,
+          r.expenses,
+          r.net,
+        ])
+      : data
+        ? [
+            ["INCOME", ""],
+            ["Rent Collected", data.income],
+            ["", ""],
+            ["EXPENSES", ""],
+            ...(data.expense_breakdown ?? []).map((e: { category: string; amount: number }) => [
+              e.category,
+              e.amount,
+            ]),
+            ["", ""],
+            ["NET PROFIT", data.net_profit],
+          ]
+        : [];
 
   return (
-    <div className="space-y-5">
-      {/* Controls */}
-      <div className="flex flex-wrap items-center gap-3">
-        <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">Profit & Loss</h3>
-        <BuildingFilter value={building} onChange={setBuilding} />
-        <div className="flex rounded-lg border border-slate-200 text-sm dark:border-slate-700">
-          <button
-            onClick={() => setMode("monthly")}
-            className={`px-3 py-1.5 ${mode === "monthly" ? "bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900" : "text-slate-600 hover:bg-slate-50 dark:text-slate-400 dark:hover:bg-slate-800"}`}
-          >
-            Monthly
-          </button>
-          <button
-            onClick={() => setMode("annual")}
-            className={`px-3 py-1.5 ${mode === "annual" ? "bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900" : "text-slate-600 hover:bg-slate-50 dark:text-slate-400 dark:hover:bg-slate-800"}`}
-          >
-            Annual
-          </button>
+    <Card variant="glass" padding="md">
+      <CardHeader>
+        <div>
+          <CardTitle>Profit & Loss</CardTitle>
+          <p className="mt-1 text-xs text-ink-500">
+            {mode === "monthly"
+              ? `${new Date(2000, month - 1).toLocaleString("default", { month: "long" })} ${year}`
+              : `Full year ${year}`}
+          </p>
         </div>
-        {mode === "monthly" && (
-          <select value={month} onChange={(e) => setMonth(Number(e.target.value))} className="rounded border px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100">
-            {Array.from({ length: 12 }, (_, i) => (
-              <option key={i + 1} value={i + 1}>
-                {new Date(2000, i).toLocaleString("default", { month: "long" })}
-              </option>
-            ))}
-          </select>
-        )}
-        <input type="number" value={year} onChange={(e) => setYear(Number(e.target.value))} className="w-20 rounded border px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100" />
-        {data && (
-          <div className="ml-auto flex gap-2">
-            <button onClick={() => exportCSV(`pnl-${year}.csv`, exportHeaders, exportRows)} className="rounded border px-2 py-1 text-xs hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800">Export CSV</button>
-            <button onClick={() => exportPDF(`Profit & Loss ${mode === "monthly" ? `${month}/` : ""}${year}`, exportHeaders, exportRows)} className="rounded border px-2 py-1 text-xs hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800">Export PDF</button>
+        <div className="flex flex-wrap items-center gap-2">
+          <BuildingFilter value={building} onChange={setBuilding} />
+          <div className="glass flex overflow-hidden rounded-md">
+            <button
+              onClick={() => setMode("monthly")}
+              className={cn(
+                "px-3 py-2 text-xs font-medium",
+                mode === "monthly" ? "bg-ink-900 text-canvas" : "text-ink-600"
+              )}
+            >
+              Monthly
+            </button>
+            <button
+              onClick={() => setMode("annual")}
+              className={cn(
+                "px-3 py-2 text-xs font-medium",
+                mode === "annual" ? "bg-ink-900 text-canvas" : "text-ink-600"
+              )}
+            >
+              Annual
+            </button>
           </div>
-        )}
-      </div>
+          {mode === "monthly" && (
+            <select value={month} onChange={(e) => setMonth(Number(e.target.value))} className={selectCls}>
+              {Array.from({ length: 12 }, (_, i) => (
+                <option key={i + 1} value={i + 1}>
+                  {new Date(2000, i).toLocaleString("default", { month: "short" })}
+                </option>
+              ))}
+            </select>
+          )}
+          <input
+            type="number"
+            value={year}
+            onChange={(e) => setYear(Number(e.target.value))}
+            className={selectCls + " w-24"}
+          />
+          {data && (
+            <ExportBar
+              title={`Profit & Loss ${mode === "monthly" ? `${month}/` : ""}${year}`}
+              headers={exportHeaders}
+              rows={exportRows}
+              filename={`pnl-${year}.csv`}
+            />
+          )}
+        </div>
+      </CardHeader>
 
-      {isLoading && <p className="text-slate-500">Loading...</p>}
-
-      {/* Monthly P&L */}
+      {isLoading && <Skeleton className="h-48" />}
       {!isLoading && data && mode === "monthly" && (
-        <div className="space-y-4">
-          {/* Summary cards */}
-          <div className="grid gap-4 sm:grid-cols-3">
-            <SummaryCard label="Total Income" value={`KES ${data.income.toLocaleString()}`} color="green" />
-            <SummaryCard label="Total Expenses" value={`KES ${data.total_expenses.toLocaleString()}`} color="red" />
+        <div className="space-y-5">
+          <div className="grid gap-3 sm:grid-cols-3">
+            <SummaryCard label="Income" value={`KES ${data.income.toLocaleString()}`} tone="sage" />
+            <SummaryCard label="Expenses" value={`KES ${data.total_expenses.toLocaleString()}`} tone="coral" />
             <SummaryCard
               label="Net Profit"
               value={`KES ${data.net_profit.toLocaleString()}`}
-              color={data.net_profit >= 0 ? "green" : "red"}
+              tone={data.net_profit >= 0 ? "sage" : "coral"}
             />
           </div>
-
-          {/* Expense breakdown */}
           {data.expense_breakdown?.length > 0 && (
             <>
-              <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-300">Expense Breakdown</h4>
+              <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-ink-500">
+                Expense breakdown
+              </p>
               <ReportTable
                 headers={["Category", "Amount (KES)"]}
                 rows={data.expense_breakdown.map((e: { category: string; amount: number }) => [
@@ -431,33 +606,41 @@ function ProfitLossTab() {
           )}
         </div>
       )}
-
-      {/* Annual P&L */}
       {!isLoading && data && mode === "annual" && (
-        <div className="space-y-4">
-          <div className="grid gap-4 sm:grid-cols-3">
-            <SummaryCard label="Total Income" value={`KES ${data.grand_income.toLocaleString()}`} color="green" />
-            <SummaryCard label="Total Expenses" value={`KES ${data.grand_expenses.toLocaleString()}`} color="red" />
+        <div className="space-y-5">
+          <div className="grid gap-3 sm:grid-cols-3">
+            <SummaryCard label="Income" value={`KES ${data.grand_income.toLocaleString()}`} tone="sage" />
+            <SummaryCard label="Expenses" value={`KES ${data.grand_expenses.toLocaleString()}`} tone="coral" />
             <SummaryCard
               label="Net Profit"
               value={`KES ${data.grand_net.toLocaleString()}`}
-              color={data.grand_net >= 0 ? "green" : "red"}
+              tone={data.grand_net >= 0 ? "sage" : "coral"}
             />
           </div>
-          <Bar
-            data={{
-              labels: data.monthly.map((m: { month: number }) => `Month ${m.month}`),
-              datasets: [
-                { label: "Income", data: data.monthly.map((m: { income: number }) => m.income), backgroundColor: "#22c55e" },
-                { label: "Expenses", data: data.monthly.map((m: { expenses: number }) => m.expenses), backgroundColor: "#ef4444" },
-                { label: "Net", data: data.monthly.map((m: { net: number }) => m.net), backgroundColor: "#3b82f6" },
-              ],
-            }}
-            options={{ responsive: true, plugins: { legend: { position: "bottom", labels: { boxWidth: 12 } } } }}
-          />
+          <div className="h-[320px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart
+                data={data.monthly.map((m: { month: number; income: number; expenses: number; net: number }) => ({
+                  month: new Date(2000, m.month - 1).toLocaleString("default", { month: "short" }),
+                  Income: m.income,
+                  Expenses: m.expenses,
+                  Net: m.net,
+                }))}
+                margin={{ top: 10, right: 8, left: -20, bottom: 0 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} vertical={false} />
+                <XAxis dataKey="month" tickLine={false} axisLine={false} tick={AXIS_TICK} />
+                <YAxis tickLine={false} axisLine={false} tick={AXIS_TICK} />
+                <RcTooltip contentStyle={TOOLTIP_STYLE} />
+                <Line type="monotone" dataKey="Income" stroke="rgb(216,154,58)" strokeWidth={2.5} dot={{ r: 3 }} />
+                <Line type="monotone" dataKey="Expenses" stroke="rgb(232,137,107)" strokeWidth={2.5} dot={{ r: 3 }} />
+                <Line type="monotone" dataKey="Net" stroke="rgb(139,157,195)" strokeWidth={2.5} dot={{ r: 3 }} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
         </div>
       )}
-    </div>
+    </Card>
   );
 }
 
@@ -471,83 +654,84 @@ function TrialBalanceTab() {
   const exportHeaders = ["Account", "Debit (KES)", "Credit (KES)"];
   const exportRows = [
     ...(data?.accounts ?? []).map((a: { account: string; debit: number; credit: number }) => [
-      a.account, a.debit || "—", a.credit || "—",
+      a.account,
+      a.debit || "—",
+      a.credit || "—",
     ]),
     ["TOTAL", data?.total_debit ?? 0, data?.total_credit ?? 0],
   ];
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-3">
-        <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">Trial Balance</h3>
-        <BuildingFilter value={building} onChange={setBuilding} />
-        <select value={month} onChange={(e) => setMonth(Number(e.target.value))} className="rounded border px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100">
-          {Array.from({ length: 12 }, (_, i) => (
-            <option key={i + 1} value={i + 1}>
-              {new Date(2000, i).toLocaleString("default", { month: "long" })}
-            </option>
-          ))}
-        </select>
-        <input type="number" value={year} onChange={(e) => setYear(Number(e.target.value))} className="w-20 rounded border px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100" />
-        {data && (
-          <div className="ml-auto flex gap-2">
-            <button onClick={() => exportCSV(`trial-balance-${month}-${year}.csv`, exportHeaders, exportRows)} className="rounded border px-2 py-1 text-xs hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800">Export CSV</button>
-            <button onClick={() => exportPDF(`Trial Balance ${month}/${year}`, exportHeaders, exportRows)} className="rounded border px-2 py-1 text-xs hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800">Export PDF</button>
-          </div>
-        )}
-      </div>
-
-      {/* Balance check badge */}
-      {data && (
-        <div className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-medium ${
-          data.is_balanced
-            ? "bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400"
-            : "bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400"
-        }`}>
-          {data.is_balanced ? "✓ Books are balanced" : "✗ Books are not balanced — check for missing entries"}
+    <Card variant="glass" padding="md">
+      <CardHeader>
+        <div className="flex items-center gap-3">
+          <CardTitle>Trial Balance</CardTitle>
+          {data && (
+            <Badge tone={data.is_balanced ? "sage" : "coral"} withDot>
+              {data.is_balanced ? "Balanced" : "Unbalanced"}
+            </Badge>
+          )}
         </div>
-      )}
-
-      {isLoading && <p className="text-slate-500">Loading...</p>}
-
-      {data && (
-        <div className="overflow-x-auto">
-          <table className="min-w-full text-sm">
-            <thead className="bg-slate-50 text-left text-xs font-medium uppercase text-slate-500 dark:bg-slate-800 dark:text-slate-400">
-              <tr>
-                <th className="px-4 py-3">Account</th>
-                <th className="px-4 py-3 text-right">Debit (KES)</th>
-                <th className="px-4 py-3 text-right">Credit (KES)</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-              {data.accounts.map((a: { account: string; debit: number; credit: number }, i: number) => (
-                <tr key={i} className="hover:bg-slate-50 dark:hover:bg-slate-800">
-                  <td className="px-4 py-3 text-slate-700 dark:text-slate-300">{a.account}</td>
-                  <td className="px-4 py-3 text-right text-slate-700 dark:text-slate-300">
-                    {a.debit > 0 ? `KES ${a.debit.toLocaleString()}` : "—"}
-                  </td>
-                  <td className="px-4 py-3 text-right text-slate-700 dark:text-slate-300">
-                    {a.credit > 0 ? `KES ${a.credit.toLocaleString()}` : "—"}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-            <tfoot className="bg-slate-50 font-semibold dark:bg-slate-800">
-              <tr>
-                <td className="px-4 py-3 text-slate-900 dark:text-slate-100">TOTAL</td>
-                <td className="px-4 py-3 text-right text-slate-900 dark:text-slate-100">
-                  KES {data.total_debit.toLocaleString()}
-                </td>
-                <td className="px-4 py-3 text-right text-slate-900 dark:text-slate-100">
-                  KES {data.total_credit.toLocaleString()}
-                </td>
-              </tr>
-            </tfoot>
-          </table>
+        <div className="flex flex-wrap items-center gap-2">
+          <BuildingFilter value={building} onChange={setBuilding} />
+          <select value={month} onChange={(e) => setMonth(Number(e.target.value))} className={selectCls}>
+            {Array.from({ length: 12 }, (_, i) => (
+              <option key={i + 1} value={i + 1}>
+                {new Date(2000, i).toLocaleString("default", { month: "short" })}
+              </option>
+            ))}
+          </select>
+          <input
+            type="number"
+            value={year}
+            onChange={(e) => setYear(Number(e.target.value))}
+            className={selectCls + " w-24"}
+          />
+          {data && (
+            <ExportBar
+              title={`Trial Balance ${month}/${year}`}
+              headers={exportHeaders}
+              rows={exportRows}
+              filename={`trial-balance-${month}-${year}.csv`}
+            />
+          )}
         </div>
+      </CardHeader>
+      {isLoading && <Skeleton className="h-48" />}
+      {data && (
+        <Table>
+          <THead>
+            <TR>
+              <TH>Account</TH>
+              <TH className="text-right">Debit</TH>
+              <TH className="text-right">Credit</TH>
+            </TR>
+          </THead>
+          <TBody>
+            {data.accounts.map((a: { account: string; debit: number; credit: number }, i: number) => (
+              <TR key={i}>
+                <TD>{a.account}</TD>
+                <TD className="text-right tabular-nums">
+                  {a.debit > 0 ? `KES ${a.debit.toLocaleString()}` : "—"}
+                </TD>
+                <TD className="text-right tabular-nums">
+                  {a.credit > 0 ? `KES ${a.credit.toLocaleString()}` : "—"}
+                </TD>
+              </TR>
+            ))}
+            <TR className="border-t-2 border-ink-300 font-semibold">
+              <TD className="font-semibold">TOTAL</TD>
+              <TD className="text-right tabular-nums font-semibold">
+                KES {data.total_debit.toLocaleString()}
+              </TD>
+              <TD className="text-right tabular-nums font-semibold">
+                KES {data.total_credit.toLocaleString()}
+              </TD>
+            </TR>
+          </TBody>
+        </Table>
       )}
-    </div>
+    </Card>
   );
 }
 
@@ -559,84 +743,108 @@ function ExpenseBreakdownTab() {
   const { data, isLoading } = useExpenseBreakdown(month, year, building);
 
   const exportHeaders = ["Category", "Total (KES)", "% of Expenses", "Entries"];
-  const exportRows = (data?.categories ?? []).map((c: { category: string; total: number; percentage: number; count: number }) => [
-    c.category, c.total, `${c.percentage}%`, c.count,
-  ]);
+  const exportRows =
+    data?.categories.map((c: { category: string; total: number; percentage: number; count: number }) => [
+      c.category,
+      c.total,
+      `${c.percentage}%`,
+      c.count,
+    ]) ?? [];
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-3">
-        <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">Expense Breakdown</h3>
-        <BuildingFilter value={building} onChange={setBuilding} />
-        <select value={month} onChange={(e) => setMonth(Number(e.target.value))} className="rounded border px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100">
-          {Array.from({ length: 12 }, (_, i) => (
-            <option key={i + 1} value={i + 1}>
-              {new Date(2000, i).toLocaleString("default", { month: "long" })}
-            </option>
-          ))}
-        </select>
-        <input type="number" value={year} onChange={(e) => setYear(Number(e.target.value))} className="w-20 rounded border px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100" />
-        {data && (
-          <div className="ml-auto flex gap-2">
-            <button onClick={() => exportCSV(`expense-breakdown-${month}-${year}.csv`, exportHeaders, exportRows)} className="rounded border px-2 py-1 text-xs hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800">Export CSV</button>
-            <button onClick={() => exportPDF(`Expense Breakdown ${month}/${year}`, exportHeaders, exportRows)} className="rounded border px-2 py-1 text-xs hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800">Export PDF</button>
-          </div>
-        )}
-      </div>
-
-      {isLoading && <p className="text-slate-500">Loading...</p>}
-
+    <Card variant="glass" padding="md">
+      <CardHeader>
+        <CardTitle>Expense Breakdown</CardTitle>
+        <div className="flex flex-wrap items-center gap-2">
+          <BuildingFilter value={building} onChange={setBuilding} />
+          <select value={month} onChange={(e) => setMonth(Number(e.target.value))} className={selectCls}>
+            {Array.from({ length: 12 }, (_, i) => (
+              <option key={i + 1} value={i + 1}>
+                {new Date(2000, i).toLocaleString("default", { month: "short" })}
+              </option>
+            ))}
+          </select>
+          <input
+            type="number"
+            value={year}
+            onChange={(e) => setYear(Number(e.target.value))}
+            className={selectCls + " w-24"}
+          />
+          {data && (
+            <ExportBar
+              title={`Expense Breakdown ${month}/${year}`}
+              headers={exportHeaders}
+              rows={exportRows}
+              filename={`expense-breakdown-${month}-${year}.csv`}
+            />
+          )}
+        </div>
+      </CardHeader>
+      {isLoading && <Skeleton className="h-48" />}
       {data && (
         <div className="grid gap-6 lg:grid-cols-2">
-          {/* Summary stats */}
           <div className="space-y-4">
             <div className="grid gap-3 sm:grid-cols-2">
-              <SummaryCard label="Total Expenses" value={`KES ${data.total_expenses.toLocaleString()}`} color="red" />
-              <SummaryCard label="Total Income" value={`KES ${data.total_income.toLocaleString()}`} color="green" />
+              <SummaryCard
+                label="Total Expenses"
+                value={`KES ${data.total_expenses.toLocaleString()}`}
+                tone="coral"
+              />
+              <SummaryCard
+                label="Total Income"
+                value={`KES ${data.total_income.toLocaleString()}`}
+                tone="sage"
+              />
             </div>
             {data.total_income > 0 && (
-              <p className="text-sm text-slate-600 dark:text-slate-400">
-                Expenses are <strong className="text-red-600">{data.expense_ratio}%</strong> of rent collected this period.
+              <p className="text-sm text-ink-500">
+                Expenses are{" "}
+                <strong className="text-status-unpaid">{data.expense_ratio}%</strong> of collection this
+                period.
               </p>
             )}
             <ReportTable headers={exportHeaders} rows={exportRows} />
           </div>
-
-          {/* Doughnut chart */}
           {data.categories.length > 0 && (
             <div className="flex items-center justify-center">
-              <div className="w-64">
-                <Doughnut
-                  data={{
-                    labels: data.categories.map((c: { category: string }) => c.category),
-                    datasets: [{
-                      data: data.categories.map((c: { total: number }) => c.total),
-                      backgroundColor: [
-                        "#3b82f6", "#ef4444", "#f59e0b", "#22c55e",
-                        "#8b5cf6", "#ec4899", "#14b8a6", "#f97316",
-                      ],
-                      borderWidth: 2,
-                    }],
-                  }}
-                  options={{
-                    responsive: true,
-                    plugins: {
-                      legend: { position: "bottom", labels: { boxWidth: 12, font: { size: 11 } } },
-                    },
-                  }}
-                />
+              <div className="relative h-[320px] w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={data.categories}
+                      dataKey="total"
+                      nameKey="category"
+                      innerRadius={72}
+                      outerRadius={110}
+                      paddingAngle={2}
+                      stroke="none"
+                    >
+                      {data.categories.map((_: unknown, i: number) => (
+                        <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <RcTooltip
+                      contentStyle={TOOLTIP_STYLE}
+                      formatter={(v) => `KES ${Number(v).toLocaleString()}`}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+                <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                  <p className="text-[11px] uppercase tracking-wider text-ink-500">Total</p>
+                  <p className="font-display text-xl font-semibold text-ink-900">
+                    KES {data.total_expenses.toLocaleString()}
+                  </p>
+                </div>
               </div>
             </div>
           )}
         </div>
       )}
-    </div>
+    </Card>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Shared components
-// ---------------------------------------------------------------------------
+// ─── Shared ─────────────────────────────────────────────────────────────────
 function BuildingFilter({
   value,
   onChange,
@@ -649,49 +857,63 @@ function BuildingFilter({
     <select
       value={value ?? ""}
       onChange={(e) => onChange(e.target.value === "" ? null : Number(e.target.value))}
-      className="rounded border px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+      className={selectCls}
     >
       <option value="">All buildings</option>
       {buildings?.map((b) => (
-        <option key={b.id} value={b.id}>{b.name}</option>
+        <option key={b.id} value={b.id}>
+          {b.name}
+        </option>
       ))}
     </select>
   );
 }
 
-function SummaryCard({ label, value, color }: { label: string; value: string; color: "green" | "red" | "blue" }) {
-  const colorClasses = {
-    green: "text-green-700 dark:text-green-400",
-    red: "text-red-600 dark:text-red-400",
-    blue: "text-blue-700 dark:text-blue-400",
-  };
+function SummaryCard({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone: "sage" | "coral" | "peri";
+}) {
+  const toneClass =
+    tone === "sage"
+      ? "text-sage-700 dark:text-sage-400"
+      : tone === "coral"
+        ? "text-status-unpaid"
+        : "text-peri-600 dark:text-peri-400";
   return (
-    <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-800">
-      <p className="text-xs font-medium text-slate-500 dark:text-slate-400">{label}</p>
-      <p className={`mt-1 text-lg font-bold ${colorClasses[color]}`}>{value}</p>
+    <div className="neu-sm p-4">
+      <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-ink-500">{label}</p>
+      <p className={cn("mt-1 font-display text-xl font-semibold", toneClass)}>{value}</p>
     </div>
   );
 }
 
 function ReportTable({ headers, rows }: { headers: string[]; rows: (string | number)[][] }) {
+  if (rows.length === 0) {
+    return <EmptyState title="No data" description="Nothing to show for the current filters." />;
+  }
   return (
-    <div className="overflow-x-auto">
-      <table className="min-w-full text-sm">
-        <thead className="bg-slate-50 text-left text-xs font-medium uppercase text-slate-500 dark:bg-slate-800 dark:text-slate-400">
-          <tr>
-            {headers.map((h) => <th key={h} className="px-4 py-3">{h}</th>)}
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-          {rows.length === 0 ? (
-            <tr><td colSpan={headers.length} className="px-4 py-6 text-center text-slate-400">No data</td></tr>
-          ) : rows.map((row, i) => (
-            <tr key={i} className="hover:bg-slate-50 dark:hover:bg-slate-800">
-              {row.map((cell, j) => <td key={j} className="px-4 py-3 text-slate-700 dark:text-slate-300">{cell}</td>)}
-            </tr>
+    <Table>
+      <THead>
+        <TR>
+          {headers.map((h) => (
+            <TH key={h}>{h}</TH>
           ))}
-        </tbody>
-      </table>
-    </div>
+        </TR>
+      </THead>
+      <TBody>
+        {rows.map((row, i) => (
+          <TR key={i}>
+            {row.map((cell, j) => (
+              <TD key={j}>{cell}</TD>
+            ))}
+          </TR>
+        ))}
+      </TBody>
+    </Table>
   );
 }

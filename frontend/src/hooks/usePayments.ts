@@ -83,3 +83,25 @@ export function useCreatePayment() {
     },
   });
 }
+
+interface MockPaymentPayload {
+  tenant: number;
+  amount: string | number;
+  source: "mpesa" | "bank" | "cash";
+}
+
+export function useMockPayment() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: MockPaymentPayload) => {
+      const { data } = await api.post("/payments/mock/", payload);
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["payments"] });
+      qc.invalidateQueries({ queryKey: ["units"] });
+      qc.invalidateQueries({ queryKey: ["arrears"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+  });
+}

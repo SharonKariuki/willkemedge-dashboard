@@ -3,7 +3,7 @@ Create the initial admin user from environment variables.
 
 Usage (on Render or any environment where createsuperuser is not interactive):
 
-    INITIAL_ADMIN_EMAIL=owner@example.com \
+    INITIAL_ADMIN_EMAIL=william@gmail.com \
     INITIAL_ADMIN_USERNAME=owner \
     INITIAL_ADMIN_PASSWORD=SomeStrongPass123! \
     python manage.py create_initial_admin

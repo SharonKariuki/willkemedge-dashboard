@@ -2,7 +2,7 @@
 
 > **Version:** 1.1 (7-day compressed delivery)
 > **Date:** 2026-04-09
-> **Authors:** Sharon Kariuki, Barclay Mogambi
+> **Authors:** William, Barclay Mogambi
 > **Status:** Draft
 > **Delivery Window:** 2026-04-09 → 2026-04-15
 
@@ -1538,7 +1538,7 @@ databases:
 
 ### Overview: 7-Day Compressed Delivery Plan (2026-04-09 → 2026-04-15)
 
-> **Note:** This is an aggressive 7-day delivery schedule replacing the original 16-week plan. Each day is structured into Morning (4h), Afternoon (4h), and Evening (3h) blocks for ~11 productive hours/day. Work is split in parallel between Sharon (frontend lead) and Barclay (backend lead) wherever possible. HIGH priority items are non-negotiable; MEDIUM/LOW items are best-effort.
+> **Note:** This is an aggressive 7-day delivery schedule replacing the original 16-week plan. Each day is structured into Morning (4h), Afternoon (4h), and Evening (3h) blocks for ~11 productive hours/day. Work is split in parallel between William (frontend lead) and Barclay (backend lead) wherever possible. HIGH priority items are non-negotiable; MEDIUM/LOW items are best-effort.
 
 ```
 Day 1 (Thu Apr 9):  Foundation — Project Skeleton + Auth + CI/CD
@@ -1561,10 +1561,10 @@ Day 7 (Wed Apr 15): Polish, E2E Testing & Production Deployment
 | # | Task | Owner | Priority |
 |---|---|---|---|
 | 1.1 | Initialize Django project with split settings (base/dev/prod) | Barclay | HIGH |
-| 1.2 | Initialize React + Vite + TypeScript + Tailwind project | Sharon | HIGH |
+| 1.2 | Initialize React + Vite + TypeScript + Tailwind project | William | HIGH |
 | 1.3 | Provision PostgreSQL locally + on Render | Barclay | HIGH |
 | 1.4 | Configure `.env` files, `python-decouple`, base settings | Barclay | HIGH |
-| 1.5 | Set up Tailwind theme tokens, base layout components | Sharon | HIGH |
+| 1.5 | Set up Tailwind theme tokens, base layout components | William | HIGH |
 
 **Afternoon (4h) — Authentication Backend + Frontend Shell**
 
@@ -1574,9 +1574,9 @@ Day 7 (Wed Apr 15): Polish, E2E Testing & Production Deployment
 | 1.7 | JWT login/refresh/logout endpoints (`simplejwt`) | Barclay | HIGH |
 | 1.8 | Login audit logging model + signal | Barclay | HIGH |
 | 1.9 | Account lockout (5 attempts / 30 min) | Barclay | HIGH |
-| 1.10 | React Login page + React Hook Form + Zod validation | Sharon | HIGH |
-| 1.11 | Axios instance + JWT refresh interceptor | Sharon | HIGH |
-| 1.12 | React Router protected routes (`AuthLayout`) | Sharon | HIGH |
+| 1.10 | React Login page + React Hook Form + Zod validation | William | HIGH |
+| 1.11 | Axios instance + JWT refresh interceptor | William | HIGH |
+| 1.12 | React Router protected routes (`AuthLayout`) | William | HIGH |
 
 **Evening (3h) — CI/CD + Deploy + Tests**
 
@@ -1609,11 +1609,11 @@ Day 7 (Wed Apr 15): Polish, E2E Testing & Production Deployment
 
 | # | Task | Owner | Priority |
 |---|---|---|---|
-| 2.6 | Responsive sidebar navigation + dashboard layout shell | Sharon | HIGH |
-| 2.7 | Unit grid/list page with colour-coded status badges | Sharon | HIGH |
-| 2.8 | Unit detail page (read-only + edit modal) | Sharon | HIGH |
-| 2.9 | Building add/edit form | Sharon | HIGH |
-| 2.10 | TanStack Query setup + global query client config | Sharon | HIGH |
+| 2.6 | Responsive sidebar navigation + dashboard layout shell | William | HIGH |
+| 2.7 | Unit grid/list page with colour-coded status badges | William | HIGH |
+| 2.8 | Unit detail page (read-only + edit modal) | William | HIGH |
+| 2.9 | Building add/edit form | William | HIGH |
+| 2.10 | TanStack Query setup + global query client config | William | HIGH |
 
 **Evening (3h) — Hardening + Tests**
 
@@ -1622,7 +1622,7 @@ Day 7 (Wed Apr 15): Polish, E2E Testing & Production Deployment
 | 2.11 | Rate limiting middleware (`django-ratelimit`) | Barclay | MEDIUM |
 | 2.12 | Security headers middleware (CSP, HSTS, X-Frame-Options) | Barclay | MEDIUM |
 | 2.13 | Unit tests for status transition logic | Barclay | HIGH |
-| 2.14 | Mobile responsive pass on unit grid | Sharon | HIGH |
+| 2.14 | Mobile responsive pass on unit grid | William | HIGH |
 
 **Deliverable:** Owner views all units with real-time colour status. Buildings/units fully CRUD-able. Sidebar nav live.
 
@@ -1646,11 +1646,11 @@ Day 7 (Wed Apr 15): Polish, E2E Testing & Production Deployment
 
 | # | Task | Owner | Priority |
 |---|---|---|---|
-| 3.6 | Tenant list page with search/filter (active/past/unit/name) | Sharon | HIGH |
-| 3.7 | Tenant registration form (RHF + Zod) with file upload | Sharon | HIGH |
-| 3.8 | Tenant detail page (info + documents + payment summary tab) | Sharon | HIGH |
+| 3.6 | Tenant list page with search/filter (active/past/unit/name) | William | HIGH |
+| 3.7 | Tenant registration form (RHF + Zod) with file upload | William | HIGH |
+| 3.8 | Tenant detail page (info + documents + payment summary tab) | William | HIGH |
 | 3.9 | Move-out workflow API (assign vacate date, archive) | Barclay | HIGH |
-| 3.10 | Move-out modal + confirmation flow | Sharon | HIGH |
+| 3.10 | Move-out modal + confirmation flow | William | HIGH |
 
 **Evening (3h) — Lifecycle Wiring + Tests**
 
@@ -1683,10 +1683,10 @@ Day 7 (Wed Apr 15): Polish, E2E Testing & Production Deployment
 
 | # | Task | Owner | Priority |
 |---|---|---|---|
-| 4.6 | Manual payment entry form (cash/cheque) | Sharon | HIGH |
-| 4.7 | Payment progress bar component (0% / 1–99% / 100% colour) | Sharon | HIGH |
-| 4.8 | Wire progress bars into unit cards | Sharon | HIGH |
-| 4.9 | Payments list page with filters (date, tenant, source) | Sharon | HIGH |
+| 4.6 | Manual payment entry form (cash/cheque) | William | HIGH |
+| 4.7 | Payment progress bar component (0% / 1–99% / 100% colour) | William | HIGH |
+| 4.8 | Wire progress bars into unit cards | William | HIGH |
+| 4.9 | Payments list page with filters (date, tenant, source) | William | HIGH |
 | 4.10 | PDF receipt generation (WeasyPrint template) | Barclay | MEDIUM |
 
 **Evening (3h) — Celery + Nightly Jobs + Tests**
@@ -1724,7 +1724,7 @@ Day 7 (Wed Apr 15): Polish, E2E Testing & Production Deployment
 | 5.8 | SMS notifications via Africa's Talking (payment confirmation) | Barclay | MEDIUM |
 | 5.9 | Email receipt delivery via SendGrid | Barclay | MEDIUM |
 | 5.10 | Password reset email flow (carryover from Day 1) | Barclay | MEDIUM |
-| 5.11 | Payments page: surface M-Pesa/bank source badges | Sharon | HIGH |
+| 5.11 | Payments page: surface M-Pesa/bank source badges | William | HIGH |
 
 **Evening (3h) — Security + Integration Tests**
 
@@ -1747,18 +1747,18 @@ Day 7 (Wed Apr 15): Polish, E2E Testing & Production Deployment
 | # | Task | Owner | Priority |
 |---|---|---|---|
 | 6.1 | Dashboard summary API (single call: KPIs, trends, recent, alerts) | Barclay | HIGH |
-| 6.2 | KPI cards component (Total / Occupied / Vacant / Arrears) | Sharon | HIGH |
-| 6.3 | Monthly collection progress bar | Sharon | HIGH |
-| 6.4 | Recent payments feed (last 10 transactions) | Sharon | HIGH |
-| 6.5 | Alerts panel (overdue, partial, upcoming move-outs) | Sharon | HIGH |
+| 6.2 | KPI cards component (Total / Occupied / Vacant / Arrears) | William | HIGH |
+| 6.3 | Monthly collection progress bar | William | HIGH |
+| 6.4 | Recent payments feed (last 10 transactions) | William | HIGH |
+| 6.5 | Alerts panel (overdue, partial, upcoming move-outs) | William | HIGH |
 
 **Afternoon (4h) — Charts + Reports Backend**
 
 | # | Task | Owner | Priority |
 |---|---|---|---|
-| 6.6 | 12-month income trend line chart (Chart.js) | Sharon | HIGH |
-| 6.7 | Portfolio occupancy doughnut chart | Sharon | HIGH |
-| 6.8 | Stacked bar (Occupied/Partial/Vacant) | Sharon | HIGH |
+| 6.6 | 12-month income trend line chart (Chart.js) | William | HIGH |
+| 6.7 | Portfolio occupancy doughnut chart | William | HIGH |
+| 6.8 | Stacked bar (Occupied/Partial/Vacant) | William | HIGH |
 | 6.9 | Monthly collection report API + PDF | Barclay | HIGH |
 | 6.10 | Annual income summary API | Barclay | HIGH |
 | 6.11 | Arrears report API + PDF | Barclay | HIGH |
@@ -1769,13 +1769,13 @@ Day 7 (Wed Apr 15): Polish, E2E Testing & Production Deployment
 
 | # | Task | Owner | Priority |
 |---|---|---|---|
-| 6.14 | Reports page with tab/accordion navigation | Sharon | HIGH |
-| 6.15 | Per-tenant payment bar chart (green/amber/red + expected rent line) | Sharon | HIGH |
-| 6.16 | PDF download triggers wired in frontend | Sharon | HIGH |
-| 6.17 | Quick-action buttons (Add Tenant / Record Payment / Reports) | Sharon | MEDIUM |
-| 6.18 | TanStack Query auto-refresh (30s on dashboard) | Sharon | MEDIUM |
-| 6.19 | Mobile responsive pass on dashboard + reports | Sharon | HIGH |
-| 6.20 | Settings page (login audit viewer + account info) | Sharon | MEDIUM |
+| 6.14 | Reports page with tab/accordion navigation | William | HIGH |
+| 6.15 | Per-tenant payment bar chart (green/amber/red + expected rent line) | William | HIGH |
+| 6.16 | PDF download triggers wired in frontend | William | HIGH |
+| 6.17 | Quick-action buttons (Add Tenant / Record Payment / Reports) | William | MEDIUM |
+| 6.18 | TanStack Query auto-refresh (30s on dashboard) | William | MEDIUM |
+| 6.19 | Mobile responsive pass on dashboard + reports | William | HIGH |
+| 6.20 | Settings page (login audit viewer + account info) | William | MEDIUM |
 
 **Deliverable:** Dashboard complete with charts + alerts. All 6 reports functional with PDF export. Mobile-responsive.
 
@@ -1789,9 +1789,9 @@ Day 7 (Wed Apr 15): Polish, E2E Testing & Production Deployment
 
 | # | Task | Owner | Priority |
 |---|---|---|---|
-| 7.1 | Playwright E2E tests — 5 critical journeys (login, register tenant, record payment, M-Pesa flow, generate report) | Sharon | HIGH |
-| 7.2 | Cross-browser testing (Chrome, Firefox, Safari, Edge) | Sharon | HIGH |
-| 7.3 | Mobile responsiveness audit + fixes | Sharon | HIGH |
+| 7.1 | Playwright E2E tests — 5 critical journeys (login, register tenant, record payment, M-Pesa flow, generate report) | William | HIGH |
+| 7.2 | Cross-browser testing (Chrome, Firefox, Safari, Edge) | William | HIGH |
+| 7.3 | Mobile responsiveness audit + fixes | William | HIGH |
 | 7.4 | Security audit: CORS, CSP, rate limiting, input validation | Barclay | HIGH |
 | 7.5 | Performance audit: API response times, bundle size | Both | MEDIUM |
 
@@ -1804,7 +1804,7 @@ Day 7 (Wed Apr 15): Polish, E2E Testing & Production Deployment
 | 7.8 | Custom domain + SSL configuration | Barclay | HIGH |
 | 7.9 | Verify automated PostgreSQL backups (Render) | Barclay | HIGH |
 | 7.10 | Register M-Pesa production C2B URLs | Barclay | HIGH |
-| 7.11 | Performance optimizations (lazy loading, code splitting) | Sharon | MEDIUM |
+| 7.11 | Performance optimizations (lazy loading, code splitting) | William | MEDIUM |
 
 **Evening (3h) — Go Live + Handover**
 
@@ -1814,7 +1814,7 @@ Day 7 (Wed Apr 15): Polish, E2E Testing & Production Deployment
 | 7.13 | Create admin account in production | Barclay | HIGH |
 | 7.14 | Seed production with real building + unit data | Both | HIGH |
 | 7.15 | Smoke test full production flow (login → record payment → report) | Both | HIGH |
-| 7.16 | Deployment runbook + handover documentation | Sharon | MEDIUM |
+| 7.16 | Deployment runbook + handover documentation | William | MEDIUM |
 | 7.17 | Stage environment prepared for penetration testing | Barclay | MEDIUM |
 
 **Deliverable:** System live in production. Real M-Pesa payments flowing. Owner managing full portfolio.
@@ -1826,7 +1826,7 @@ Day 7 (Wed Apr 15): Polish, E2E Testing & Production Deployment
 - **Day 1 must finish auth + CI/CD** — every subsequent day depends on a working pipeline. If Day 1 slips, compress Day 5 notification work first.
 - **Day 5 (M-Pesa)** is the highest external-dependency risk. Daraja sandbox quirks are unpredictable. If integration debugging exceeds the day, fall back to manual payment entry on Day 7 launch and finish M-Pesa post-launch.
 - **MEDIUM/LOW items are deferrable** — if any HIGH item slips, drop the same-day MEDIUM tasks first (rate limiting, seed data, monthly auto-email, settings page).
-- **Parallelism is mandatory** — Sharon (frontend) and Barclay (backend) work the same day's tasks concurrently, syncing at end-of-block. Solo work on this plan is not feasible in 7 days.
+- **Parallelism is mandatory** — William (frontend) and Barclay (backend) work the same day's tasks concurrently, syncing at end-of-block. Solo work on this plan is not feasible in 7 days.
 - **Daily standup at start of Morning block** (15 min): blockers from previous day, today's task split, integration touchpoints.
 - **Daily integration check at end of Evening block** (30 min): merge feature branches to `develop`, verify staging deploy green, file blockers for next day.
 

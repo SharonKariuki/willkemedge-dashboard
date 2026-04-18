@@ -16,7 +16,7 @@ class AuthFlowTests(APITestCase):
         cls.password = "CorrectHorseBattery9!"
         cls.user = User.objects.create_user(
             username="owner",
-            email="owner@example.com",
+            email="william@gmail.com",
             password=cls.password,
         )
 
@@ -27,28 +27,28 @@ class AuthFlowTests(APITestCase):
     def test_login_success_returns_tokens_and_user(self):
         response = self.client.post(
             self.login_url,
-            {"email": "owner@example.com", "password": self.password},
+            {"email": "william@gmail.com", "password": self.password},
             format="json",
         )
         assert response.status_code == status.HTTP_200_OK
         body = response.json()
         assert "access" in body and "refresh" in body
-        assert body["user"]["email"] == "owner@example.com"
+        assert body["user"]["email"] == "william@gmail.com"
 
     def test_login_success_records_audit_row(self):
         self.client.post(
             self.login_url,
-            {"email": "owner@example.com", "password": self.password},
+            {"email": "william@gmail.com", "password": self.password},
             format="json",
         )
         attempt = LoginAttempt.objects.latest("attempted_at")
-        assert attempt.email == "owner@example.com"
+        assert attempt.email == "william@gmail.com"
         assert attempt.successful is True
 
     def test_login_email_is_case_insensitive(self):
         response = self.client.post(
             self.login_url,
-            {"email": "OWNER@example.com", "password": self.password},
+            {"email": "WILLIAM@gmail.com", "password": self.password},
             format="json",
         )
         assert response.status_code == status.HTTP_200_OK
@@ -56,7 +56,7 @@ class AuthFlowTests(APITestCase):
     def test_login_wrong_password_returns_400_and_audits(self):
         response = self.client.post(
             self.login_url,
-            {"email": "owner@example.com", "password": "wrong"},
+            {"email": "william@gmail.com", "password": "wrong"},
             format="json",
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
@@ -76,14 +76,14 @@ class AuthFlowTests(APITestCase):
         for _ in range(LOCKOUT_THRESHOLD):
             self.client.post(
                 self.login_url,
-                {"email": "owner@example.com", "password": "wrong"},
+                {"email": "william@gmail.com", "password": "wrong"},
                 format="json",
             )
 
         # Even with the correct password, lockout should now block.
         response = self.client.post(
             self.login_url,
-            {"email": "owner@example.com", "password": self.password},
+            {"email": "william@gmail.com", "password": self.password},
             format="json",
         )
         assert response.status_code == status.HTTP_429_TOO_MANY_REQUESTS
@@ -92,7 +92,7 @@ class AuthFlowTests(APITestCase):
     def test_refresh_endpoint_issues_new_access_token(self):
         login_resp = self.client.post(
             self.login_url,
-            {"email": "owner@example.com", "password": self.password},
+            {"email": "william@gmail.com", "password": self.password},
             format="json",
         )
         refresh_token = login_resp.json()["refresh"]
@@ -112,7 +112,7 @@ class AuthFlowTests(APITestCase):
     def test_me_endpoint_returns_current_user(self):
         login_resp = self.client.post(
             self.login_url,
-            {"email": "owner@example.com", "password": self.password},
+            {"email": "william@gmail.com", "password": self.password},
             format="json",
         )
         access = login_resp.json()["access"]
@@ -120,12 +120,12 @@ class AuthFlowTests(APITestCase):
 
         response = self.client.get(reverse("accounts:me"))
         assert response.status_code == status.HTTP_200_OK
-        assert response.json()["email"] == "owner@example.com"
+        assert response.json()["email"] == "william@gmail.com"
 
     def test_logout_blacklists_refresh_token(self):
         login_resp = self.client.post(
             self.login_url,
-            {"email": "owner@example.com", "password": self.password},
+            {"email": "william@gmail.com", "password": self.password},
             format="json",
         )
         access = login_resp.json()["access"]

@@ -27,7 +27,7 @@ CONFIRM_URL = "/api/auth/password-reset/confirm/"
 @pytest.fixture
 def admin_user(db):
     return User.objects.create_user(
-        username="admin", email="admin@willkemedge.co.ke",
+        username="admin", email="william@gmail.com",
         password="SecurePass123!",
     )
 
@@ -41,7 +41,7 @@ def client():
 class TestPasswordResetRequest:
     @patch("apps.accounts.tasks.send_password_reset_email.delay")
     def test_returns_200_for_existing_email(self, mock_task, client, admin_user):
-        resp = client.post(REQUEST_URL, {"email": "admin@willkemedge.co.ke"}, format="json")
+        resp = client.post(REQUEST_URL, {"email": "william@gmail.com"}, format="json")
         assert resp.status_code == 200
         mock_task.assert_called_once()
 

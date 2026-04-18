@@ -1,24 +1,32 @@
-/**
- * Expenses page — record property expenses and browse existing ones.
- */
+import { zodResolver } from "@hookform/resolvers/zod";
+import { PlusCircle, Tag, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { PlusCircle, Trash2, Tag } from "lucide-react";
 
 import {
-  useExpenses,
-  useExpenseCategories,
+  Badge,
+  Button,
+  Card,
+  EmptyState,
+  PageHeader,
+  Skeleton,
+  Table,
+  TBody,
+  TD,
+  TH,
+  THead,
+  TR,
+} from "@/components/ui";
+import { useBuildings } from "@/hooks/useBuildings";
+import {
   useCreateExpense,
   useCreateExpenseCategory,
   useDeleteExpense,
+  useExpenseCategories,
+  useExpenses,
 } from "@/hooks/useExpenses";
-import { useBuildings } from "@/hooks/useBuildings";
 
-// ---------------------------------------------------------------------------
-// Validation schema
-// ---------------------------------------------------------------------------
 const expenseSchema = z.object({
   date: z.string().min(1, "Date is required"),
   building: z.string().optional(),
@@ -39,14 +47,35 @@ const categorySchema = z.object({
 });
 type CategoryFormData = z.infer<typeof categorySchema>;
 
-// ---------------------------------------------------------------------------
-// Main component
-// ---------------------------------------------------------------------------
+const inputCls =
+  "w-full rounded-md bg-surface-raised hairline px-3 py-2.5 text-sm text-ink-900 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-sage-500/40";
+
+function Field({
+  label,
+  error,
+  children,
+  className,
+}: {
+  label: string;
+  error?: string;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={className}>
+      <label className="mb-1 block text-[11px] font-medium uppercase tracking-[0.14em] text-ink-500">
+        {label}
+      </label>
+      {children}
+      {error && <p className="mt-1 text-[11px] text-status-unpaid">{error}</p>}
+    </div>
+  );
+}
+
 export default function ExpensesPage() {
   const now = new Date();
   const [filterMonth, setFilterMonth] = useState(now.getMonth() + 1);
   const [filterYear, setFilterYear] = useState(now.getFullYear());
-  // "" = all buildings, "none" = portfolio-wide only, "<id>" = specific
   const [filterBuilding, setFilterBuilding] = useState<"" | "none" | string>("");
   const [showForm, setShowForm] = useState(false);
   const [showCategoryForm, setShowCategoryForm] = useState(false);
@@ -70,9 +99,7 @@ export default function ExpensesPage() {
     },
   });
 
-  const catForm = useForm<CategoryFormData>({
-    resolver: zodResolver(categorySchema),
-  });
+  const catForm = useForm<CategoryFormData>({ resolver: zodResolver(categorySchema) });
 
   const onSubmitExpense = (values: ExpenseFormData) => {
     const { building, ...rest } = values;
@@ -108,171 +135,186 @@ export default function ExpensesPage() {
     );
   };
 
-  const totalForPeriod = expenses?.reduce(
-    (sum, e) => sum + parseFloat(e.amount),
-    0
-  ) ?? 0;
+  const total = expenses?.reduce((sum, e) => sum + parseFloat(e.amount), 0) ?? 0;
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-2xl font-bold text-slate-900 dark:text-slate-100">Expenses</h2>
-        <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={() => setShowCategoryForm((v) => !v)}
-            className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
-          >
-            <Tag className="h-4 w-4" />
-            {showCategoryForm ? "Cancel" : "Add Category"}
-          </button>
-          <button
-            type="button"
-            onClick={() => setShowForm((v) => !v)}
-            className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-700 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-slate-200"
-          >
-            <PlusCircle className="h-4 w-4" />
-            {showForm ? "Cancel" : "Record Expense"}
-          </button>
+      <PageHeader
+        eyebrow="Spending"
+        title="Expenses"
+        description="Record and review property-related costs — maintenance, utilities, taxes, and more."
+        actions={
+          <>
+            <Button variant="glass" onClick={() => setShowCategoryForm((v) => !v)}>
+              <Tag className="h-4 w-4" />
+              {showCategoryForm ? "Cancel" : "Add Category"}
+            </Button>
+            <Button onClick={() => setShowForm((v) => !v)}>
+              <PlusCircle className="h-4 w-4" />
+              {showForm ? "Cancel" : "Record Expense"}
+            </Button>
+          </>
+        }
+      />
+
+      {/* Total summary */}
+      <Card variant="glass" padding="md" className="relative overflow-hidden">
+        <div className="pointer-events-none absolute -right-16 -top-16 h-52 w-52 rounded-full bg-coral-400/25 blur-3xl" />
+        <div className="relative flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-ink-500">
+              Total for {new Date(filterYear, filterMonth - 1).toLocaleString("default", { month: "long" })}{" "}
+              {filterYear}
+            </p>
+            <p className="mt-1 font-display text-4xl font-semibold text-status-unpaid">
+              KES {total.toLocaleString()}
+            </p>
+            <p className="mt-1 text-xs text-ink-500">
+              Across {expenses?.length ?? 0} entr{(expenses?.length ?? 0) === 1 ? "y" : "ies"}
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <select
+              value={filterBuilding}
+              onChange={(e) => setFilterBuilding(e.target.value as "" | "none" | string)}
+              className="glass rounded-md px-3 py-2 text-sm text-ink-900 focus:outline-none"
+            >
+              <option value="">All buildings</option>
+              <option value="none">Portfolio-wide only</option>
+              {buildings?.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.name}
+                </option>
+              ))}
+            </select>
+            <select
+              value={filterMonth}
+              onChange={(e) => setFilterMonth(Number(e.target.value))}
+              className="glass rounded-md px-3 py-2 text-sm text-ink-900 focus:outline-none"
+            >
+              {Array.from({ length: 12 }, (_, i) => (
+                <option key={i + 1} value={i + 1}>
+                  {new Date(2000, i).toLocaleString("default", { month: "long" })}
+                </option>
+              ))}
+            </select>
+            <input
+              type="number"
+              min="2000"
+              max="2100"
+              value={filterYear}
+              onChange={(e) => {
+                const v = Number(e.target.value);
+                if (Number.isFinite(v) && v >= 2000) setFilterYear(v);
+              }}
+              className="glass w-24 rounded-md px-3 py-2 text-sm text-ink-900 focus:outline-none"
+            />
+          </div>
         </div>
-      </div>
+      </Card>
 
       {/* Category form */}
       {showCategoryForm && (
-        <div className="rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-900">
-          <h3 className="mb-4 text-base font-semibold text-slate-900 dark:text-slate-100">New Category</h3>
+        <Card variant="glass" padding="md" className="animate-fade-up">
+          <p className="mb-4 font-display text-lg font-semibold text-ink-900">New category</p>
           <form onSubmit={catForm.handleSubmit(onSubmitCategory)} className="flex flex-wrap gap-3">
-            <div className="flex-1 min-w-[160px]">
+            <div className="min-w-[160px] flex-1">
               <input
                 {...catForm.register("name")}
                 placeholder="Category name (e.g. Repairs)"
-                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                className={inputCls}
               />
               {catForm.formState.errors.name && (
-                <p className="mt-1 text-xs text-red-600">{catForm.formState.errors.name.message}</p>
+                <p className="mt-1 text-[11px] text-status-unpaid">
+                  {catForm.formState.errors.name.message}
+                </p>
               )}
             </div>
-            <div className="flex-1 min-w-[200px]">
+            <div className="min-w-[200px] flex-1">
               <input
                 {...catForm.register("description")}
                 placeholder="Description (optional)"
-                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                className={inputCls}
               />
             </div>
-            <button
-              type="submit"
-              disabled={createCategory.isPending}
-              className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50 dark:bg-slate-100 dark:text-slate-900"
-            >
-              {createCategory.isPending ? "Saving..." : "Save Category"}
-            </button>
+            <Button type="submit" loading={createCategory.isPending}>
+              Save category
+            </Button>
           </form>
-        </div>
+        </Card>
       )}
 
       {/* Expense form */}
       {showForm && (
-        <div className="rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-900">
-          <h3 className="mb-4 text-base font-semibold text-slate-900 dark:text-slate-100">Record Expense</h3>
-          <form onSubmit={form.handleSubmit(onSubmitExpense)} className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {/* Date */}
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Date</label>
-              <input
-                type="date"
-                {...form.register("date")}
-                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-              />
-              {form.formState.errors.date && (
-                <p className="mt-1 text-xs text-red-600">{form.formState.errors.date.message}</p>
-              )}
-            </div>
-
-            {/* Building */}
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Building</label>
-              <select
-                {...form.register("building")}
-                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-              >
+        <Card variant="glass" padding="md" className="animate-fade-up">
+          <p className="mb-5 font-display text-lg font-semibold text-ink-900">Record expense</p>
+          <form
+            onSubmit={form.handleSubmit(onSubmitExpense)}
+            className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3"
+          >
+            <Field label="Date *" error={form.formState.errors.date?.message}>
+              <input type="date" {...form.register("date")} className={inputCls} />
+            </Field>
+            <Field label="Building">
+              <select {...form.register("building")} className={inputCls}>
                 <option value="">Portfolio-wide (no building)</option>
                 {buildings?.map((b) => (
-                  <option key={b.id} value={b.id}>{b.name}</option>
+                  <option key={b.id} value={b.id}>
+                    {b.name}
+                  </option>
                 ))}
               </select>
-            </div>
-
-            {/* Category */}
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Category</label>
+            </Field>
+            <Field label="Category *" error={form.formState.errors.category?.message}>
               <select
                 {...form.register("category")}
                 disabled={!categories || categories.length === 0}
-                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                className={inputCls}
               >
-                <option value="">Select category...</option>
+                <option value="">Select category…</option>
                 {categories?.map((c) => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
                 ))}
               </select>
               {categories && categories.length === 0 && (
-                <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
-                  No categories yet — click &ldquo;Add Category&rdquo; above first.
+                <p className="mt-1 text-[11px] text-ochre-600">
+                  No categories yet — add one above first.
                 </p>
               )}
-              {form.formState.errors.category && (
-                <p className="mt-1 text-xs text-red-600">{form.formState.errors.category.message}</p>
-              )}
-            </div>
-
-            {/* Amount */}
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Amount (KES)</label>
+            </Field>
+            <Field label="Amount (KES) *" error={form.formState.errors.amount?.message}>
               <input
                 type="number"
                 step="0.01"
                 min="0"
                 {...form.register("amount")}
                 placeholder="0.00"
-                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                className={inputCls}
               />
-              {form.formState.errors.amount && (
-                <p className="mt-1 text-xs text-red-600">{form.formState.errors.amount.message}</p>
-              )}
-            </div>
-
-            {/* Description */}
-            <div className="sm:col-span-2">
-              <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Description</label>
+            </Field>
+            <Field
+              label="Description *"
+              error={form.formState.errors.description?.message}
+              className="sm:col-span-2"
+            >
               <input
                 {...form.register("description")}
                 placeholder="e.g. Fixed leak in Unit A3 bathroom"
-                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                className={inputCls}
               />
-              {form.formState.errors.description && (
-                <p className="mt-1 text-xs text-red-600">{form.formState.errors.description.message}</p>
-              )}
-            </div>
-
-            {/* Reference */}
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Reference (optional)</label>
+            </Field>
+            <Field label="Reference">
               <input
                 {...form.register("reference")}
                 placeholder="Receipt / invoice number"
-                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                className={inputCls}
               />
-            </div>
-
-            {/* Period */}
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Period</label>
+            </Field>
+            <Field label="Period">
               <div className="flex gap-2">
-                <select
-                  {...form.register("period_month")}
-                  className="flex-1 rounded-lg border border-slate-200 px-2 py-2 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                >
+                <select {...form.register("period_month")} className={inputCls}>
                   {Array.from({ length: 12 }, (_, i) => (
                     <option key={i + 1} value={i + 1}>
                       {new Date(2000, i).toLocaleString("default", { month: "short" })}
@@ -282,143 +324,125 @@ export default function ExpensesPage() {
                 <input
                   type="number"
                   {...form.register("period_year")}
-                  className="w-20 rounded-lg border border-slate-200 px-2 py-2 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  className={inputCls + " w-24"}
                 />
               </div>
-            </div>
-
-            {/* Notes */}
-            <div className="sm:col-span-2">
-              <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Notes (optional)</label>
-              <textarea
-                {...form.register("notes")}
-                rows={2}
-                placeholder="Any additional details..."
-                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-              />
-            </div>
-
-            {/* Submit */}
+            </Field>
+            <Field label="Notes" className="sm:col-span-2">
+              <textarea {...form.register("notes")} rows={2} className={inputCls} />
+            </Field>
             <div className="flex items-end">
-              <button
-                type="submit"
-                disabled={createExpense.isPending}
-                className="w-full rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50 dark:bg-slate-100 dark:text-slate-900"
-              >
-                {createExpense.isPending ? "Saving..." : "Save Expense"}
-              </button>
+              <Button type="submit" loading={createExpense.isPending} className="w-full">
+                Save expense
+              </Button>
             </div>
           </form>
-        </div>
+        </Card>
       )}
 
-      {/* Filter bar */}
-      <div className="flex flex-wrap items-center gap-3">
-        <span className="text-sm font-medium text-slate-600 dark:text-slate-400">Filter:</span>
-        <select
-          value={filterBuilding}
-          onChange={(e) => setFilterBuilding(e.target.value as "" | "none" | string)}
-          className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-        >
-          <option value="">All buildings</option>
-          <option value="none">Portfolio-wide only</option>
-          {buildings?.map((b) => (
-            <option key={b.id} value={b.id}>{b.name}</option>
+      {/* Expenses table */}
+      {isLoading ? (
+        <div className="space-y-2">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <Skeleton key={i} className="h-14" />
           ))}
-        </select>
-        <select
-          value={filterMonth}
-          onChange={(e) => setFilterMonth(Number(e.target.value))}
-          className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-        >
-          {Array.from({ length: 12 }, (_, i) => (
-            <option key={i + 1} value={i + 1}>
-              {new Date(2000, i).toLocaleString("default", { month: "long" })}
-            </option>
-          ))}
-        </select>
-        <input
-          type="number"
-          min="2000"
-          max="2100"
-          value={filterYear}
-          onChange={(e) => {
-            const v = Number(e.target.value);
-            if (Number.isFinite(v) && v >= 2000) setFilterYear(v);
-          }}
-          className="w-24 rounded-lg border border-slate-200 px-3 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-        />
-        {expenses && expenses.length > 0 && (
-          <span className="ml-auto text-sm font-semibold text-slate-700 dark:text-slate-300">
-            Total: <span className="text-red-600">KES {totalForPeriod.toLocaleString()}</span>
-          </span>
-        )}
-      </div>
-
-      {/* Table */}
-      <div className="rounded-xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
-        {isLoading ? (
-          <p className="p-6 text-sm text-slate-500">Loading...</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-sm">
-              <thead className="bg-slate-50 text-left text-xs font-medium uppercase text-slate-500 dark:bg-slate-800 dark:text-slate-400">
-                <tr>
-                  <th className="px-4 py-3">Date</th>
-                  <th className="px-4 py-3">Building</th>
-                  <th className="px-4 py-3">Category</th>
-                  <th className="px-4 py-3">Description</th>
-                  <th className="px-4 py-3">Amount</th>
-                  <th className="px-4 py-3">Reference</th>
-                  <th className="px-4 py-3"></th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {!expenses || expenses.length === 0 ? (
-                  <tr>
-                    <td colSpan={7} className="px-4 py-8 text-center text-slate-400">
-                      No expenses recorded for this period.
-                    </td>
-                  </tr>
-                ) : (
-                  expenses.map((e) => (
-                    <tr key={e.id} className="hover:bg-slate-50 dark:hover:bg-slate-800">
-                      <td className="px-4 py-3 text-slate-700 dark:text-slate-300 whitespace-nowrap">{e.date}</td>
-                      <td className="px-4 py-3 text-slate-500 dark:text-slate-400 whitespace-nowrap">
-                        {e.building_name ?? <span className="italic text-slate-400">Portfolio</span>}
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className="inline-block rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700 dark:bg-slate-700 dark:text-slate-300">
-                          {e.category_name}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-slate-700 dark:text-slate-300 max-w-xs truncate">{e.description}</td>
-                      <td className="px-4 py-3 font-medium text-red-600 whitespace-nowrap">
-                        KES {parseFloat(e.amount).toLocaleString()}
-                      </td>
-                      <td className="px-4 py-3 text-slate-500 dark:text-slate-400">{e.reference || "—"}</td>
-                      <td className="px-4 py-3">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (window.confirm("Delete this expense?")) {
-                              deleteExpense.mutate(e.id);
-                            }
-                          }}
-                          className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
-                          aria-label="Delete expense"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+        </div>
+      ) : !expenses?.length ? (
+        <Card variant="glass" padding="none" className="py-4">
+          <EmptyState
+            icon={<PlusCircle className="h-5 w-5" />}
+            title="No expenses recorded"
+            description="This period has no recorded expenses yet."
+          />
+        </Card>
+      ) : (
+        <>
+          <div className="hidden md:block">
+            <Table>
+              <THead>
+                <TR>
+                  <TH>Date</TH>
+                  <TH>Building</TH>
+                  <TH>Category</TH>
+                  <TH>Description</TH>
+                  <TH className="text-right">Amount</TH>
+                  <TH>Reference</TH>
+                  <TH></TH>
+                </TR>
+              </THead>
+              <TBody>
+                {expenses.map((e) => (
+                  <TR key={e.id}>
+                    <TD className="whitespace-nowrap text-ink-700">{e.date}</TD>
+                    <TD className="whitespace-nowrap text-ink-500">
+                      {e.building_name ?? <span className="italic">Portfolio</span>}
+                    </TD>
+                    <TD>
+                      <Badge tone="peri">{e.category_name}</Badge>
+                    </TD>
+                    <TD className="max-w-xs truncate">{e.description}</TD>
+                    <TD className="text-right whitespace-nowrap font-semibold tabular-nums text-status-unpaid">
+                      KES {parseFloat(e.amount).toLocaleString()}
+                    </TD>
+                    <TD className="font-mono text-[11px] text-ink-400">{e.reference || "—"}</TD>
+                    <TD>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (window.confirm("Delete this expense?")) {
+                            deleteExpense.mutate(e.id);
+                          }
+                        }}
+                        className="rounded-md p-1.5 text-ink-400 hover:bg-status-unpaid/10 hover:text-status-unpaid"
+                        aria-label="Delete expense"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </TD>
+                  </TR>
+                ))}
+              </TBody>
+            </Table>
           </div>
-        )}
-      </div>
+
+          <div className="grid gap-3 md:hidden">
+            {expenses.map((e) => (
+              <Card key={e.id} variant="glass" padding="sm">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <Badge tone="peri">{e.category_name}</Badge>
+                      <span className="text-[11px] text-ink-500">{e.date}</span>
+                    </div>
+                    <p className="mt-2 text-sm font-medium text-ink-900">{e.description}</p>
+                    <p className="mt-1 text-[11px] text-ink-500">
+                      {e.building_name ?? "Portfolio-wide"}
+                      {e.reference ? ` · ${e.reference}` : ""}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-sm font-semibold tabular-nums text-status-unpaid">
+                      KES {parseFloat(e.amount).toLocaleString()}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (window.confirm("Delete this expense?")) {
+                          deleteExpense.mutate(e.id);
+                        }
+                      }}
+                      className="mt-2 rounded-md p-1.5 text-ink-400 hover:bg-status-unpaid/10 hover:text-status-unpaid"
+                      aria-label="Delete expense"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+              </Card>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }

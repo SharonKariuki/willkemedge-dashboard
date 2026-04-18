@@ -1,11 +1,16 @@
 """Payment API views."""
+import random
+import string
+
 from django.utils import timezone
-from rest_framework import viewsets
+from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from .models import Arrears, Payment
+from apps.tenants.models import Tenant
+
+from .models import Arrears, Payment, PaymentSource
 from .serializers import (
     ArrearsSerializer,
     CollectionProgressSerializer,
@@ -13,6 +18,28 @@ from .serializers import (
     PaymentSerializer,
 )
 from .services import get_collection_progress, process_payment
+
+
+class MockPaymentSerializer(serializers.Serializer):
+    tenant = serializers.IntegerField(min_value=1)
+    amount = serializers.DecimalField(max_digits=10, decimal_places=2, min_value=1)
+    source = serializers.ChoiceField(
+        choices=[PaymentSource.MPESA, PaymentSource.BANK, PaymentSource.CASH]
+    )
+
+
+def _mock_reference(source: str) -> str:
+    prefix = {"mpesa": "MP", "bank": "BK", "cash": "CH"}.get(source, "RX")
+    tail = "".join(random.choices(string.ascii_uppercase + string.digits, k=8))
+    return f"{prefix}{tail}"
+
+
+def _mock_notes(source: str) -> str:
+    return {
+        "mpesa": "Simulated M-Pesa C2B payment",
+        "bank": "Simulated bank transfer",
+        "cash": "Cash paid at the office",
+    }.get(source, "Mock payment")
 
 
 class PaymentViewSet(viewsets.ModelViewSet):
@@ -67,6 +94,45 @@ class PaymentViewSet(viewsets.ModelViewSet):
         """GET /api/payments/recent/ — last 10 payments."""
         qs = self.get_queryset()[:10]
         return Response(PaymentSerializer(qs, many=True).data)
+
+    @action(detail=False, methods=["post"], url_path="mock")
+    def mock(self, request):
+        """
+        POST /api/payments/mock/
+        body: {tenant, amount, source}
+
+        Simulates a realistic payment from M-Pesa, bank, or cash with an
+        auto-generated reference. Runs the same processing pipeline as the
+        real webhooks so arrears + unit status update correctly.
+        """
+        serializer = MockPaymentSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        try:
+            tenant = Tenant.objects.get(pk=data["tenant"])
+        except Tenant.DoesNotExist:
+            return Response(
+                {"detail": "Tenant not found."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        now = timezone.now()
+        source = data["source"]
+        payment = process_payment(
+            tenant=tenant,
+            amount=data["amount"],
+            payment_date=now.date(),
+            period_month=now.month,
+            period_year=now.year,
+            source=source,
+            reference=_mock_reference(source),
+            notes=_mock_notes(source),
+        )
+        return Response(
+            PaymentSerializer(payment).data,
+            status=status.HTTP_201_CREATED,
+        )
 
     @action(detail=False, methods=["get"], url_path="collection-progress")
     def collection_progress(self, request):

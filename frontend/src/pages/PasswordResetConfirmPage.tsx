@@ -1,32 +1,40 @@
-/**
- * PasswordResetConfirmPage — user sets a new password using the token from email.
- * Route: /reset-password/confirm/:token
- */
 import { zodResolver } from "@hookform/resolvers/zod";
+import { CheckCircle2, Lock } from "lucide-react";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
-import { Link, useNavigate, useParams } from "react-router-dom";
 import toast from "react-hot-toast";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { z } from "zod";
+
+import AuthShell from "@/components/AuthShell";
+import { Button } from "@/components/ui";
 import { api } from "@/lib/api";
 
-const schema = z.object({
-  password: z.string().min(12, "Password must be at least 12 characters"),
-  confirm:  z.string(),
-}).refine((d) => d.password === d.confirm, {
-  message: "Passwords do not match",
-  path: ["confirm"],
-});
+const schema = z
+  .object({
+    password: z.string().min(12, "Password must be at least 12 characters"),
+    confirm: z.string(),
+  })
+  .refine((d) => d.password === d.confirm, {
+    message: "Passwords do not match",
+    path: ["confirm"],
+  });
 
 type FormValues = z.infer<typeof schema>;
+
+const inputCls =
+  "w-full rounded-md bg-surface-raised hairline py-2.5 pl-10 pr-3 text-sm text-ink-900 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-sage-500/40";
 
 export default function PasswordResetConfirmPage() {
   const { token } = useParams<{ token: string }>();
   const navigate = useNavigate();
   const [done, setDone] = useState(false);
 
-  const { register, handleSubmit, formState: { errors, isSubmitting } } =
-    useForm<FormValues>({ resolver: zodResolver(schema) });
+  const {
+    register,
+    handleSubmit,
+    formState: { errors, isSubmitting },
+  } = useForm<FormValues>({ resolver: zodResolver(schema) });
 
   const onSubmit = async ({ password }: FormValues) => {
     try {
@@ -40,48 +48,44 @@ export default function PasswordResetConfirmPage() {
 
   if (done) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4">
-        <div className="w-full max-w-sm rounded-2xl bg-white p-8 shadow-sm text-center">
-          <div className="text-4xl mb-3">✅</div>
-          <h2 className="text-xl font-bold text-slate-900">Password updated</h2>
-          <p className="mt-2 text-sm text-slate-500">Redirecting you to login…</p>
+      <AuthShell title="Password updated" subtitle="Redirecting you to login…">
+        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-sage-50 text-sage-600 dark:bg-sage-700/20">
+          <CheckCircle2 className="h-6 w-6" />
         </div>
-      </div>
+      </AuthShell>
     );
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4">
-      <div className="w-full max-w-sm rounded-2xl bg-white p-8 shadow-sm">
-        <h2 className="text-xl font-bold text-slate-900">Set new password</h2>
-        <form onSubmit={handleSubmit(onSubmit)} className="mt-6 space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-slate-700">New password</label>
-            <input
-              type="password" {...register("password")} autoFocus
-              className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400"
-            />
-            {errors.password && <p className="mt-1 text-xs text-red-600">{errors.password.message}</p>}
+    <AuthShell title="Set a new password" subtitle="Choose a password at least 12 characters long.">
+      <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+        <div>
+          <label className="mb-1 block text-[11px] font-medium uppercase tracking-[0.14em] text-ink-500">
+            New password
+          </label>
+          <div className="relative">
+            <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400" />
+            <input type="password" {...register("password")} autoFocus className={inputCls} />
           </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-700">Confirm password</label>
-            <input
-              type="password" {...register("confirm")}
-              className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400"
-            />
-            {errors.confirm && <p className="mt-1 text-xs text-red-600">{errors.confirm.message}</p>}
+          {errors.password && <p className="mt-1 text-[11px] text-status-unpaid">{errors.password.message}</p>}
+        </div>
+        <div>
+          <label className="mb-1 block text-[11px] font-medium uppercase tracking-[0.14em] text-ink-500">
+            Confirm password
+          </label>
+          <div className="relative">
+            <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400" />
+            <input type="password" {...register("confirm")} className={inputCls} />
           </div>
-          <button
-            type="submit" disabled={isSubmitting}
-            className="w-full rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60"
-          >
-            {isSubmitting ? "Updating..." : "Update password"}
-          </button>
-        </form>
-        <Link to="/login" className="mt-4 block text-center text-sm text-slate-500 underline">
+          {errors.confirm && <p className="mt-1 text-[11px] text-status-unpaid">{errors.confirm.message}</p>}
+        </div>
+        <Button type="submit" size="lg" loading={isSubmitting} className="w-full">
+          Update password
+        </Button>
+        <Link to="/login" className="block text-center text-sm text-ink-500 hover:text-ink-900">
           Back to login
         </Link>
-      </div>
-    </div>
+      </form>
+    </AuthShell>
   );
 }
