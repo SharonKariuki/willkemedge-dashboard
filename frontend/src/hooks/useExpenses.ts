@@ -12,6 +12,8 @@ export interface ExpenseCategory {
 export interface Expense {
   id: number;
   date: string;
+  building: number | null;
+  building_name: string | null;
   category: number;
   category_name: string;
   amount: string;
@@ -47,13 +49,19 @@ export function useCreateExpenseCategory() {
   });
 }
 
-export function useExpenses(month?: number, year?: number) {
+export function useExpenses(
+  month?: number,
+  year?: number,
+  building?: number | "none" | null,
+) {
   return useQuery<Expense[]>({
-    queryKey: ["expenses", month, year],
+    queryKey: ["expenses", month, year, building ?? null],
     queryFn: async () => {
-      const params: Record<string, number> = {};
+      const params: Record<string, string | number> = {};
       if (month) params.month = month;
       if (year) params.year = year;
+      if (building === "none") params.building = "none";
+      else if (typeof building === "number") params.building = building;
       const { data } = await api.get("/expenses/", { params });
       return data;
     },
@@ -65,6 +73,7 @@ export function useCreateExpense() {
   return useMutation({
     mutationFn: async (payload: {
       date: string;
+      building: number | null;
       category: number;
       amount: string;
       description: string;

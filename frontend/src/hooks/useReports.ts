@@ -67,41 +67,54 @@ export function useMoveLog() {
   });
 }
 
-export function useProfitLoss(month: number, year: number) {
+function withBuilding<T extends Record<string, unknown>>(params: T, building?: number | null): T {
+  if (typeof building === "number") return { ...params, building } as T;
+  return params;
+}
+
+export function useProfitLoss(month: number, year: number, building?: number | null) {
   return useQuery({
-    queryKey: ["reports", "profit-loss", "monthly", month, year],
+    queryKey: ["reports", "profit-loss", "monthly", month, year, building ?? null],
     queryFn: async () => {
-      const { data } = await api.get("/reports/profit-loss/", { params: { month, year, mode: "monthly" } });
+      const { data } = await api.get("/reports/profit-loss/", {
+        params: withBuilding({ month, year, mode: "monthly" }, building),
+      });
       return data;
     },
   });
 }
 
-export function useProfitLossAnnual(year: number) {
+export function useProfitLossAnnual(year: number, building?: number | null) {
   return useQuery({
-    queryKey: ["reports", "profit-loss", "annual", year],
+    queryKey: ["reports", "profit-loss", "annual", year, building ?? null],
     queryFn: async () => {
-      const { data } = await api.get("/reports/profit-loss/", { params: { year, mode: "annual" } });
+      const { data } = await api.get("/reports/profit-loss/", {
+        params: withBuilding({ year, mode: "annual" }, building),
+      });
       return data;
     },
   });
 }
 
-export function useTrialBalance(month: number, year: number) {
+export function useTrialBalance(month: number, year: number, building?: number | null) {
   return useQuery({
-    queryKey: ["reports", "trial-balance", month, year],
+    queryKey: ["reports", "trial-balance", month, year, building ?? null],
     queryFn: async () => {
-      const { data } = await api.get("/reports/trial-balance/", { params: { month, year } });
+      const { data } = await api.get("/reports/trial-balance/", {
+        params: withBuilding({ month, year }, building),
+      });
       return data;
     },
   });
 }
 
-export function useExpenseBreakdown(month: number, year: number) {
+export function useExpenseBreakdown(month: number, year: number, building?: number | null) {
   return useQuery({
-    queryKey: ["reports", "expense-breakdown", month, year],
+    queryKey: ["reports", "expense-breakdown", month, year, building ?? null],
     queryFn: async () => {
-      const { data } = await api.get("/reports/expense-breakdown/", { params: { month, year } });
+      const { data } = await api.get("/reports/expense-breakdown/", {
+        params: withBuilding({ month, year }, building),
+      });
       return data;
     },
   });

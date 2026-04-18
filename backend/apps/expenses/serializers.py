@@ -13,12 +13,15 @@ class ExpenseCategorySerializer(serializers.ModelSerializer):
 
 class ExpenseSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source="category.name", read_only=True)
+    building_name = serializers.CharField(source="building.name", read_only=True, default=None)
 
     class Meta:
         model = Expense
         fields = [
             "id",
             "date",
+            "building",
+            "building_name",
             "category",
             "category_name",
             "amount",
@@ -30,7 +33,7 @@ class ExpenseSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "category_name", "created_at", "updated_at"]
+        read_only_fields = ["id", "category_name", "building_name", "created_at", "updated_at"]
 
     def validate_period_month(self, value):
         if not 1 <= value <= 12:

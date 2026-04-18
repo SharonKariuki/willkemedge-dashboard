@@ -14,12 +14,14 @@ import {
   useCreateExpenseCategory,
   useDeleteExpense,
 } from "@/hooks/useExpenses";
+import { useBuildings } from "@/hooks/useBuildings";
 
 // ---------------------------------------------------------------------------
 // Validation schema
 // ---------------------------------------------------------------------------
 const expenseSchema = z.object({
   date: z.string().min(1, "Date is required"),
+  building: z.string().optional(),
   category: z.coerce.number().min(1, "Category is required"),
   amount: z.string().min(1, "Amount is required"),
   description: z.string().min(2, "Description is required"),
@@ -44,11 +46,17 @@ export default function ExpensesPage() {
   const now = new Date();
   const [filterMonth, setFilterMonth] = useState(now.getMonth() + 1);
   const [filterYear, setFilterYear] = useState(now.getFullYear());
+  // "" = all buildings, "none" = portfolio-wide only, "<id>" = specific
+  const [filterBuilding, setFilterBuilding] = useState<"" | "none" | string>("");
   const [showForm, setShowForm] = useState(false);
   const [showCategoryForm, setShowCategoryForm] = useState(false);
 
-  const { data: expenses, isLoading } = useExpenses(filterMonth, filterYear);
+  const buildingParam: number | "none" | null =
+    filterBuilding === "" ? null : filterBuilding === "none" ? "none" : Number(filterBuilding);
+
+  const { data: expenses, isLoading } = useExpenses(filterMonth, filterYear, buildingParam);
   const { data: categories } = useExpenseCategories();
+  const { data: buildings } = useBuildings();
   const createExpense = useCreateExpense();
   const deleteExpense = useDeleteExpense();
   const createCategory = useCreateExpenseCategory();
@@ -67,9 +75,11 @@ export default function ExpensesPage() {
   });
 
   const onSubmitExpense = (values: ExpenseFormData) => {
+    const { building, ...rest } = values;
     createExpense.mutate(
       {
-        ...values,
+        ...rest,
+        building: building && building !== "" ? Number(building) : null,
         reference: values.reference ?? "",
         notes: values.notes ?? "",
       },
@@ -179,18 +189,38 @@ export default function ExpensesPage() {
               )}
             </div>
 
+            {/* Building */}
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Building</label>
+              <select
+                {...form.register("building")}
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+              >
+                <option value="">Portfolio-wide (no building)</option>
+                {buildings?.map((b) => (
+                  <option key={b.id} value={b.id}>{b.name}</option>
+                ))}
+              </select>
+            </div>
+
             {/* Category */}
             <div>
               <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Category</label>
               <select
                 {...form.register("category")}
-                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                disabled={!categories || categories.length === 0}
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
               >
                 <option value="">Select category...</option>
                 {categories?.map((c) => (
                   <option key={c.id} value={c.id}>{c.name}</option>
                 ))}
               </select>
+              {categories && categories.length === 0 && (
+                <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+                  No categories yet — click &ldquo;Add Category&rdquo; above first.
+                </p>
+              )}
               {form.formState.errors.category && (
                 <p className="mt-1 text-xs text-red-600">{form.formState.errors.category.message}</p>
               )}
@@ -284,7 +314,18 @@ export default function ExpensesPage() {
 
       {/* Filter bar */}
       <div className="flex flex-wrap items-center gap-3">
-        <span className="text-sm font-medium text-slate-600 dark:text-slate-400">Filter period:</span>
+        <span className="text-sm font-medium text-slate-600 dark:text-slate-400">Filter:</span>
+        <select
+          value={filterBuilding}
+          onChange={(e) => setFilterBuilding(e.target.value as "" | "none" | string)}
+          className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+        >
+          <option value="">All buildings</option>
+          <option value="none">Portfolio-wide only</option>
+          {buildings?.map((b) => (
+            <option key={b.id} value={b.id}>{b.name}</option>
+          ))}
+        </select>
         <select
           value={filterMonth}
           onChange={(e) => setFilterMonth(Number(e.target.value))}
@@ -298,9 +339,14 @@ export default function ExpensesPage() {
         </select>
         <input
           type="number"
+          min="2000"
+          max="2100"
           value={filterYear}
-          onChange={(e) => setFilterYear(Number(e.target.value))}
-          className="w-20 rounded-lg border border-slate-200 px-3 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+          onChange={(e) => {
+            const v = Number(e.target.value);
+            if (Number.isFinite(v) && v >= 2000) setFilterYear(v);
+          }}
+          className="w-24 rounded-lg border border-slate-200 px-3 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
         />
         {expenses && expenses.length > 0 && (
           <span className="ml-auto text-sm font-semibold text-slate-700 dark:text-slate-300">
@@ -319,6 +365,7 @@ export default function ExpensesPage() {
               <thead className="bg-slate-50 text-left text-xs font-medium uppercase text-slate-500 dark:bg-slate-800 dark:text-slate-400">
                 <tr>
                   <th className="px-4 py-3">Date</th>
+                  <th className="px-4 py-3">Building</th>
                   <th className="px-4 py-3">Category</th>
                   <th className="px-4 py-3">Description</th>
                   <th className="px-4 py-3">Amount</th>
@@ -329,7 +376,7 @@ export default function ExpensesPage() {
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {!expenses || expenses.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="px-4 py-8 text-center text-slate-400">
+                    <td colSpan={7} className="px-4 py-8 text-center text-slate-400">
                       No expenses recorded for this period.
                     </td>
                   </tr>
@@ -337,6 +384,9 @@ export default function ExpensesPage() {
                   expenses.map((e) => (
                     <tr key={e.id} className="hover:bg-slate-50 dark:hover:bg-slate-800">
                       <td className="px-4 py-3 text-slate-700 dark:text-slate-300 whitespace-nowrap">{e.date}</td>
+                      <td className="px-4 py-3 text-slate-500 dark:text-slate-400 whitespace-nowrap">
+                        {e.building_name ?? <span className="italic text-slate-400">Portfolio</span>}
+                      </td>
                       <td className="px-4 py-3">
                         <span className="inline-block rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700 dark:bg-slate-700 dark:text-slate-300">
                           {e.category_name}

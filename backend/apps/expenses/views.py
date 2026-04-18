@@ -24,7 +24,7 @@ class ExpenseViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        qs = Expense.objects.select_related("category")
+        qs = Expense.objects.select_related("category", "building")
 
         month = self.request.query_params.get("month")
         year = self.request.query_params.get("year")
@@ -34,5 +34,11 @@ class ExpenseViewSet(viewsets.ModelViewSet):
         category = self.request.query_params.get("category")
         if category:
             qs = qs.filter(category_id=category)
+
+        building = self.request.query_params.get("building")
+        if building == "none":
+            qs = qs.filter(building__isnull=True)
+        elif building:
+            qs = qs.filter(building_id=building)
 
         return qs

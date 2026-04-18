@@ -15,6 +15,7 @@ import {
 import { useState } from "react";
 import { Bar, Doughnut } from "react-chartjs-2";
 
+import { useBuildings } from "@/hooks/useBuildings";
 import { useTenants } from "@/hooks/useTenants";
 import {
   useAnnualIncome,
@@ -326,9 +327,10 @@ function ProfitLossTab() {
   const [mode, setMode] = useState<"monthly" | "annual">("monthly");
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [year, setYear] = useState(now.getFullYear());
+  const [building, setBuilding] = useState<number | null>(null);
 
-  const monthly = useProfitLoss(month, year);
-  const annual = useProfitLossAnnual(year);
+  const monthly = useProfitLoss(month, year, building);
+  const annual = useProfitLossAnnual(year, building);
 
   const data = mode === "monthly" ? monthly.data : annual.data;
   const isLoading = mode === "monthly" ? monthly.isLoading : annual.isLoading;
@@ -365,6 +367,7 @@ function ProfitLossTab() {
       {/* Controls */}
       <div className="flex flex-wrap items-center gap-3">
         <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">Profit & Loss</h3>
+        <BuildingFilter value={building} onChange={setBuilding} />
         <div className="flex rounded-lg border border-slate-200 text-sm dark:border-slate-700">
           <button
             onClick={() => setMode("monthly")}
@@ -462,7 +465,8 @@ function TrialBalanceTab() {
   const now = new Date();
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [year, setYear] = useState(now.getFullYear());
-  const { data, isLoading } = useTrialBalance(month, year);
+  const [building, setBuilding] = useState<number | null>(null);
+  const { data, isLoading } = useTrialBalance(month, year, building);
 
   const exportHeaders = ["Account", "Debit (KES)", "Credit (KES)"];
   const exportRows = [
@@ -476,6 +480,7 @@ function TrialBalanceTab() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
         <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">Trial Balance</h3>
+        <BuildingFilter value={building} onChange={setBuilding} />
         <select value={month} onChange={(e) => setMonth(Number(e.target.value))} className="rounded border px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100">
           {Array.from({ length: 12 }, (_, i) => (
             <option key={i + 1} value={i + 1}>
@@ -550,7 +555,8 @@ function ExpenseBreakdownTab() {
   const now = new Date();
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [year, setYear] = useState(now.getFullYear());
-  const { data, isLoading } = useExpenseBreakdown(month, year);
+  const [building, setBuilding] = useState<number | null>(null);
+  const { data, isLoading } = useExpenseBreakdown(month, year, building);
 
   const exportHeaders = ["Category", "Total (KES)", "% of Expenses", "Entries"];
   const exportRows = (data?.categories ?? []).map((c: { category: string; total: number; percentage: number; count: number }) => [
@@ -561,6 +567,7 @@ function ExpenseBreakdownTab() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
         <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">Expense Breakdown</h3>
+        <BuildingFilter value={building} onChange={setBuilding} />
         <select value={month} onChange={(e) => setMonth(Number(e.target.value))} className="rounded border px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100">
           {Array.from({ length: 12 }, (_, i) => (
             <option key={i + 1} value={i + 1}>
@@ -630,6 +637,28 @@ function ExpenseBreakdownTab() {
 // ---------------------------------------------------------------------------
 // Shared components
 // ---------------------------------------------------------------------------
+function BuildingFilter({
+  value,
+  onChange,
+}: {
+  value: number | null;
+  onChange: (v: number | null) => void;
+}) {
+  const { data: buildings } = useBuildings();
+  return (
+    <select
+      value={value ?? ""}
+      onChange={(e) => onChange(e.target.value === "" ? null : Number(e.target.value))}
+      className="rounded border px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+    >
+      <option value="">All buildings</option>
+      {buildings?.map((b) => (
+        <option key={b.id} value={b.id}>{b.name}</option>
+      ))}
+    </select>
+  );
+}
+
 function SummaryCard({ label, value, color }: { label: string; value: string; color: "green" | "red" | "blue" }) {
   const colorClasses = {
     green: "text-green-700 dark:text-green-400",

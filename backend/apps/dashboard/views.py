@@ -5,7 +5,6 @@ Single /api/dashboard/summary/ call returns all KPIs, chart data, recent
 payments, and alerts. Report endpoints return filtered data for each report type.
 """
 from collections import defaultdict
-from datetime import date, timedelta
 from decimal import Decimal
 
 from django.db.models import Count, Q, Sum
@@ -67,8 +66,9 @@ class DashboardSummaryView(APIView):
         # --- 12-month income trend ---
         income_trend = []
         for i in range(11, -1, -1):
-            d = date(current_year, current_month, 1) - timedelta(days=i * 30)
-            m, y = d.month, d.year
+            total_months = current_year * 12 + (current_month - 1) - i
+            y, m0 = divmod(total_months, 12)
+            m = m0 + 1
             month_total = Payment.objects.filter(
                 period_month=m, period_year=y
             ).aggregate(total=Sum("amount"))["total"] or 0
@@ -339,13 +339,22 @@ class ProfitLossReportView(APIView):
     """
     GET /api/reports/profit-loss/?month=4&year=2026
     GET /api/reports/profit-loss/?year=2026&mode=annual
+    Optional: &building=<id>   (filters income + expenses to that building;
+                                 expenses without a building are excluded)
     """
 
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         mode = request.query_params.get("mode", "monthly")
+        building_id = request.query_params.get("building")
         now = timezone.now()
+
+        payments_qs = Payment.objects.all()
+        expenses_qs_all = Expense.objects.all()
+        if building_id:
+            payments_qs = payments_qs.filter(tenant__unit__building_id=building_id)
+            expenses_qs_all = expenses_qs_all.filter(building_id=building_id)
 
         if mode == "annual":
             year = int(request.query_params.get("year", now.year))
@@ -354,11 +363,11 @@ class ProfitLossReportView(APIView):
             grand_expenses = Decimal("0")
 
             for m in range(1, 13):
-                income = Payment.objects.filter(
+                income = payments_qs.filter(
                     period_month=m, period_year=year
                 ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
 
-                exp_total = Expense.objects.filter(
+                exp_total = expenses_qs_all.filter(
                     period_month=m, period_year=year
                 ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
 
@@ -374,6 +383,7 @@ class ProfitLossReportView(APIView):
             return Response({
                 "mode": "annual",
                 "year": year,
+                "building": int(building_id) if building_id else None,
                 "grand_income": float(grand_income),
                 "grand_expenses": float(grand_expenses),
                 "grand_net": float(grand_income - grand_expenses),
@@ -384,12 +394,12 @@ class ProfitLossReportView(APIView):
         month = int(request.query_params.get("month", now.month))
         year = int(request.query_params.get("year", now.year))
 
-        income = Payment.objects.filter(
+        income = payments_qs.filter(
             period_month=month, period_year=year
         ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
 
         expenses_qs = (
-            Expense.objects.filter(period_month=month, period_year=year)
+            expenses_qs_all.filter(period_month=month, period_year=year)
             .values("category__name")
             .annotate(total=Sum("amount"))
             .order_by("-total")
@@ -405,6 +415,7 @@ class ProfitLossReportView(APIView):
         return Response({
             "mode": "monthly",
             "period": f"{month}/{year}",
+            "building": int(building_id) if building_id else None,
             "income": float(income),
             "total_expenses": total_expenses,
             "net_profit": net_profit,
@@ -415,11 +426,15 @@ class ProfitLossReportView(APIView):
 class TrialBalanceView(APIView):
     """
     GET /api/reports/trial-balance/?month=4&year=2026
+    Optional: &building=<id>
 
     Double-entry trial balance proving the books are consistent:
-      Debit:  Cash (collected - paid out) + Accounts Receivable + each Expense
-      Credit: Rent Revenue (expected)
-    Total Debits must equal Total Credits.
+      Dr. Cash / Bank (collected)       - rent received
+      Dr. Accounts Receivable (arrears) - rent owed
+      Dr. Expense accounts              - costs incurred
+      Cr. Rent Revenue (expected)       - billed income
+      Cr. Cash / Bank (expenses paid)   - offsets expense debits
+    Balanced iff  collected + AR == expected.
     """
 
     permission_classes = [IsAuthenticated]
@@ -428,24 +443,33 @@ class TrialBalanceView(APIView):
         now = timezone.now()
         month = int(request.query_params.get("month", now.month))
         year = int(request.query_params.get("year", now.year))
+        building_id = request.query_params.get("building")
 
-        collected = Payment.objects.filter(
-            period_month=month, period_year=year
-        ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
+        payments_qs = Payment.objects.filter(period_month=month, period_year=year)
+        arrears_qs = Arrears.objects.filter(period_month=month, period_year=year)
+        tenants_qs = Tenant.objects.filter(status=TenantStatus.ACTIVE)
+        expenses_base = Expense.objects.filter(period_month=month, period_year=year)
 
-        # Expected = sum of expected_rent stored in Arrears (covers all tenants that month)
-        expected = Arrears.objects.filter(
-            period_month=month, period_year=year
-        ).aggregate(total=Sum("expected_rent"))["total"] or Decimal("0")
+        if building_id:
+            payments_qs = payments_qs.filter(tenant__unit__building_id=building_id)
+            arrears_qs = arrears_qs.filter(tenant__unit__building_id=building_id)
+            tenants_qs = tenants_qs.filter(unit__building_id=building_id)
+            expenses_base = expenses_base.filter(building_id=building_id)
+
+        collected = payments_qs.aggregate(total=Sum("amount"))["total"] or Decimal("0")
+
+        # Expected rent = sum of active tenants' monthly_rent (source of truth,
+        # independent of whether Arrears rows have been posted for the period).
+        expected = tenants_qs.aggregate(total=Sum("monthly_rent"))["total"] or Decimal("0")
 
         # Accounts Receivable = uncollected rent (arrears balances for the period)
-        accounts_receivable = Arrears.objects.filter(
-            period_month=month, period_year=year, is_cleared=False
-        ).aggregate(total=Sum("balance"))["total"] or Decimal("0")
+        accounts_receivable = arrears_qs.filter(is_cleared=False).aggregate(
+            total=Sum("balance")
+        )["total"] or Decimal("0")
 
-        # Expenses grouped by category
+        # Expenses grouped by category (debits: each expense debits its account)
         expenses_qs = (
-            Expense.objects.filter(period_month=month, period_year=year)
+            expenses_base
             .values("category__name")
             .annotate(total=Sum("amount"))
             .order_by("category__name")
@@ -456,17 +480,19 @@ class TrialBalanceView(APIView):
         ]
         total_expenses = sum(r["debit"] for r in expense_rows)
 
-        # Cash account = collected - expenses paid (net cash position)
-        cash_balance = float(collected) - total_expenses
-        if cash_balance >= 0:
-            cash_entry = {"account": "Cash / Bank", "debit": cash_balance, "credit": 0.0}
-        else:
-            cash_entry = {"account": "Cash / Bank (Overdraft)", "debit": 0.0, "credit": abs(cash_balance)}
-
+        # Proper double-entry ledger:
+        #   Dr. Cash / Bank (rent collected)         — money received
+        #   Dr. Accounts Receivable (arrears)        — money owed
+        #   Dr. Expense accounts                     — costs incurred
+        #   Cr. Rent Revenue (expected)              — billed income
+        #   Cr. Cash / Bank (expenses paid)          — offsets the expense debits
+        # Books balance iff  collected + AR == expected  (bookkeeping integrity).
+        cash_in_entry = {"account": "Cash / Bank (collected)", "debit": float(collected), "credit": 0.0}
         ar_entry = {"account": "Accounts Receivable (Arrears)", "debit": float(accounts_receivable), "credit": 0.0}
+        cash_out_entry = {"account": "Cash / Bank (expenses paid)", "debit": 0.0, "credit": total_expenses}
         revenue_entry = {"account": "Rent Revenue", "debit": 0.0, "credit": float(expected)}
 
-        accounts = [cash_entry, ar_entry] + expense_rows + [revenue_entry]
+        accounts = [cash_in_entry, ar_entry] + expense_rows + [cash_out_entry, revenue_entry]
 
         total_debit = sum(a["debit"] for a in accounts)
         total_credit = sum(a["credit"] for a in accounts)
@@ -474,6 +500,7 @@ class TrialBalanceView(APIView):
 
         return Response({
             "period": f"{month}/{year}",
+            "building": int(building_id) if building_id else None,
             "accounts": accounts,
             "total_debit": round(total_debit, 2),
             "total_credit": round(total_credit, 2),
@@ -482,7 +509,10 @@ class TrialBalanceView(APIView):
 
 
 class ExpenseBreakdownReportView(APIView):
-    """GET /api/reports/expense-breakdown/?month=4&year=2026"""
+    """
+    GET /api/reports/expense-breakdown/?month=4&year=2026
+    Optional: &building=<id>
+    """
 
     permission_classes = [IsAuthenticated]
 
@@ -490,9 +520,16 @@ class ExpenseBreakdownReportView(APIView):
         now = timezone.now()
         month = int(request.query_params.get("month", now.month))
         year = int(request.query_params.get("year", now.year))
+        building_id = request.query_params.get("building")
+
+        expenses_base = Expense.objects.filter(period_month=month, period_year=year)
+        payments_qs = Payment.objects.filter(period_month=month, period_year=year)
+        if building_id:
+            expenses_base = expenses_base.filter(building_id=building_id)
+            payments_qs = payments_qs.filter(tenant__unit__building_id=building_id)
 
         expenses_qs = (
-            Expense.objects.filter(period_month=month, period_year=year)
+            expenses_base
             .values("category__name")
             .annotate(total=Sum("amount"), count=Count("id"))
             .order_by("-total")
@@ -511,13 +548,11 @@ class ExpenseBreakdownReportView(APIView):
         for r in rows:
             r["percentage"] = round(r["total"] / grand_total * 100, 1) if grand_total else 0.0
 
-        # Comparison against income for the period
-        income = Payment.objects.filter(
-            period_month=month, period_year=year
-        ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
+        income = payments_qs.aggregate(total=Sum("amount"))["total"] or Decimal("0")
 
         return Response({
             "period": f"{month}/{year}",
+            "building": int(building_id) if building_id else None,
             "categories": rows,
             "total_expenses": grand_total,
             "total_income": float(income),
