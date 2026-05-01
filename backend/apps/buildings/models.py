@@ -4,6 +4,10 @@ Building and Unit models.
 A Building groups Units. Each Unit has a status reflecting its current
 occupancy and payment state. Status transitions are handled by the
 service layer (services.py), not by direct field assignment.
+
+Unit.classification ("RESIDENTIAL" / "BUSINESS") is the tax-domain trigger
+consumed by the payment system. It is intentionally separate from
+unit_type (the physical layout descriptor).
 """
 from django.db import models
 
@@ -23,6 +27,18 @@ class UnitStatus(models.TextChoices):
     OCCUPIED_PARTIAL = "occupied_partial", "Occupied — Partial"
     OCCUPIED_UNPAID = "occupied_unpaid", "Occupied — Unpaid"
     ARREARS = "arrears", "Arrears"
+
+
+class UnitClassification(models.TextChoices):
+    """
+    Tax-domain classification that drives VAT logic in the payment system.
+
+    RESIDENTIAL → 0 % VAT (exempt)
+    BUSINESS    → 16 % VAT applied to base rent
+    """
+
+    RESIDENTIAL = "RESIDENTIAL", "Residential"
+    BUSINESS = "BUSINESS", "Business / Commercial"
 
 
 class Building(models.Model):
@@ -69,6 +85,19 @@ class Unit(models.Model):
             ("shop", "Shop / Commercial"),
         ],
         default="single",
+    )
+    # Tax-domain trigger: drives VAT in payment processing.
+    # Kept separate from unit_type because physical layout and tax treatment
+    # are independent concerns (e.g. a bedsitter can be leased commercially).
+    classification = models.CharField(
+        max_length=15,
+        choices=UnitClassification.choices,
+        default=UnitClassification.RESIDENTIAL,
+        db_index=True,
+        help_text=(
+            "RESIDENTIAL = 0 % VAT. "
+            "BUSINESS = 16 % VAT applied to base rent at payment time."
+        ),
     )
     monthly_rent = models.DecimalField(
         max_digits=10,

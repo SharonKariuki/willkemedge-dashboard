@@ -10,12 +10,15 @@ from rest_framework.response import Response
 
 from apps.tenants.models import Tenant
 
-from .models import Arrears, Payment, PaymentSource
+from .models import Arrears, Payment, PaymentSource, Transaction
+from .receipt_service import generate_receipt
 from .serializers import (
     ArrearsSerializer,
     CollectionProgressSerializer,
     PaymentCreateSerializer,
     PaymentSerializer,
+    ReceiptSerializer,
+    TransactionSerializer,
 )
 from .services import get_collection_progress, process_payment
 
@@ -99,11 +102,8 @@ class PaymentViewSet(viewsets.ModelViewSet):
     def mock(self, request):
         """
         POST /api/payments/mock/
-        body: {tenant, amount, source}
-
-        Simulates a realistic payment from M-Pesa, bank, or cash with an
-        auto-generated reference. Runs the same processing pipeline as the
-        real webhooks so arrears + unit status update correctly.
+        Simulates a realistic payment. Runs the full processing pipeline
+        so arrears + unit status + Transaction are all created correctly.
         """
         serializer = MockPaymentSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -165,3 +165,61 @@ class ArrearsViewSet(viewsets.ReadOnlyModelViewSet):
             qs = qs.filter(tenant_id=tenant_id)
 
         return qs
+
+
+class TransactionViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Read-only Transaction list and detail.
+    GET /api/payments/transactions/
+    GET /api/payments/transactions/{id}/
+    GET /api/payments/transactions/{id}/receipt/
+    """
+
+    serializer_class = TransactionSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        qs = Transaction.objects.select_related(
+            "tenant",
+            "tenant__unit",
+            "tenant__unit__building",
+            "payment",
+        )
+
+        tenant_id = self.request.query_params.get("tenant")
+        if tenant_id:
+            qs = qs.filter(tenant_id=tenant_id)
+
+        classification = self.request.query_params.get("classification")
+        if classification:
+            qs = qs.filter(unit_classification=classification.upper())
+
+        return qs
+
+    @action(detail=True, methods=["get"], url_path="receipt")
+    def receipt(self, request, pk=None):
+        """
+        GET /api/payments/transactions/{id}/receipt/
+
+        Returns receipt data built from stored Transaction fields only.
+        Optionally include outstanding_balance if the tenant has open arrears.
+        """
+        txn = self.get_object()
+
+        # Fetch outstanding balance from latest arrears if available.
+        outstanding = None
+        try:
+            from .models import Arrears
+            latest_arrears = (
+                Arrears.objects.filter(tenant=txn.tenant, is_cleared=False)
+                .order_by("-period_year", "-period_month")
+                .first()
+            )
+            if latest_arrears:
+                outstanding = latest_arrears.balance
+        except Exception:
+            pass
+
+        receipt_data = generate_receipt(txn, outstanding_balance=outstanding)
+        serializer = ReceiptSerializer(receipt_data)
+        return Response(serializer.data)

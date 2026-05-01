@@ -22,7 +22,6 @@ from apps.expenses.models import Expense, ExpenseCategory
 from apps.payments.models import Arrears, Payment, PaymentSource
 from apps.tenants.models import Tenant, TenantStatus
 
-
 FIRST_NAMES = [
     "Amani", "Brian", "Catherine", "Daniel", "Esther", "Fatuma", "George",
     "Hannah", "Ibrahim", "Joyce", "Kevin", "Linda", "Mary", "Nicholas",
