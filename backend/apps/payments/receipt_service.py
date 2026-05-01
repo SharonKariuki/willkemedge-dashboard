@@ -17,7 +17,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import Optional
 
 from apps.buildings.models import UnitClassification
 
@@ -55,14 +54,14 @@ class ReceiptData:
     show_total_only: bool           # True iff RESIDENTIAL
 
     # --- Optional fields (toggled by caller) ---
-    outstanding_balance: Optional[Decimal] = field(default=None)
-    payment_date: Optional[str] = field(default=None)
+    outstanding_balance: Decimal | None = field(default=None)
+    payment_date: str | None = field(default=None)
 
 
 def generate_receipt(
     transaction,
     *,
-    outstanding_balance: Optional[Decimal] = None,
+    outstanding_balance: Decimal | None = None,
 ) -> ReceiptData:
     """
     Build a ReceiptData from a Transaction ORM instance.
