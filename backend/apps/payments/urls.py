@@ -4,13 +4,14 @@ from rest_framework.routers import DefaultRouter
 
 from .bank import BankWebhookView
 from .notification_views import NotificationViewSet
-from .views import ArrearsViewSet, PaymentViewSet
+from .views import ArrearsViewSet, PaymentViewSet, TransactionViewSet
 from .views_mpesa import MpesaConfirmView, MpesaValidateView
 
 router = DefaultRouter()
 router.register("payments", PaymentViewSet, basename="payment")
 router.register("arrears", ArrearsViewSet, basename="arrears")
 router.register("notifications", NotificationViewSet, basename="notification")
+router.register("transactions", TransactionViewSet, basename="transaction")
 
 app_name = "payments"
 

@@ -1,9 +1,14 @@
 """
 Payment processing service.
 
-Records a payment, updates/creates the arrears record for the period,
-and recalculates the tenant's unit status.
+Records a payment, creates an immutable Transaction (with tax applied via
+tax_service), updates/creates the arrears record for the period, and
+recalculates the tenant's unit status.
+
+Tax logic lives exclusively in tax_service.py — this module never hardcodes
+rates or classification rules.
 """
+import uuid
 from decimal import Decimal
 
 from django.db import models, transaction
@@ -11,7 +16,24 @@ from django.utils import timezone
 
 from apps.buildings.services import recalculate_unit_status
 
-from .models import Arrears, Payment
+from .models import Arrears, Payment, PaymentMode, Transaction
+from .tax_service import calculate_tax
+
+
+def _generate_transaction_id() -> str:
+    """Return a unique, traceable transaction ID: TXN-<16 hex chars>."""
+    return f"TXN-{uuid.uuid4().hex[:16].upper()}"
+
+
+def _source_to_payment_mode(source: str) -> str:
+    """Map PaymentSource values to PaymentMode values (case-insensitive)."""
+    mapping = {
+        "mpesa": PaymentMode.MPESA,
+        "bank": PaymentMode.BANK,
+        "cash": PaymentMode.CASH,
+        "cheque": PaymentMode.CHEQUE,
+    }
+    return mapping.get(source.lower(), PaymentMode.CASH)
 
 
 @transaction.atomic
@@ -27,22 +49,48 @@ def process_payment(
     notes: str = "",
 ) -> Payment:
     """
-    Record a payment and update the arrears/unit status for the period.
+    Record a payment, compute VAT, persist a Transaction, and update arrears.
 
-    Handles:
-    - Full payment: amount >= rent → arrears cleared, unit → OCCUPIED_PAID
-    - Partial: 0 < amount < rent → arrears partially reduced, unit → OCCUPIED_PARTIAL
-    - Overpayment: amount > rent → credit stays on record, unit → OCCUPIED_PAID
+    Flow
+    ----
+    1. Read unit.classification from the tenant's current unit.
+    2. Run calculate_tax(base_amount, classification) — no rates hardcoded here.
+    3. Create immutable Payment record (base amount, as before).
+    4. Create immutable Transaction record (all tax fields stored at write time).
+    5. Update/create Arrears for the period.
+    6. Recalculate unit status.
+
+    Returns the Payment instance (callers can follow .transaction for tax data).
     """
+    unit = tenant.unit
+    classification = unit.classification  # the trigger field
+
+    # --- Tax calculation (centralised) ---
+    tax_result = calculate_tax(Decimal(str(amount)), classification)
+
+    # --- Immutable Payment (base amount kept for backwards-compat) ---
     payment = Payment.objects.create(
         tenant=tenant,
-        amount=amount,
+        amount=tax_result.base_amount,
         payment_date=payment_date,
         period_month=period_month,
         period_year=period_year,
         source=source,
         reference=reference,
         notes=notes,
+    )
+
+    # --- Immutable Transaction (all fields stored at write time) ---
+    Transaction.objects.create(
+        transaction_id=_generate_transaction_id(),
+        tenant=tenant,
+        payment=payment,
+        unit_classification=tax_result.classification,
+        base_amount=tax_result.base_amount,
+        tax_amount=tax_result.tax_amount,
+        total_amount=tax_result.total_amount,
+        payment_mode=_source_to_payment_mode(source),
+        reference_code=reference,  # stored exactly as received
     )
 
     _update_arrears(tenant, period_month, period_year)

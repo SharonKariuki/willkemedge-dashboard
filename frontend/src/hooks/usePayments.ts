@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
+import type { ReceiptData, Transaction } from "@/lib/types";
 
 interface Payment {
   id: number;
@@ -102,6 +103,52 @@ export function useMockPayment() {
       qc.invalidateQueries({ queryKey: ["units"] });
       qc.invalidateQueries({ queryKey: ["arrears"] });
       qc.invalidateQueries({ queryKey: ["dashboard"] });
+      qc.invalidateQueries({ queryKey: ["transactions"] });
     },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Transactions
+// ---------------------------------------------------------------------------
+
+interface TransactionFilters {
+  tenant?: number | string;
+  classification?: "RESIDENTIAL" | "BUSINESS";
+}
+
+export function useTransactions(filters?: TransactionFilters) {
+  return useQuery<Transaction[]>({
+    queryKey: ["transactions", filters],
+    queryFn: async () => {
+      const { data } = await api.get("/transactions/", { params: filters });
+      return data;
+    },
+  });
+}
+
+export function useTransaction(id: number | string) {
+  return useQuery<Transaction>({
+    queryKey: ["transactions", id],
+    queryFn: async () => {
+      const { data } = await api.get(`/transactions/${id}/`);
+      return data;
+    },
+    enabled: !!id,
+  });
+}
+
+/**
+ * Fetch receipt data for a transaction.
+ * Uses stored values from the backend — never recalculates.
+ */
+export function useReceipt(transactionId: number | string) {
+  return useQuery<ReceiptData>({
+    queryKey: ["transactions", transactionId, "receipt"],
+    queryFn: async () => {
+      const { data } = await api.get(`/transactions/${transactionId}/receipt/`);
+      return data;
+    },
+    enabled: !!transactionId,
   });
 }

@@ -7,6 +7,9 @@ from .models import Building, Unit
 class UnitSerializer(serializers.ModelSerializer):
     building_name = serializers.CharField(source="building.name", read_only=True)
     status_display = serializers.CharField(source="get_status_display", read_only=True)
+    classification_display = serializers.CharField(
+        source="get_classification_display", read_only=True
+    )
 
     class Meta:
         model = Unit
@@ -17,6 +20,8 @@ class UnitSerializer(serializers.ModelSerializer):
             "label",
             "floor",
             "unit_type",
+            "classification",
+            "classification_display",
             "monthly_rent",
             "status",
             "status_display",
