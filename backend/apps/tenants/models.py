@@ -4,7 +4,6 @@ Tenant models — updated with deposit refund logic and move-out notice.
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 
-
 from apps.buildings.models import Unit
 
 

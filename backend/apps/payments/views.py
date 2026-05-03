@@ -14,7 +14,6 @@ from .models import Arrears, Payment, PaymentSource, Transaction
 from .mpesa import daraja
 from .pdf_service import render_to_pdf
 from .receipt_service import generate_receipt
-
 from .serializers import (
     ArrearsSerializer,
     CollectionProgressSerializer,
@@ -25,7 +24,6 @@ from .serializers import (
 )
 from .services import get_collection_progress, process_payment
 from .tasks import generate_monthly_arrears
-
 
 
 class MockPaymentSerializer(serializers.Serializer):
@@ -292,7 +290,7 @@ class TransactionViewSet(viewsets.ReadOnlyModelViewSet):
     def receipt_pdf(self, request, pk=None):
         """GET /api/payments/transactions/{id}/receipt-pdf/"""
         from django.http import HttpResponse
-        
+
         txn = self.get_object()
         outstanding = None
         try:
@@ -308,7 +306,7 @@ class TransactionViewSet(viewsets.ReadOnlyModelViewSet):
 
         receipt_data = generate_receipt(txn, outstanding_balance=outstanding)
         pdf = render_to_pdf("payments/receipt_pdf.html", {"receipt": receipt_data})
-        
+
         if pdf:
             filename = f"Receipt_{receipt_data.reference_code}.pdf"
             response = HttpResponse(pdf, content_type="application/pdf")

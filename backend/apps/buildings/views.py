@@ -1,6 +1,6 @@
 """Building, Unit and MaintenanceRequest API views."""
 from django.db import transaction
-from django.db.models import Count, Q
+from django.db.models import Count, Q, Sum
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -85,10 +85,10 @@ class BuildingViewSet(viewsets.ModelViewSet):
         """GET /api/buildings/{id}/maintenance-summary/"""
         building = self.get_object()
         requests = MaintenanceRequest.objects.filter(unit__building=building)
-        
+
         total_cost = requests.aggregate(total=Sum("cost"))["total"] or 0
         status_counts = requests.values("status").annotate(count=Count("id"))
-        
+
         return Response({
             "building_name": building.name,
             "total_requests": requests.count(),

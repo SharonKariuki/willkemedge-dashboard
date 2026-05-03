@@ -20,9 +20,12 @@ from .serializers import (
 from .services import FileValidationError, move_in_tenant, move_out_tenant, validate_upload
 
 
-def render_to_pdf(template_src, context_dict={}):
+def render_to_pdf(template_src, context_dict=None):
+    if context_dict is None:
+        context_dict = {}
     from apps.payments.pdf_service import render_to_pdf as r2p
     return r2p(template_src, context_dict)
+
 
 
 
@@ -147,8 +150,9 @@ class TenantViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["get"], url_path="payment-history")
     def payment_history(self, request, pk=None):
         """GET /api/tenants/<id>/payment-history/ — payment analytics for tenant detail page."""
-        from apps.payments.models import Arrears, Payment
         from django.db.models import Sum
+
+        from apps.payments.models import Arrears, Payment
         tenant = self.get_object()
         payments = Payment.objects.filter(tenant=tenant).order_by("-payment_date")[:24]
         arrears = Arrears.objects.filter(tenant=tenant, is_cleared=False)
@@ -234,11 +238,11 @@ class TenantViewSet(viewsets.ModelViewSet):
     def statement_pdf(self, request, pk=None):
         """GET /api/tenants/<id>/statement-pdf/"""
         from django.http import HttpResponse
-        
+
         # Reuse the statement logic by calling the method
         res = self.statement(request, pk=pk)
         data = res.data
-        
+
         pdf = render_to_pdf("payments/statement_pdf.html", data)
         if pdf:
             filename = f"Statement_{data['tenant_name'].replace(' ', '_')}.pdf"
