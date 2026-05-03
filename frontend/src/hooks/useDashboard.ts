@@ -11,6 +11,7 @@ export interface DashboardKPIs {
   collection_expected: number;
   collection_received: number;
   collection_percentage: number;
+  last_month_received: number;
 }
 
 export interface IncomeTrendPoint {
@@ -45,8 +46,10 @@ export interface RecentPayment {
   reference: string;
 }
 
+export type AlertType = "overdue" | "partial" | "move_out" | "expiring_lease" | "maintenance";
+
 export interface DashboardAlert {
-  type: "overdue" | "partial";
+  type: AlertType;
   message: string;
   tenant_id?: number;
   unit_id?: number;
@@ -68,6 +71,9 @@ export function useDashboard() {
       const { data } = await api.get("/dashboard/summary/");
       return data;
     },
-    refetchInterval: 30_000,
+    // Real-time: refresh every 15 seconds, never serve stale data from cache
+    refetchInterval: 15_000,
+    staleTime: 0,
+    refetchOnWindowFocus: true,
   });
 }

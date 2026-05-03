@@ -1,4 +1,4 @@
-import { Bell, LogOut } from "lucide-react";
+import { LogOut } from "lucide-react";
 import { Outlet } from "react-router-dom";
 
 import { useAuth } from "@/hooks/useAuth";
@@ -6,6 +6,7 @@ import { displayName } from "@/lib/displayName";
 
 import GlobalSearch from "./GlobalSearch";
 import MobileNav from "./MobileNav";
+import NotificationBell from "./NotificationBell";
 import Sidebar from "./Sidebar";
 import { Button } from "./ui";
 
@@ -21,7 +22,7 @@ export default function AuthLayout() {
 
   return (
     <div className="relative min-h-screen">
-      {/* Paper-grain texture overlay — sits above canvas, below content */}
+      {/* Paper-grain texture overlay */}
       <div
         aria-hidden
         className="pointer-events-none fixed inset-0 z-0 opacity-[0.015] mix-blend-multiply"
@@ -45,15 +46,8 @@ export default function AuthLayout() {
 
               <GlobalSearch />
 
-              <Button
-                variant="glass"
-                size="icon-sm"
-                aria-label="Notifications"
-                className="relative"
-              >
-                <Bell className="h-4 w-4" />
-                <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-coral-500" />
-              </Button>
+              {/* Real-time notification bell */}
+              <NotificationBell />
 
               <div className="flex items-center gap-2 pl-1">
                 <div className="hidden text-right sm:block">

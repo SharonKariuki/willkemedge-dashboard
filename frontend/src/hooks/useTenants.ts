@@ -1,5 +1,4 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-
 import { api } from "@/lib/api";
 import type { TenantDetail, TenantListItem } from "@/lib/types";
 
@@ -20,7 +19,7 @@ export function useTenants(filters?: TenantFilters) {
   });
 }
 
-export function useTenant(id: number | string) {
+export function useTenant(id: number | string | null) {
   return useQuery<TenantDetail>({
     queryKey: ["tenants", id],
     queryFn: async () => {
@@ -41,6 +40,35 @@ export function useCreateTenant() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["tenants"] });
       qc.invalidateQueries({ queryKey: ["units"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+  });
+}
+
+export function useUpdateTenant(id: number | string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: Record<string, unknown>) => {
+      const { data } = await api.patch(`/tenants/${id}/`, payload);
+      return data as TenantDetail;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["tenants"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+  });
+}
+
+export function useMoveOutNotice(id: number | string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: { notice_date: string; intended_move_out_date: string; notes?: string }) => {
+      const { data } = await api.post(`/tenants/${id}/move-out-notice/`, payload);
+      return data as TenantDetail;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["tenants"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
     },
   });
 }
@@ -48,13 +76,14 @@ export function useCreateTenant() {
 export function useMoveOutTenant(id: number | string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (payload: { move_out_date?: string; notes?: string }) => {
+    mutationFn: async (payload: { move_out_date?: string; notes?: string; deposit_refund_percentage?: number }) => {
       const { data } = await api.post(`/tenants/${id}/move-out/`, payload);
       return data as TenantDetail;
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["tenants"] });
       qc.invalidateQueries({ queryKey: ["units"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
     },
   });
 }

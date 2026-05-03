@@ -84,6 +84,9 @@ class Arrears(models.Model):
         help_text="expected_rent - amount_paid. Positive = owed.",
     )
     is_cleared = models.BooleanField(default=False)
+    waived_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    waive_notes = models.TextField(blank=True)
+
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

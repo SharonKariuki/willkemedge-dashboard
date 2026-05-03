@@ -115,19 +115,56 @@ class DarajaClient:
             raise
 
     # ------------------------------------------------------------------
-    # IP Whitelisting
+    # STK Push (Lipa Na M-Pesa Online)
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def is_safaricom_ip(ip: str) -> bool:
-        """
-        Return True if the IP is a known Safaricom callback IP.
-        In sandbox mode all IPs are allowed (for ngrok/local testing).
-        """
-        if getattr(settings, "MPESA_ENV", "sandbox") == "sandbox":
-            return True
-        return ip in SAFARICOM_IPS
+    def stk_push(self, phone: str, amount: int, reference: str, description: str = "") -> dict:
+        """Trigger an STK Push (Lipa Na M-Pesa Online) request."""
+        token = self.get_access_token()
+        url = f"{self.base_url}/mpesa/stkpush/v1/processrequest"
+
+        shortcode = getattr(settings, "MPESA_SHORTCODE", "")
+        passkey = getattr(settings, "MPESA_PASSKEY", "")
+        timestamp = datetime.now(tz=UTC).strftime("%Y%m%d%H%M%S")
+
+        password_str = f"{shortcode}{passkey}{timestamp}"
+        password = base64.b64encode(password_str.encode()).decode()
+
+        # Phone must be 2547XXXXXXXX
+        formatted_phone = phone.replace("+", "").strip()
+        if formatted_phone.startswith("0"):
+            formatted_phone = f"254{formatted_phone[1:]}"
+
+        payload = {
+            "BusinessShortCode": shortcode,
+            "Password": password,
+            "Timestamp": timestamp,
+            "TransactionType": "CustomerPayBillOnline",
+            "Amount": amount,
+            "PartyA": formatted_phone,
+            "PartyB": shortcode,
+            "PhoneNumber": formatted_phone,
+            "CallBackURL": getattr(settings, "MPESA_STK_CALLBACK_URL", ""),
+            "AccountReference": reference[:12],
+            "TransactionDesc": description[:20] or "Rent Payment",
+        }
+
+        try:
+            resp = httpx.post(
+                url,
+                json=payload,
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=20,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            logger.info("Daraja: STK Push triggered for %s: %s", phone, data)
+            return data
+        except httpx.HTTPError as exc:
+            logger.error("Daraja: STK Push failed: %s", exc)
+            raise
 
 
 # Module-level singleton — import this everywhere.
+
 daraja = DarajaClient()

@@ -1,10 +1,10 @@
 """Dashboard + Reports URL routes."""
 from django.urls import path
 
-from .views import (
+from .views import DashboardSummaryView
+from .views_reports import (
     AnnualIncomeSummaryView,
     ArrearsReportView,
-    DashboardSummaryView,
     ExpenseBreakdownReportView,
     MonthlyCollectionReportView,
     MoveInOutLogView,

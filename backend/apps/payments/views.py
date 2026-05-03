@@ -11,7 +11,10 @@ from rest_framework.response import Response
 from apps.tenants.models import Tenant
 
 from .models import Arrears, Payment, PaymentSource, Transaction
+from .mpesa import daraja
+from .pdf_service import render_to_pdf
 from .receipt_service import generate_receipt
+
 from .serializers import (
     ArrearsSerializer,
     CollectionProgressSerializer,
@@ -21,6 +24,8 @@ from .serializers import (
     TransactionSerializer,
 )
 from .services import get_collection_progress, process_payment
+from .tasks import generate_monthly_arrears
+
 
 
 class MockPaymentSerializer(serializers.Serializer):
@@ -29,6 +34,13 @@ class MockPaymentSerializer(serializers.Serializer):
     source = serializers.ChoiceField(
         choices=[PaymentSource.MPESA, PaymentSource.BANK, PaymentSource.CASH]
     )
+
+
+class STKPushSerializer(serializers.Serializer):
+    tenant = serializers.IntegerField(min_value=1)
+    amount = serializers.IntegerField(min_value=1)
+    description = serializers.CharField(max_length=20, required=False, default="Rent Payment")
+
 
 
 def _mock_reference(source: str) -> str:
@@ -144,6 +156,29 @@ class PaymentViewSet(viewsets.ModelViewSet):
         serializer = CollectionProgressSerializer(data)
         return Response(serializer.data)
 
+    @action(detail=False, methods=["post"], url_path="stk-push")
+    def stk_push(self, request):
+        """POST /api/payments/stk-push/"""
+        serializer = STKPushSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        try:
+            tenant = Tenant.objects.get(pk=data["tenant"])
+            if not tenant.phone:
+                return Response({"detail": "Tenant has no phone number."}, status=400)
+
+            result = daraja.stk_push(
+                phone=tenant.phone,
+                amount=int(data["amount"]),
+                reference=f"RENT{tenant.id}",
+                description=data.get("description", "Rent Payment")
+            )
+            return Response(result)
+        except Exception as e:
+            return Response({"detail": str(e)}, status=500)
+
+
 
 class ArrearsViewSet(viewsets.ReadOnlyModelViewSet):
     """Read-only arrears list."""
@@ -165,6 +200,35 @@ class ArrearsViewSet(viewsets.ReadOnlyModelViewSet):
             qs = qs.filter(tenant_id=tenant_id)
 
         return qs
+
+    @action(detail=False, methods=["post"], url_path="sync")
+    def sync(self, request):
+        """POST /api/payments/arrears/sync/ — trigger monthly arrears generation."""
+        generate_monthly_arrears()
+        return Response({"detail": "Arrears synchronized for active tenants."})
+
+    @action(detail=True, methods=["post"], url_path="waive")
+    def waive(self, request, pk=None):
+        """POST /api/payments/arrears/{id}/waive/"""
+        arrears = self.get_object()
+        if arrears.is_cleared:
+            return Response({"detail": "Already cleared."}, status=400)
+
+        notes = request.data.get("notes", "Waived by admin")
+        amount = arrears.balance
+
+        arrears.waived_amount = amount
+        arrears.balance = 0
+        arrears.is_cleared = True
+        arrears.waive_notes = notes
+        arrears.save()
+
+        # Update unit status if cleared
+        from apps.buildings.services import recalculate_unit_status
+        recalculate_unit_status(arrears.tenant.unit, float(arrears.amount_paid))
+
+        return Response(ArrearsSerializer(arrears).data)
+
 
 
 class TransactionViewSet(viewsets.ReadOnlyModelViewSet):
@@ -223,3 +287,32 @@ class TransactionViewSet(viewsets.ReadOnlyModelViewSet):
         receipt_data = generate_receipt(txn, outstanding_balance=outstanding)
         serializer = ReceiptSerializer(receipt_data)
         return Response(serializer.data)
+
+    @action(detail=True, methods=["get"], url_path="receipt-pdf")
+    def receipt_pdf(self, request, pk=None):
+        """GET /api/payments/transactions/{id}/receipt-pdf/"""
+        from django.http import HttpResponse
+        
+        txn = self.get_object()
+        outstanding = None
+        try:
+            latest_arrears = (
+                Arrears.objects.filter(tenant=txn.tenant, is_cleared=False)
+                .order_by("-period_year", "-period_month")
+                .first()
+            )
+            if latest_arrears:
+                outstanding = latest_arrears.balance
+        except Exception:
+            pass
+
+        receipt_data = generate_receipt(txn, outstanding_balance=outstanding)
+        pdf = render_to_pdf("payments/receipt_pdf.html", {"receipt": receipt_data})
+        
+        if pdf:
+            filename = f"Receipt_{receipt_data.reference_code}.pdf"
+            response = HttpResponse(pdf, content_type="application/pdf")
+            response["Content-Disposition"] = f'attachment; filename="{filename}"'
+            return response
+        return Response({"detail": "PDF generation failed."}, status=500)
+
