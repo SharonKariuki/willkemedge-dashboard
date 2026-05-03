@@ -16,9 +16,11 @@ interface Payment {
   source: string;
   source_display: string;
   reference: string;
+  transaction_id?: number;
   notes: string;
   created_at: string;
 }
+
 
 interface CollectionProgress {
   expected: string;

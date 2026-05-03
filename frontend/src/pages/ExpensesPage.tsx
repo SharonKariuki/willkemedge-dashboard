@@ -1,8 +1,9 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
-  BookOpen, Calculator, ChevronDown, ChevronRight,
+  BookOpen, Calculator, ChevronRight,
   DollarSign, FileBarChart2, PlusCircle, Tag, Trash2,
 } from "lucide-react";
+
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import toast from "react-hot-toast";

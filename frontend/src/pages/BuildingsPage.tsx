@@ -108,9 +108,9 @@ function StepBuilding({ onNext }: { onNext: (v: BuildingFormValues) => void }) {
     register,
     handleSubmit,
     watch,
-    setValue,
     formState: { errors },
   } = useForm<BuildingFormValues>({
+
     resolver: zodResolver(buildingSchema),
     defaultValues: { name: "", address: "", total_floors: 1, notes: "", unit_count: 1 },
   });
@@ -192,9 +192,9 @@ function StepUnits({
     handleSubmit,
     control,
     watch,
-    setValue,
     formState: { errors },
   } = useForm<UnitsFormValues>({
+
     resolver: zodResolver(unitsSchema),
     defaultValues: { units: Array.from({ length: count }, (_, i) => defaultUnit(i)) },
   });
@@ -573,13 +573,11 @@ function AdjustRentModal({
 // ─── Maintenance Log Modal ───────────────────────────────────────────────────
 function MaintenanceModal({
   unit,
-  buildingId,
-  onClose,
 }: {
   unit: Unit;
-  buildingId: number;
   onClose: () => void;
 }) {
+
   const qc = useQueryClient();
   const [form, setForm] = useState({
     description: "",
@@ -975,8 +973,9 @@ function BuildingCard({ building }: { building: Building & { units?: Unit[] } })
         <AdjustRentModal unit={rentUnitModal} onClose={() => setRentUnitModal(null)} />
       )}
       {maintenanceUnit && (
-        <MaintenanceModal unit={maintenanceUnit} buildingId={building.id} onClose={() => setMaintenanceUnit(null)} />
+        <MaintenanceModal unit={maintenanceUnit} onClose={() => setMaintenanceUnit(null)} />
       )}
+
     </>
   );
 }

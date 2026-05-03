@@ -527,9 +527,10 @@ export default function PaymentsPage() {
                     <TD className="font-mono text-[11px] text-ink-400">
                       <div className="flex items-center gap-2">
                         {p.reference || "—"}
-                        {(p as any).transaction_id && (
+                        {p.transaction_id && (
                           <button
-                            onClick={() => handleDownloadReceipt((p as any).transaction_id)}
+                            onClick={() => handleDownloadReceipt(p.transaction_id!)}
+
                             className="rounded p-1 hover:bg-sage-50 text-sage-600 transition-colors"
                             title="Download PDF Receipt"
                           >
@@ -565,12 +566,13 @@ export default function PaymentsPage() {
                     <div className="mt-2 flex items-center justify-between">
                       <SourceChip source={p.source} label={p.source_display} />
                       <p className="text-[11px] text-ink-400">{p.payment_date}</p>
-                      {(p as any).transaction_id && (
+                      {p.transaction_id && (
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            handleDownloadReceipt((p as any).transaction_id);
+                            handleDownloadReceipt(p.transaction_id!);
                           }}
+
                           className="flex items-center gap-1 text-[11px] text-sage-600 font-medium"
                         >
                           <FileText className="h-3 w-3" /> Receipt

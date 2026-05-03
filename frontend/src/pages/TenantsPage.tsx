@@ -10,9 +10,10 @@
  */
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
-  AlertTriangle, ChevronDown, ChevronUp, FileText, LogOut,
+  AlertTriangle, FileText, LogOut,
   Pencil, Phone, Plus, Search, UserPlus, X,
 } from "lucide-react";
+
 
 import { useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
@@ -32,7 +33,7 @@ import { useBuildings } from "@/hooks/useBuildings";
 import { useUnits } from "@/hooks/useUnits";
 import { cn } from "@/lib/cn";
 import { avatarFor } from "@/lib/images";
-import type { TenantListItem } from "@/lib/types";
+
 
 const inputCls =
   "w-full rounded-md bg-surface-raised hairline px-3 py-2.5 text-sm text-ink-900 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-sage-500/40";
@@ -175,7 +176,8 @@ function TenantDetailModal({ tenantId, onClose }: { tenantId: number; onClose: (
 
       });
     }
-  }, [tenant?.id]);
+  }, [tenant, editForm]);
+
 
   const isActive = tenant?.status === "active" || tenant?.status === "notice_given";
 
