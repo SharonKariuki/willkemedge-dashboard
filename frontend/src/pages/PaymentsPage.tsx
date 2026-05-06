@@ -1,5 +1,6 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Banknote, Building2, CreditCard, Plus, Smartphone, Sparkles, UserPlus, Wallet, X } from "lucide-react";
+import { Banknote, Building2, CreditCard, FileText, Mail, Plus, Smartphone, Sparkles, UserPlus, Wallet, X } from "lucide-react";
+
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import toast from "react-hot-toast";
@@ -11,6 +12,7 @@ import {
   Badge,
   Button,
   Card,
+  DatePicker,
   EmptyState,
   PageHeader,
   Skeleton,
@@ -26,9 +28,11 @@ import {
   useCreatePayment,
   useMockPayment,
   usePayments,
+  useResendReceipt,
 } from "@/hooks/usePayments";
 import { useTenants } from "@/hooks/useTenants";
 import { cn } from "@/lib/cn";
+import { downloadPdf } from "@/lib/downloadPdf";
 import { avatarFor } from "@/lib/images";
 
 const SOURCES = [
@@ -225,7 +229,26 @@ export default function PaymentsPage() {
   const [showForm, setShowForm] = useState(false);
   const [showMock, setShowMock] = useState(false);
 
+  const handleDownloadReceipt = async (txnId: number) => {
+    try {
+      await downloadPdf(`/transactions/${txnId}/receipt-pdf/`, `wilkem-receipt-${txnId}.pdf`);
+    } catch {
+      toast.error("Failed to download receipt");
+    }
+  };
+
+  const resendReceipt = useResendReceipt();
+  const handleResendReceipt = async (paymentId: number) => {
+    try {
+      await resendReceipt.mutateAsync(paymentId);
+      toast.success("Receipt resent");
+    } catch {
+      toast.error("Failed to resend receipt");
+    }
+  };
+
   const filters: Record<string, string> = {};
+
   if (sourceFilter) filters.source = sourceFilter;
 
   const { data: payments, isLoading } = usePayments(filters);
@@ -400,9 +423,12 @@ export default function PaymentsPage() {
               <Field label="Amount (KES) *" error={errors.amount?.message}>
                 <input {...register("amount")} className={inputCls} />
               </Field>
-              <Field label="Payment date">
-                <input type="date" {...register("payment_date")} className={inputCls} />
-              </Field>
+              <DatePicker
+                label="Payment date"
+                {...register("payment_date")}
+                error={errors.payment_date?.message}
+              />
+
               <Field label="Source">
                 <select {...register("source")} className={inputCls}>
                   <option value="cash">Cash</option>
@@ -514,7 +540,30 @@ export default function PaymentsPage() {
                     <TD>
                       <SourceChip source={p.source} label={p.source_display} />
                     </TD>
-                    <TD className="font-mono text-[11px] text-ink-400">{p.reference || "—"}</TD>
+                    <TD className="font-mono text-[11px] text-ink-400">
+                      <div className="flex items-center gap-2">
+                        {p.reference || "—"}
+                        {p.transaction_id && (
+                          <button
+                            onClick={() => handleDownloadReceipt(p.transaction_id!)}
+
+                            className="rounded p-1 hover:bg-sage-50 text-sage-600 transition-colors"
+                            title="Download PDF Receipt"
+                          >
+                            <FileText className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                        <button
+                          onClick={() => handleResendReceipt(p.id)}
+                          disabled={resendReceipt.isPending}
+                          className="rounded p-1 hover:bg-sage-50 text-sage-600 transition-colors disabled:opacity-40"
+                          title="Resend receipt by SMS + email"
+                        >
+                          <Mail className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </TD>
+
                   </TR>
                 ))}
               </TBody>
@@ -538,10 +587,35 @@ export default function PaymentsPage() {
                         KES {Number(p.amount).toLocaleString()}
                       </p>
                     </div>
-                    <div className="mt-2 flex items-center justify-between">
+                    <div className="mt-2 flex items-center justify-between gap-2">
                       <SourceChip source={p.source} label={p.source_display} />
                       <p className="text-[11px] text-ink-400">{p.payment_date}</p>
+                      <div className="flex items-center gap-3">
+                        {p.transaction_id && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDownloadReceipt(p.transaction_id!);
+                            }}
+
+                            className="flex items-center gap-1 text-[11px] text-sage-600 font-medium"
+                          >
+                            <FileText className="h-3 w-3" /> Receipt
+                          </button>
+                        )}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleResendReceipt(p.id);
+                          }}
+                          disabled={resendReceipt.isPending}
+                          className="flex items-center gap-1 text-[11px] text-sage-600 font-medium disabled:opacity-40"
+                        >
+                          <Mail className="h-3 w-3" /> Resend
+                        </button>
+                      </div>
                     </div>
+
                   </div>
                 </div>
               </Card>

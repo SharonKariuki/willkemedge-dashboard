@@ -27,5 +27,8 @@ django-celery-beat>=2.7
 redis>=5.0
 
 # Notifications
-sendgrid>=6.11
+# (email goes through Django's built-in SMTP backend — no extra package needed)
 africastalking>=1.0
+
+# PDF generation (receipts, statements)
+xhtml2pdf>=0.2.17

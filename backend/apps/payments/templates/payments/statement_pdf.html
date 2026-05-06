@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Statement - {{ tenant_name }}</title>
+    <style>
+        body { font-family: sans-serif; color: #333; line-height: 1.4; font-size: 11px; }
+        .header { text-align: center; margin-bottom: 20px; border-bottom: 2px solid #16a34a; padding-bottom: 10px; }
+        .header h1 { color: #16a34a; margin: 0; font-size: 20px; }
+        .meta { margin-bottom: 20px; }
+        .meta table { width: 100%; }
+        .ledger { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+        .ledger th, .ledger td { padding: 8px; border: 1px solid #e5e7eb; text-align: left; }
+        .ledger th { background-color: #f9fafb; font-weight: bold; color: #374151; }
+        .type-debit { color: #dc2626; }
+        .type-credit { color: #16a34a; }
+        .summary-box { margin-left: auto; width: 300px; border: 1px solid #e5e7eb; padding: 10px; background: #f9fafb; }
+        .summary-box table { width: 100%; }
+        .summary-box .balance { font-size: 14px; font-weight: bold; color: #111827; }
+        .footer { margin-top: 30px; text-align: center; font-size: 9px; color: #9ca3af; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>DR. OSORO PROPERTIES</h1>
+        <p>Tenant Financial Statement</p>
+    </div>
+
+    <div class="meta">
+        <table>
+            <tr>
+                <td>
+                    <strong>Tenant:</strong> {{ tenant_name }}<br>
+                    <strong>Property:</strong> {{ building }}<br>
+                    <strong>Unit:</strong> {{ unit }}
+                </td>
+                <td style="text-align: right;">
+                    <strong>Date Generated:</strong> {% now "d/m/Y" %}<br>
+                    <strong>Status:</strong> {% if current_balance > 0 %}Outstanding{% else %}Clear{% endif %}
+                </td>
+            </tr>
+        </table>
+    </div>
+
+    <table class="ledger">
+        <thead>
+            <tr>
+                <th width="15%">Date</th>
+                <th width="45%">Description</th>
+                <th width="12%">Charge</th>
+                <th width="12%">Credit</th>
+                <th width="16%">Balance</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for entry in entries %}
+            <tr>
+                <td>{{ entry.date }}</td>
+                <td>{{ entry.description }}</td>
+                <td style="text-align: right;">
+                    {% if entry.type == 'debit' %}{{ entry.amount|floatformat:2 }}{% else %}-{% endif %}
+                </td>
+                <td style="text-align: right;">
+                    {% if entry.type == 'credit' %}{{ entry.amount|floatformat:2 }}{% else %}-{% endif %}
+                </td>
+                <td style="text-align: right; font-weight: bold;">
+                    {{ entry.running_balance|floatformat:2 }}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <div class="summary-box">
+        <table>
+            <tr>
+                <td>Total Charges:</td>
+                <td style="text-align: right;">KES {{ total_expected|floatformat:2 }}</td>
+            </tr>
+            <tr>
+                <td>Total Payments:</td>
+                <td style="text-align: right;">KES {{ total_paid|floatformat:2 }}</td>
+            </tr>
+            <tr class="balance">
+                <td style="padding-top: 8px; border-top: 1px solid #d1d5db;">Current Balance:</td>
+                <td style="text-align: right; padding-top: 8px; border-top: 1px solid #d1d5db;">KES {{ current_balance|floatformat:2 }}</td>
+            </tr>
+        </table>
+    </div>
+
+    <div class="footer">
+        <p>This statement is for informational purposes. If you notice any discrepancies, please contact the management office.</p>
+        <p>&copy; {% now "Y" %} Dr. Osoro Properties</p>
+    </div>
+</body>
+</html>

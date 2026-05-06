@@ -44,5 +44,13 @@ REST_FRAMEWORK["DEFAULT_THROTTLE_CLASSES"] = (  # noqa: F405
     "rest_framework.throttling.UserRateThrottle",
 )
 
-# Email — SendGrid
+# Email — SMTP (Gmail by default, configured via env vars in base.py)
 EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+
+# Run Celery tasks synchronously in production until Render Redis + a Celery
+# worker are provisioned. Receipts/notifications fire inside the web request,
+# adding ~1–2 seconds per payment-creation call but guaranteeing delivery.
+# Switch to False once REDIS_URL points to a real broker and a worker process
+# is running.
+CELERY_TASK_ALWAYS_EAGER = config("CELERY_TASK_ALWAYS_EAGER", default=True, cast=bool)
+CELERY_TASK_EAGER_PROPAGATES = False

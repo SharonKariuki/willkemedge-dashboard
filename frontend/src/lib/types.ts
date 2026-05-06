@@ -65,7 +65,7 @@ export interface UnitStatusSummary {
 
 // --- Tenants ---
 
-export type TenantStatus = "active" | "moved_out" | "archived";
+export type TenantStatus = "active" | "moved_out" | "archived" | "notice_given";
 
 export type DocumentType = "id_front" | "id_back" | "passport" | "lease" | "other";
 
@@ -89,10 +89,12 @@ export interface TenantListItem {
   unit_label: string;
   building_name: string;
   monthly_rent: string;
+  deposit_paid: string;
   status: TenantStatus;
   status_display: string;
   move_in_date: string;
   move_out_date: string | null;
+  due_day: number;
 }
 
 export interface TenantDetail extends TenantListItem {
@@ -101,6 +103,11 @@ export interface TenantDetail extends TenantListItem {
   emergency_contact: string;
   emergency_phone: string;
   deposit_paid: string;
+  deposit_refund_percentage: number;
+  deposit_refund_amount: string;
+  due_day: number;
+  notice_date: string | null;
+  intended_move_out_date: string | null;
   move_out_notes: string;
   notes: string;
   documents: TenantDocument[];
@@ -161,4 +168,15 @@ export interface ReceiptData {
 
   // Optional
   outstanding_balance: string | null;
+}
+
+// --- Auth ---
+
+export interface StoredUser {
+  id: number;
+  username: string;
+  email: string;
+  first_name: string;
+  last_name: string;
+  [key: string]: unknown;
 }

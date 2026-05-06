@@ -9,6 +9,8 @@ class PaymentSerializer(serializers.ModelSerializer):
     unit_label = serializers.CharField(source="tenant.unit.label", read_only=True)
     building_name = serializers.CharField(source="tenant.unit.building.name", read_only=True)
     source_display = serializers.CharField(source="get_source_display", read_only=True)
+    transaction_id = serializers.IntegerField(source="transaction.id", read_only=True)
+
 
     class Meta:
         model = Payment
@@ -25,7 +27,9 @@ class PaymentSerializer(serializers.ModelSerializer):
             "source",
             "source_display",
             "reference",
+            "transaction_id",
             "notes",
+
             "created_at",
         ]
 
@@ -72,8 +76,11 @@ class ArrearsSerializer(serializers.ModelSerializer):
             "amount_paid",
             "balance",
             "is_cleared",
+            "waived_amount",
+            "waive_notes",
             "updated_at",
         ]
+
 
 
 class CollectionProgressSerializer(serializers.Serializer):

@@ -1,5 +1,5 @@
 """
-Notification helpers — SMS via Africa's Talking, email via SendGrid.
+Notification helpers — SMS via Africa's Talking, email via SMTP.
 
 All functions are thin wrappers. They raise on failure so the calling
 Celery task can retry with exponential backoff.
@@ -7,11 +7,12 @@ Celery task can retry with exponential backoff.
 Required settings (all optional in dev — if absent, notifications are
 logged only):
     AT_API_KEY, AT_USERNAME, AT_SENDER_ID
-    SENDGRID_API_KEY, DEFAULT_FROM_EMAIL
+    EMAIL_HOST_USER, EMAIL_HOST_PASSWORD, DEFAULT_FROM_EMAIL
 """
 import logging
 
 from django.conf import settings
+from django.core.mail import EmailMultiAlternatives
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +62,7 @@ def send_sms(phone: str, message: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Email — SendGrid
+# Email — SMTP (Gmail in dev/MVP, swap host for any other SMTP provider)
 # ---------------------------------------------------------------------------
 
 def send_email(
@@ -70,29 +71,28 @@ def send_email(
     html_content: str,
     text_content: str = "",
 ) -> None:
-    """Send a transactional email via SendGrid."""
-    api_key = getattr(settings, "SENDGRID_API_KEY", "")
+    """Send a transactional email via SMTP (Django's built-in mail backend)."""
     from_email = getattr(settings, "DEFAULT_FROM_EMAIL", "noreply@willkemedge.co.ke")
+    user = getattr(settings, "EMAIL_HOST_USER", "")
+    password = getattr(settings, "EMAIL_HOST_PASSWORD", "")
 
-    if not api_key:
-        logger.warning("Email skipped (SENDGRID_API_KEY not set): to=%s subj=%s", to_email, subject)
+    if not user or not password:
+        logger.warning(
+            "Email skipped (EMAIL_HOST_USER/PASSWORD not set): to=%s subj=%s",
+            to_email, subject,
+        )
         return
 
     try:
-        import sendgrid
-        from sendgrid.helpers.mail import Content, Email, Mail, To
-
-        sg = sendgrid.SendGridAPIClient(api_key=api_key)
-        mail = Mail(
-            from_email=Email(from_email),
-            to_emails=To(to_email),
+        msg = EmailMultiAlternatives(
             subject=subject,
+            body=text_content or "",
+            from_email=from_email,
+            to=[to_email],
         )
-        mail.add_content(Content("text/plain", text_content or ""))
-        mail.add_content(Content("text/html", html_content))
-
-        response = sg.client.mail.send.post(request_body=mail.get())
-        logger.info("Email sent to %s (status %s)", to_email, response.status_code)
+        msg.attach_alternative(html_content, "text/html")
+        msg.send(fail_silently=False)
+        logger.info("Email sent to %s", to_email)
     except Exception as exc:
         logger.error("Email failed to %s: %s", to_email, exc)
         raise

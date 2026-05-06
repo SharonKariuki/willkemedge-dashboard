@@ -16,9 +16,11 @@ interface Payment {
   source: string;
   source_display: string;
   reference: string;
+  transaction_id?: number;
   notes: string;
   created_at: string;
 }
+
 
 interface CollectionProgress {
   expected: string;
@@ -81,6 +83,15 @@ export function useCreatePayment() {
       qc.invalidateQueries({ queryKey: ["payments"] });
       qc.invalidateQueries({ queryKey: ["units"] });
       qc.invalidateQueries({ queryKey: ["arrears"] });
+    },
+  });
+}
+
+export function useResendReceipt() {
+  return useMutation({
+    mutationFn: async (paymentId: number) => {
+      const { data } = await api.post(`/payments/${paymentId}/resend-receipt/`);
+      return data;
     },
   });
 }

@@ -27,7 +27,8 @@ def _resolve_placeholders(text: str, tenant: Tenant) -> str:
     now = timezone.now()
     balance = _current_balance(tenant)
     amount = tenant.monthly_rent
-    due_date = date(now.year, now.month, 5).isoformat()
+    due_day = getattr(tenant, "due_day", 5)
+    due_date = date(now.year, now.month, due_day).isoformat()
 
     values = {
         "tenant_name": tenant.full_name,

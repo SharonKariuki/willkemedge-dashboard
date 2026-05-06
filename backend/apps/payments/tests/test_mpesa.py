@@ -21,6 +21,13 @@ from apps.payments.models import Payment, PaymentSource
 from apps.tenants.models import Tenant, TenantStatus
 
 
+@pytest.fixture(autouse=True)
+def _bypass_safaricom_ip_check():
+    """The test client posts from 127.0.0.1 — pretend it's a Safaricom IP."""
+    with patch("apps.payments.views_mpesa.daraja.is_safaricom_ip", return_value=True):
+        yield
+
+
 @pytest.fixture
 def client():
     return APIClient()

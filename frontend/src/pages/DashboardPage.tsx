@@ -40,12 +40,20 @@ import { cn } from "@/lib/cn";
 import { avatarFor, propertyImage } from "@/lib/images";
 
 const OCCUPANCY_COLORS = [
-  "rgb(216,154,58)",   // Paid — amber gold
-  "rgb(200,195,190)",  // Partial — warm grey
-  "rgb(70,65,60)",     // Unpaid — charcoal
-  "rgb(170,100,75)",   // Arrears — deep rust
-  "rgb(225,220,214)",  // Vacant — light warm grey
+  "rgb(216,154,58)",
+  "rgb(200,195,190)",
+  "rgb(70,65,60)",
+  "rgb(170,100,75)",
+  "rgb(225,220,214)",
 ];
+
+const ALERT_TONE: Record<string, string> = {
+  overdue:        "bg-status-unpaid/8 text-status-unpaid",
+  partial:        "bg-ochre-500/10 text-ochre-600",
+  move_out:       "bg-peri-500/10 text-peri-600",
+  expiring_lease: "bg-ochre-500/10 text-ochre-600",
+  maintenance:    "bg-ink-100 text-ink-600",
+};
 
 function KES(n: number) {
   return `KES ${Number(n || 0).toLocaleString()}`;
@@ -75,19 +83,29 @@ export default function DashboardPage() {
   }
 
   const { kpis, income_trend, occupancy, buildings, recent_payments, alerts } = data;
-  const occupancyPct = kpis.total_units > 0 ? Math.round((kpis.occupied / kpis.total_units) * 100) : 0;
+
+  const occupancyPct = kpis.total_units > 0
+    ? Math.round((kpis.occupied / kpis.total_units) * 100)
+    : 0;
 
   const occData = [
-    { name: "Paid", value: occupancy.paid },
+    { name: "Paid",    value: occupancy.paid },
     { name: "Partial", value: occupancy.partial },
-    { name: "Unpaid", value: occupancy.unpaid },
+    { name: "Unpaid",  value: occupancy.unpaid },
     { name: "Arrears", value: occupancy.arrears },
-    { name: "Vacant", value: occupancy.vacant },
+    { name: "Vacant",  value: occupancy.vacant },
   ].filter((d) => d.value > 0);
 
-  const lastMonth = income_trend[income_trend.length - 2]?.amount ?? 0;
-  const thisMonth = income_trend[income_trend.length - 1]?.amount ?? 0;
-  const trendDelta = lastMonth > 0 ? ((thisMonth - lastMonth) / lastMonth) * 100 : 0;
+  // ── This-month vs last-month delta ─────────────────────────────────────────
+  const thisMonth = kpis.collection_received;
+  const lastMonth = kpis.last_month_received ?? 0;
+  const trendDelta =
+    lastMonth > 0 ? ((thisMonth - lastMonth) / lastMonth) * 100 : 0;
+
+  // ── Collection % display ────────────────────────────────────────────────────
+  const collectionPct = kpis.collection_expected > 0
+    ? Math.round((kpis.collection_received / kpis.collection_expected) * 100)
+    : kpis.collection_percentage ?? 0;
 
   return (
     <div className="space-y-6">
@@ -112,7 +130,7 @@ export default function DashboardPage() {
         }
       />
 
-      {/* KPIs */}
+      {/* ── KPI cards ─────────────────────────────────────────────────────── */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Stat
           label="Total units"
@@ -129,13 +147,17 @@ export default function DashboardPage() {
           deltaLabel={`${kpis.vacant} vacant units`}
         />
         <Stat
-          label="This month"
+          label="This month collected"
           value={Math.round(kpis.collection_received)}
           prefix="KES "
           icon={<Banknote className="h-5 w-5" />}
           tone="ochre"
-          delta={trendDelta}
-          deltaLabel="vs last month"
+          delta={lastMonth > 0 ? trendDelta : undefined}
+          deltaLabel={
+            lastMonth > 0
+              ? `${trendDelta >= 0 ? "+" : ""}${trendDelta.toFixed(1)}% vs last month`
+              : "first month on record"
+          }
         />
         <Stat
           label="Total arrears"
@@ -147,7 +169,7 @@ export default function DashboardPage() {
         />
       </div>
 
-      {/* Collection progress + occupancy gauge */}
+      {/* ── Collection progress + occupancy gauge ─────────────────────────── */}
       <div className="grid gap-4 lg:grid-cols-3">
         <Card variant="glass" padding="md" className="lg:col-span-2">
           <CardHeader>
@@ -159,35 +181,39 @@ export default function DashboardPage() {
             </div>
             <div className="text-right">
               <p className="font-display text-3xl font-semibold text-ink-900">
-                {kpis.collection_percentage}%
+                {collectionPct}%
               </p>
-              <Badge tone={kpis.collection_percentage >= 80 ? "sage" : "coral"} withDot className="mt-1">
-                {kpis.collection_percentage >= 80 ? "On track" : "Below target"}
+              <Badge
+                tone={collectionPct >= 80 ? "sage" : "coral"}
+                withDot
+                className="mt-1"
+              >
+                {collectionPct >= 80 ? "On track" : "Below target"}
               </Badge>
             </div>
           </CardHeader>
-          <ProgressBar percentage={kpis.collection_percentage} showLabel={false} tone="sage" />
+          <ProgressBar
+            percentage={collectionPct}
+            showLabel={false}
+            tone="sage"
+          />
           <div className="mt-6 h-[180px]">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={income_trend} margin={{ top: 10, right: 4, left: -20, bottom: 0 }}>
+              <AreaChart
+                data={income_trend}
+                margin={{ top: 10, right: 4, left: -20, bottom: 0 }}
+              >
                 <defs>
                   <linearGradient id="incomeGrad" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%" stopColor="rgb(216,154,58)" stopOpacity={0.45} />
                     <stop offset="100%" stopColor="rgb(216,154,58)" stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <XAxis
-                  dataKey="month"
-                  tickLine={false}
-                  axisLine={false}
+                <XAxis dataKey="month" tickLine={false} axisLine={false}
+                  tick={{ fill: "rgb(140,144,158)", fontSize: 11 }} />
+                <YAxis tickLine={false} axisLine={false}
                   tick={{ fill: "rgb(140,144,158)", fontSize: 11 }}
-                />
-                <YAxis
-                  tickLine={false}
-                  axisLine={false}
-                  tick={{ fill: "rgb(140,144,158)", fontSize: 11 }}
-                  tickFormatter={formatK}
-                />
+                  tickFormatter={formatK} />
                 <RcTooltip
                   cursor={{ stroke: "rgba(107,142,127,0.3)" }}
                   contentStyle={{
@@ -199,45 +225,30 @@ export default function DashboardPage() {
                   }}
                   formatter={(v) => [KES(Number(v)), "Income"]}
                 />
-                <Area
-                  type="monotone"
-                  dataKey="amount"
-                  stroke="rgb(216,154,58)"
-                  strokeWidth={2.5}
-                  fill="url(#incomeGrad)"
-                />
+                <Area type="monotone" dataKey="amount"
+                  stroke="rgb(216,154,58)" strokeWidth={2.5} fill="url(#incomeGrad)" />
               </AreaChart>
             </ResponsiveContainer>
           </div>
         </Card>
 
         <Card variant="glass" padding="md">
-          <CardHeader>
-            <CardTitle>Occupancy</CardTitle>
-          </CardHeader>
+          <CardHeader><CardTitle>Occupancy</CardTitle></CardHeader>
           <div className="relative mx-auto flex h-[220px] w-full items-center justify-center">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
-                <Pie
-                  data={occData}
-                  dataKey="value"
-                  innerRadius={62}
-                  outerRadius={90}
-                  paddingAngle={2}
-                  stroke="none"
-                >
+                <Pie data={occData} dataKey="value" innerRadius={62} outerRadius={90}
+                  paddingAngle={2} stroke="none">
                   {occData.map((_, i) => (
                     <Cell key={i} fill={OCCUPANCY_COLORS[i % OCCUPANCY_COLORS.length]} />
                   ))}
                 </Pie>
-                <RcTooltip
-                  contentStyle={{
-                    background: "rgba(255,255,255,0.95)",
-                    border: "1px solid rgba(0,0,0,0.06)",
-                    borderRadius: 12,
-                    fontSize: 12,
-                  }}
-                />
+                <RcTooltip contentStyle={{
+                  background: "rgba(255,255,255,0.95)",
+                  border: "1px solid rgba(0,0,0,0.06)",
+                  borderRadius: 12,
+                  fontSize: 12,
+                }} />
               </PieChart>
             </ResponsiveContainer>
             <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
@@ -248,10 +259,8 @@ export default function DashboardPage() {
           <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
             {occData.map((d, i) => (
               <div key={d.name} className="flex items-center gap-2">
-                <span
-                  className="h-2 w-2 rounded-full"
-                  style={{ background: OCCUPANCY_COLORS[i % OCCUPANCY_COLORS.length] }}
-                />
+                <span className="h-2 w-2 rounded-full"
+                  style={{ background: OCCUPANCY_COLORS[i % OCCUPANCY_COLORS.length] }} />
                 <span className="text-ink-500">{d.name}</span>
                 <span className="ml-auto font-medium text-ink-900 tabular-nums">{d.value}</span>
               </div>
@@ -260,7 +269,7 @@ export default function DashboardPage() {
         </Card>
       </div>
 
-      {/* Buildings gallery */}
+      {/* ── Buildings gallery ─────────────────────────────────────────────── */}
       {buildings.length > 0 && (
         <Card variant="glass" padding="md">
           <CardHeader>
@@ -268,7 +277,8 @@ export default function DashboardPage() {
               <CardTitle>Properties</CardTitle>
               <p className="mt-1 text-xs text-ink-500">Occupancy across your portfolio</p>
             </div>
-            <Link to="/buildings" className="text-xs font-medium text-sage-600 hover:text-sage-700 dark:text-sage-400">
+            <Link to="/buildings"
+              className="text-xs font-medium text-sage-600 hover:text-sage-700 dark:text-sage-400">
               Manage →
             </Link>
           </CardHeader>
@@ -276,18 +286,12 @@ export default function DashboardPage() {
             {buildings.slice(0, 6).map((b) => {
               const rate = b.total > 0 ? Math.round((b.occupied / b.total) * 100) : 0;
               return (
-                <Link
-                  key={b.id}
-                  to="/buildings"
-                  className="group relative overflow-hidden rounded-lg bg-surface-raised shadow-glass transition-all hover:-translate-y-0.5 hover:shadow-float"
-                >
+                <Link key={b.id} to="/buildings"
+                  className="group relative overflow-hidden rounded-lg bg-surface-raised shadow-glass transition-all hover:-translate-y-0.5 hover:shadow-float">
                   <div className="relative h-32 w-full overflow-hidden">
-                    <img
-                      src={propertyImage(b.id ?? b.name, "md")}
-                      alt={b.name}
+                    <img src={propertyImage(b.id ?? b.name, "md")} alt={b.name}
                       loading="lazy"
-                      className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
-                    />
+                      className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105" />
                     <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/10 to-transparent" />
                     <div className="absolute bottom-2 left-3 right-3 flex items-end justify-between">
                       <p className="truncate font-display text-sm font-semibold text-white">{b.name}</p>
@@ -297,20 +301,12 @@ export default function DashboardPage() {
                     </div>
                   </div>
                   <div className="grid grid-cols-3 gap-1 p-3 text-center">
-                    <div>
-                      <p className="font-display text-base font-semibold text-ink-900">{b.total}</p>
-                      <p className="text-[10px] uppercase tracking-wider text-ink-500">Total</p>
-                    </div>
-                    <div>
-                      <p className="font-display text-base font-semibold text-sage-600 dark:text-sage-400">
-                        {b.occupied}
-                      </p>
-                      <p className="text-[10px] uppercase tracking-wider text-ink-500">Occupied</p>
-                    </div>
-                    <div>
-                      <p className="font-display text-base font-semibold text-ink-500">{b.vacant}</p>
-                      <p className="text-[10px] uppercase tracking-wider text-ink-500">Vacant</p>
-                    </div>
+                    {[["Total", b.total, "text-ink-900"], ["Occupied", b.occupied, "text-sage-600 dark:text-sage-400"], ["Vacant", b.vacant, "text-ink-500"]].map(([lbl, val, cls]) => (
+                      <div key={String(lbl)}>
+                        <p className={`font-display text-base font-semibold ${cls}`}>{val}</p>
+                        <p className="text-[10px] uppercase tracking-wider text-ink-500">{lbl}</p>
+                      </div>
+                    ))}
                   </div>
                 </Link>
               );
@@ -319,24 +315,15 @@ export default function DashboardPage() {
           {buildings.length > 1 && (
             <div className="mt-4 h-[200px]">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  data={buildings}
-                  margin={{ top: 10, right: 4, left: -20, bottom: 0 }}
-                  barCategoryGap="22%"
-                >
-                  <XAxis dataKey="name" tickLine={false} axisLine={false} tick={{ fill: "rgb(140,144,158)", fontSize: 11 }} />
-                  <YAxis tickLine={false} axisLine={false} tick={{ fill: "rgb(140,144,158)", fontSize: 11 }} />
-                  <RcTooltip
-                    cursor={{ fill: "rgba(107,142,127,0.06)" }}
-                    contentStyle={{
-                      background: "rgba(255,255,255,0.95)",
-                      border: "1px solid rgba(0,0,0,0.06)",
-                      borderRadius: 12,
-                      fontSize: 12,
-                    }}
-                  />
+                <BarChart data={buildings} margin={{ top: 10, right: 4, left: -20, bottom: 0 }} barCategoryGap="22%">
+                  <XAxis dataKey="name" tickLine={false} axisLine={false}
+                    tick={{ fill: "rgb(140,144,158)", fontSize: 11 }} />
+                  <YAxis tickLine={false} axisLine={false}
+                    tick={{ fill: "rgb(140,144,158)", fontSize: 11 }} />
+                  <RcTooltip cursor={{ fill: "rgba(107,142,127,0.06)" }}
+                    contentStyle={{ background: "rgba(255,255,255,0.95)", border: "1px solid rgba(0,0,0,0.06)", borderRadius: 12, fontSize: 12 }} />
                   <Bar dataKey="occupied" stackId="u" fill="rgb(216,154,58)" radius={[0, 0, 0, 0]} />
-                  <Bar dataKey="vacant" stackId="u" fill="rgb(196,198,208)" radius={[6, 6, 0, 0]} />
+                  <Bar dataKey="vacant"   stackId="u" fill="rgb(196,198,208)" radius={[6, 6, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -344,7 +331,7 @@ export default function DashboardPage() {
         </Card>
       )}
 
-      {/* Recent payments + alerts */}
+      {/* ── Recent payments + alerts ──────────────────────────────────────── */}
       <div className="grid gap-4 lg:grid-cols-2">
         <Card variant="glass" padding="md">
           <CardHeader>
@@ -352,34 +339,24 @@ export default function DashboardPage() {
               <TrendingUp className="h-4 w-4 text-sage-600" />
               <CardTitle>Recent payments</CardTitle>
             </div>
-            <Link to="/payments" className="text-xs font-medium text-sage-600 hover:text-sage-700 dark:text-sage-400">
+            <Link to="/payments"
+              className="text-xs font-medium text-sage-600 hover:text-sage-700 dark:text-sage-400">
               All →
             </Link>
           </CardHeader>
           {recent_payments.length === 0 ? (
-            <EmptyState
-              icon={<CreditCard className="h-5 w-5" />}
+            <EmptyState icon={<CreditCard className="h-5 w-5" />}
               title="No payments yet"
-              description="Recorded payments will show up here."
-            />
+              description="Recorded payments will show up here." />
           ) : (
             <ul className="space-y-2">
               {recent_payments.slice(0, 6).map((p) => (
-                <li
-                  key={p.id}
-                  className="flex items-center gap-3 rounded-md bg-white/40 p-2.5 transition-colors hover:bg-white/70 dark:bg-white/5 dark:hover:bg-white/10"
-                >
-                  <img
-                    src={avatarFor(p.tenant_name)}
-                    alt=""
-                    aria-hidden
-                    className="h-9 w-9 rounded-full"
-                  />
+                <li key={p.id}
+                  className="flex items-center gap-3 rounded-md bg-white/40 p-2.5 transition-colors hover:bg-white/70 dark:bg-white/5 dark:hover:bg-white/10">
+                  <img src={avatarFor(p.tenant_name)} alt="" aria-hidden className="h-9 w-9 rounded-full" />
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium text-ink-900">{p.tenant_name}</p>
-                    <p className="truncate text-[11px] text-ink-500">
-                      {p.building_name} · {p.unit_label}
-                    </p>
+                    <p className="truncate text-[11px] text-ink-500">{p.building_name} · {p.unit_label}</p>
                   </div>
                   <div className="text-right">
                     <p className="text-sm font-semibold text-sage-700 tabular-nums dark:text-sage-400">
@@ -410,19 +387,15 @@ export default function DashboardPage() {
               description="No overdue tenants or outstanding issues right now."
             />
           ) : (
-            <ul className="space-y-2">
+            <ul className="space-y-2 max-h-72 overflow-y-auto pr-1">
               {alerts.map((a, i) => (
-                <li
-                  key={i}
+                <li key={i}
                   className={cn(
-                    "flex items-start gap-3 rounded-md p-3",
-                    a.type === "overdue"
-                      ? "bg-status-unpaid/8 text-status-unpaid"
-                      : "bg-status-partial/10 text-status-partial"
-                  )}
-                >
+                    "flex items-start gap-3 rounded-md p-3 text-sm",
+                    ALERT_TONE[a.type] ?? "bg-ink-100 text-ink-600",
+                  )}>
                   <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                  <p className="text-sm">{a.message}</p>
+                  <p className="leading-snug">{a.message}</p>
                 </li>
               ))}
             </ul>

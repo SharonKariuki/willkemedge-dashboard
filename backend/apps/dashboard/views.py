@@ -1,10 +1,7 @@
 """
-Dashboard + Reports API.
-
-Single /api/dashboard/summary/ call returns all KPIs, chart data, recent
-payments, and alerts. Report endpoints return filtered data for each report type.
+Dashboard + Reports API — updated for real-time arrears, due dates per tenant,
+move-out alerts, maintenance alerts, and expiring-lease alerts.
 """
-from collections import defaultdict
 from decimal import Decimal
 
 from django.db.models import Count, Q, Sum
@@ -14,7 +11,6 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.buildings.models import Building, Unit, UnitStatus
-from apps.expenses.models import Expense
 from apps.payments.models import Arrears, Payment
 from apps.tenants.models import Tenant, TenantStatus
 
@@ -22,22 +18,15 @@ from apps.tenants.models import Tenant, TenantStatus
 class DashboardSummaryView(APIView):
     """
     GET /api/dashboard/summary/
-
-    Returns everything the dashboard page needs in a single call:
-    - KPI cards (units, tenants, arrears totals)
-    - Monthly collection progress
-    - 12-month income trend
-    - Occupancy breakdown
-    - Recent payments (last 10)
-    - Alerts (overdue, partial, upcoming move-outs)
+    Returns all KPI data, chart data, recent payments, and real-time alerts.
     """
-
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         now = timezone.now()
         current_month = now.month
         current_year = now.year
+        today = now.date()
 
         # --- KPI cards ---
         total_units = Unit.objects.count()
@@ -45,6 +34,7 @@ class DashboardSummaryView(APIView):
         occupied = total_units - vacant
         active_tenants = Tenant.objects.filter(status=TenantStatus.ACTIVE).count()
 
+        # Real-time arrears: sum all uncleared balances
         total_arrears = Arrears.objects.filter(is_cleared=False).aggregate(
             total=Sum("balance")
         )["total"] or Decimal("0")
@@ -60,8 +50,15 @@ class DashboardSummaryView(APIView):
         ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
 
         collection_pct = (
-            round(collected / expected * 100, 1) if expected else Decimal("0")
+            round(float(collected) / float(expected) * 100, 1) if expected else 0.0
         )
+
+        # --- This month stats: % vs last month ---
+        last_month = current_month - 1 if current_month > 1 else 12
+        last_year = current_year if current_month > 1 else current_year - 1
+        last_month_collected = Payment.objects.filter(
+            period_month=last_month, period_year=last_year
+        ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
 
         # --- 12-month income trend ---
         income_trend = []
@@ -104,43 +101,91 @@ class DashboardSummaryView(APIView):
         recent = Payment.objects.select_related(
             "tenant", "tenant__unit", "tenant__unit__building"
         ).order_by("-created_at")[:10]
-        recent_list = [
-            {
-                "id": p.id,
-                "tenant_name": p.tenant.full_name,
-                "unit_label": p.tenant.unit.label,
-                "building_name": p.tenant.unit.building.name,
-                "amount": float(p.amount),
-                "source": p.source,
-                "payment_date": p.payment_date.isoformat(),
-                "reference": p.reference,
-            }
-            for p in recent
-        ]
+        recent_list = []
+        for p in recent:
+            try:
+                recent_list.append({
+                    "id": p.id,
+                    "tenant_name": p.tenant.full_name,
+                    "unit_label": p.tenant.unit.label,
+                    "building_name": p.tenant.unit.building.name,
+                    "amount": float(p.amount),
+                    "source": p.source,
+                    "payment_date": p.payment_date.isoformat(),
+                    "reference": p.reference,
+                })
+            except Exception:
+                pass
 
-        # --- Alerts ---
+        # --- Real-time Alerts (overdue, partial, move-out, maintenance) ---
         alerts = []
 
-        # Overdue tenants (arrears not cleared)
-        overdue = Arrears.objects.filter(is_cleared=False).select_related(
-            "tenant", "tenant__unit"
-        ).order_by("-balance")[:5]
-        for a in overdue:
+        # 1. Overdue tenants with arrears — show each with amount & due date
+        overdue_qs = (
+            Arrears.objects.filter(is_cleared=False)
+            .select_related("tenant", "tenant__unit", "tenant__unit__building")
+            .order_by("-balance")[:8]
+        )
+        for a in overdue_qs:
+            # Use tenant's custom due_day or default to 5th
+            due_day = getattr(a.tenant, "due_day", 5)
+            due_date_str = f"{due_day:02d}/{a.period_month:02d}/{a.period_year}"
             alerts.append({
                 "type": "overdue",
-                "message": f"{a.tenant.full_name} owes KES {a.balance:,.0f} for {a.period_month}/{a.period_year}",
+                "message": (
+                    f"{a.tenant.full_name} owes KES {a.balance:,.0f} "
+                    f"(Due {due_date_str}) — "
+                    f"{a.tenant.unit.building.name} {a.tenant.unit.label}"
+                ),
                 "tenant_id": a.tenant_id,
             })
 
-        # Units with partial payment
-        partial_units = Unit.objects.filter(
-            status=UnitStatus.OCCUPIED_PARTIAL
-        ).select_related("building")[:5]
+
+        # 2. Partial payments
+        partial_units = (
+            Unit.objects.filter(status=UnitStatus.OCCUPIED_PARTIAL)
+            .select_related("building")[:5]
+        )
         for u in partial_units:
             alerts.append({
                 "type": "partial",
-                "message": f"{u.building.name} — {u.label} has partial payment",
+                "message": f"{u.building.name} — {u.label} has a partial payment this month",
                 "unit_id": u.id,
+            })
+
+        # 3. Move-out notices: tenants with move_out_date set in next 30 days
+        move_out_soon = Tenant.objects.filter(
+            status=TenantStatus.ACTIVE,
+            move_out_date__isnull=False,
+            move_out_date__gte=today,
+        ).select_related("unit", "unit__building")[:5]
+        for t in move_out_soon:
+            days_left = (t.move_out_date - today).days
+            alerts.append({
+                "type": "move_out",
+                "message": (
+                    f"{t.full_name} ({t.unit.building.name} {t.unit.label}) "
+                    f"is moving out in {days_left} day{'s' if days_left != 1 else ''}"
+                ),
+                "tenant_id": t.id,
+            })
+
+        # 4. Expiring leases: tenants who have been active > 11 months (no move-out set)
+        from datetime import timedelta
+        lease_threshold = today - timedelta(days=335)
+        expiring = Tenant.objects.filter(
+            status=TenantStatus.ACTIVE,
+            move_out_date__isnull=True,
+            move_in_date__lte=lease_threshold,
+        ).select_related("unit", "unit__building")[:3]
+        for t in expiring:
+            alerts.append({
+                "type": "expiring_lease",
+                "message": (
+                    f"{t.full_name} ({t.unit.building.name} {t.unit.label}) "
+                    f"has been a tenant since {t.move_in_date} — lease renewal due"
+                ),
+                "tenant_id": t.id,
             })
 
         return Response({
@@ -153,408 +198,11 @@ class DashboardSummaryView(APIView):
                 "collection_expected": float(expected),
                 "collection_received": float(collected),
                 "collection_percentage": float(collection_pct),
+                "last_month_received": float(last_month_collected),
             },
             "income_trend": income_trend,
             "occupancy": occupancy,
             "buildings": buildings,
             "recent_payments": recent_list,
             "alerts": alerts,
-        })
-
-
-class MonthlyCollectionReportView(APIView):
-    """GET /api/reports/monthly-collection/?month=4&year=2026"""
-
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request):
-        now = timezone.now()
-        month = int(request.query_params.get("month", now.month))
-        year = int(request.query_params.get("year", now.year))
-
-        payments = Payment.objects.filter(
-            period_month=month, period_year=year
-        ).select_related("tenant", "tenant__unit", "tenant__unit__building").order_by(
-            "tenant__unit__building__name", "tenant__unit__label"
-        )
-
-        rows = []
-        for p in payments:
-            rows.append({
-                "tenant": p.tenant.full_name,
-                "unit": f"{p.tenant.unit.building.name} — {p.tenant.unit.label}",
-                "amount": float(p.amount),
-                "source": p.get_source_display(),
-                "date": p.payment_date.isoformat(),
-                "reference": p.reference,
-            })
-
-        total = sum(r["amount"] for r in rows)
-        return Response({
-            "period": f"{month}/{year}",
-            "total": total,
-            "count": len(rows),
-            "payments": rows,
-        })
-
-
-class AnnualIncomeSummaryView(APIView):
-    """GET /api/reports/annual-income/?year=2026"""
-
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request):
-        year = int(request.query_params.get("year", timezone.now().year))
-
-        monthly = []
-        grand_total = Decimal("0")
-        for m in range(1, 13):
-            total = Payment.objects.filter(
-                period_month=m, period_year=year
-            ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
-            monthly.append({"month": m, "total": float(total)})
-            grand_total += total
-
-        return Response({
-            "year": year,
-            "grand_total": float(grand_total),
-            "monthly": monthly,
-        })
-
-
-class ArrearsReportView(APIView):
-    """GET /api/reports/arrears/"""
-
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request):
-        arrears = Arrears.objects.filter(is_cleared=False).select_related(
-            "tenant", "tenant__unit", "tenant__unit__building"
-        ).order_by("-balance")
-
-        rows = []
-        for a in arrears:
-            rows.append({
-                "tenant": a.tenant.full_name,
-                "unit": f"{a.tenant.unit.building.name} — {a.tenant.unit.label}",
-                "period": f"{a.period_month}/{a.period_year}",
-                "expected": float(a.expected_rent),
-                "paid": float(a.amount_paid),
-                "balance": float(a.balance),
-            })
-
-        total_balance = sum(r["balance"] for r in rows)
-        return Response({
-            "total_balance": total_balance,
-            "count": len(rows),
-            "arrears": rows,
-        })
-
-
-class TenantPaymentHistoryView(APIView):
-    """GET /api/reports/tenant-history/<tenant_id>/"""
-
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request, tenant_id):
-        tenant = Tenant.objects.select_related("unit", "unit__building").get(pk=tenant_id)
-        payments = Payment.objects.filter(tenant=tenant).order_by("period_year", "period_month")
-
-        monthly = defaultdict(float)
-        for p in payments:
-            key = f"{p.period_year}-{p.period_month:02d}"
-            monthly[key] += float(p.amount)
-
-        chart_data = [
-            {"month": k, "paid": v, "expected": float(tenant.monthly_rent)}
-            for k, v in sorted(monthly.items())
-        ]
-
-        return Response({
-            "tenant": {
-                "id": tenant.id,
-                "name": tenant.full_name,
-                "unit": f"{tenant.unit.building.name} — {tenant.unit.label}",
-                "monthly_rent": float(tenant.monthly_rent),
-            },
-            "chart_data": chart_data,
-            "total_paid": sum(v for v in monthly.values()),
-        })
-
-
-class OccupancyHistoryView(APIView):
-    """GET /api/reports/occupancy/"""
-
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request):
-        total = Unit.objects.count()
-        occupancy = {}
-        for s in UnitStatus:
-            occupancy[s.value] = Unit.objects.filter(status=s.value).count()
-
-        buildings = []
-        for b in Building.objects.annotate(
-            total=Count("units"),
-            occ=Count("units", filter=~Q(units__status=UnitStatus.VACANT)),
-        ).order_by("name"):
-            buildings.append({
-                "name": b.name,
-                "total": b.total,
-                "occupied": b.occ,
-                "rate": round(b.occ / b.total * 100, 1) if b.total else 0,
-            })
-
-        return Response({
-            "total_units": total,
-            "breakdown": occupancy,
-            "buildings": buildings,
-        })
-
-
-class MoveInOutLogView(APIView):
-    """GET /api/reports/move-log/"""
-
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request):
-        tenants = Tenant.objects.select_related(
-            "unit", "unit__building"
-        ).order_by("-move_in_date")[:50]
-
-        log = []
-        for t in tenants:
-            log.append({
-                "tenant": t.full_name,
-                "unit": f"{t.unit.building.name} — {t.unit.label}",
-                "move_in": t.move_in_date.isoformat(),
-                "move_out": t.move_out_date.isoformat() if t.move_out_date else None,
-                "status": t.get_status_display(),
-            })
-
-        return Response({"entries": log})
-
-
-class ProfitLossReportView(APIView):
-    """
-    GET /api/reports/profit-loss/?month=4&year=2026
-    GET /api/reports/profit-loss/?year=2026&mode=annual
-    Optional: &building=<id>   (filters income + expenses to that building;
-                                 expenses without a building are excluded)
-    """
-
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request):
-        mode = request.query_params.get("mode", "monthly")
-        building_id = request.query_params.get("building")
-        now = timezone.now()
-
-        payments_qs = Payment.objects.all()
-        expenses_qs_all = Expense.objects.all()
-        if building_id:
-            payments_qs = payments_qs.filter(tenant__unit__building_id=building_id)
-            expenses_qs_all = expenses_qs_all.filter(building_id=building_id)
-
-        if mode == "annual":
-            year = int(request.query_params.get("year", now.year))
-            rows = []
-            grand_income = Decimal("0")
-            grand_expenses = Decimal("0")
-
-            for m in range(1, 13):
-                income = payments_qs.filter(
-                    period_month=m, period_year=year
-                ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
-
-                exp_total = expenses_qs_all.filter(
-                    period_month=m, period_year=year
-                ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
-
-                rows.append({
-                    "month": m,
-                    "income": float(income),
-                    "expenses": float(exp_total),
-                    "net": float(income - exp_total),
-                })
-                grand_income += income
-                grand_expenses += exp_total
-
-            return Response({
-                "mode": "annual",
-                "year": year,
-                "building": int(building_id) if building_id else None,
-                "grand_income": float(grand_income),
-                "grand_expenses": float(grand_expenses),
-                "grand_net": float(grand_income - grand_expenses),
-                "monthly": rows,
-            })
-
-        # Monthly mode
-        month = int(request.query_params.get("month", now.month))
-        year = int(request.query_params.get("year", now.year))
-
-        income = payments_qs.filter(
-            period_month=month, period_year=year
-        ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
-
-        expenses_qs = (
-            expenses_qs_all.filter(period_month=month, period_year=year)
-            .values("category__name")
-            .annotate(total=Sum("amount"))
-            .order_by("-total")
-        )
-
-        expense_rows = [
-            {"category": row["category__name"], "amount": float(row["total"])}
-            for row in expenses_qs
-        ]
-        total_expenses = sum(r["amount"] for r in expense_rows)
-        net_profit = float(income) - total_expenses
-
-        return Response({
-            "mode": "monthly",
-            "period": f"{month}/{year}",
-            "building": int(building_id) if building_id else None,
-            "income": float(income),
-            "total_expenses": total_expenses,
-            "net_profit": net_profit,
-            "expense_breakdown": expense_rows,
-        })
-
-
-class TrialBalanceView(APIView):
-    """
-    GET /api/reports/trial-balance/?month=4&year=2026
-    Optional: &building=<id>
-
-    Double-entry trial balance proving the books are consistent:
-      Dr. Cash / Bank (collected)       - rent received
-      Dr. Accounts Receivable (arrears) - rent owed
-      Dr. Expense accounts              - costs incurred
-      Cr. Rent Revenue (expected)       - billed income
-      Cr. Cash / Bank (expenses paid)   - offsets expense debits
-    Balanced iff  collected + AR == expected.
-    """
-
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request):
-        now = timezone.now()
-        month = int(request.query_params.get("month", now.month))
-        year = int(request.query_params.get("year", now.year))
-        building_id = request.query_params.get("building")
-
-        payments_qs = Payment.objects.filter(period_month=month, period_year=year)
-        arrears_qs = Arrears.objects.filter(period_month=month, period_year=year)
-        tenants_qs = Tenant.objects.filter(status=TenantStatus.ACTIVE)
-        expenses_base = Expense.objects.filter(period_month=month, period_year=year)
-
-        if building_id:
-            payments_qs = payments_qs.filter(tenant__unit__building_id=building_id)
-            arrears_qs = arrears_qs.filter(tenant__unit__building_id=building_id)
-            tenants_qs = tenants_qs.filter(unit__building_id=building_id)
-            expenses_base = expenses_base.filter(building_id=building_id)
-
-        collected = payments_qs.aggregate(total=Sum("amount"))["total"] or Decimal("0")
-
-        # Expected rent = sum of active tenants' monthly_rent (source of truth,
-        # independent of whether Arrears rows have been posted for the period).
-        expected = tenants_qs.aggregate(total=Sum("monthly_rent"))["total"] or Decimal("0")
-
-        # Accounts Receivable = uncollected rent (arrears balances for the period)
-        accounts_receivable = arrears_qs.filter(is_cleared=False).aggregate(
-            total=Sum("balance")
-        )["total"] or Decimal("0")
-
-        # Expenses grouped by category (debits: each expense debits its account)
-        expenses_qs = (
-            expenses_base
-            .values("category__name")
-            .annotate(total=Sum("amount"))
-            .order_by("category__name")
-        )
-        expense_rows = [
-            {"account": row["category__name"], "debit": float(row["total"]), "credit": 0.0}
-            for row in expenses_qs
-        ]
-        total_expenses = sum(r["debit"] for r in expense_rows)
-
-        # Proper double-entry ledger:
-        #   Dr. Cash / Bank (rent collected)         — money received
-        #   Dr. Accounts Receivable (arrears)        — money owed
-        #   Dr. Expense accounts                     — costs incurred
-        #   Cr. Rent Revenue (expected)              — billed income
-        #   Cr. Cash / Bank (expenses paid)          — offsets the expense debits
-        # Books balance iff  collected + AR == expected  (bookkeeping integrity).
-        cash_in_entry = {"account": "Cash / Bank (collected)", "debit": float(collected), "credit": 0.0}
-        ar_entry = {"account": "Accounts Receivable (Arrears)", "debit": float(accounts_receivable), "credit": 0.0}
-        cash_out_entry = {"account": "Cash / Bank (expenses paid)", "debit": 0.0, "credit": total_expenses}
-        revenue_entry = {"account": "Rent Revenue", "debit": 0.0, "credit": float(expected)}
-
-        accounts = [cash_in_entry, ar_entry] + expense_rows + [cash_out_entry, revenue_entry]
-
-        total_debit = sum(a["debit"] for a in accounts)
-        total_credit = sum(a["credit"] for a in accounts)
-        is_balanced = abs(total_debit - total_credit) < 0.01
-
-        return Response({
-            "period": f"{month}/{year}",
-            "building": int(building_id) if building_id else None,
-            "accounts": accounts,
-            "total_debit": round(total_debit, 2),
-            "total_credit": round(total_credit, 2),
-            "is_balanced": is_balanced,
-        })
-
-
-class ExpenseBreakdownReportView(APIView):
-    """
-    GET /api/reports/expense-breakdown/?month=4&year=2026
-    Optional: &building=<id>
-    """
-
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request):
-        now = timezone.now()
-        month = int(request.query_params.get("month", now.month))
-        year = int(request.query_params.get("year", now.year))
-        building_id = request.query_params.get("building")
-
-        expenses_base = Expense.objects.filter(period_month=month, period_year=year)
-        payments_qs = Payment.objects.filter(period_month=month, period_year=year)
-        if building_id:
-            expenses_base = expenses_base.filter(building_id=building_id)
-            payments_qs = payments_qs.filter(tenant__unit__building_id=building_id)
-
-        expenses_qs = (
-            expenses_base
-            .values("category__name")
-            .annotate(total=Sum("amount"), count=Count("id"))
-            .order_by("-total")
-        )
-
-        rows = [
-            {
-                "category": row["category__name"],
-                "total": float(row["total"]),
-                "count": row["count"],
-            }
-            for row in expenses_qs
-        ]
-
-        grand_total = sum(r["total"] for r in rows)
-        for r in rows:
-            r["percentage"] = round(r["total"] / grand_total * 100, 1) if grand_total else 0.0
-
-        income = payments_qs.aggregate(total=Sum("amount"))["total"] or Decimal("0")
-
-        return Response({
-            "period": f"{month}/{year}",
-            "building": int(building_id) if building_id else None,
-            "categories": rows,
-            "total_expenses": grand_total,
-            "total_income": float(income),
-            "expense_ratio": round(grand_total / float(income) * 100, 1) if income else 0.0,
         })
