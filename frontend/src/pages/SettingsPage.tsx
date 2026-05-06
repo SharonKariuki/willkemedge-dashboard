@@ -23,6 +23,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { api } from "@/lib/api";
 import { displayName } from "@/lib/displayName";
 import { avatarFor } from "@/lib/images";
+import type { StoredUser } from "@/lib/types";
 
 interface LoginAttempt {
   email: string;
@@ -46,7 +47,8 @@ const inputCls =
   "w-full rounded-md border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20";
 
 export default function SettingsPage() {
-  const { user, logout } = useAuth();
+  const { user: rawUser, logout } = useAuth();
+  const user = rawUser as StoredUser | null;
   const qc = useQueryClient();
   const { data: audit, isLoading } = useLoginAudit();
 
@@ -55,7 +57,7 @@ export default function SettingsPage() {
     first_name: user?.first_name ?? "",
     last_name: user?.last_name ?? "",
     email: user?.email ?? "",
-    phone: (user as Record<string, unknown>)?.phone as string ?? "",
+    phone: (user?.phone as string | undefined) ?? "",
   });
   const [pwForm, setPwForm] = useState({ current_password: "", new_password: "", confirm_password: "" });
   const [pwEditing, setPwEditing] = useState(false);

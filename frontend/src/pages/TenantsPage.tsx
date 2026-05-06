@@ -32,6 +32,7 @@ import {
 import { useBuildings } from "@/hooks/useBuildings";
 import { useUnits } from "@/hooks/useUnits";
 import { cn } from "@/lib/cn";
+import { downloadPdf } from "@/lib/downloadPdf";
 import { avatarFor } from "@/lib/images";
 
 
@@ -62,9 +63,8 @@ const createSchema = z.object({
   unit: z.coerce.number().min(1, "Select a unit"),
   monthly_rent: z.string().min(1, "Required"),
   deposit_paid: z.string().optional(),
-  due_day: z.coerce.number().int().min(1).max(31).default(5),
+  due_day: z.coerce.number().int().min(1).max(31).optional(),
   move_in_date: z.string().min(1, "Required"),
-
   notes: z.string().optional(),
 });
 type CreateFormValues = z.infer<typeof createSchema>;
@@ -78,7 +78,7 @@ function CreateTenantForm({ onClose }: { onClose: () => void }) {
   });
   const onSubmit = async (values: CreateFormValues) => {
     try {
-      await createTenant.mutateAsync(values as Record<string, unknown>);
+      await createTenant.mutateAsync(values as unknown as Record<string, unknown>);
       toast.success("Tenant registered");
       onClose();
     } catch { toast.error("Failed to register tenant"); }
@@ -155,9 +155,12 @@ function TenantDetailModal({ tenantId, onClose }: { tenantId: number; onClose: (
     defaultValues: { move_out_date: new Date().toISOString().slice(0, 10), deposit_refund_percentage: "100", notes: "" },
   });
 
-  const handleDownloadStatement = () => {
-    const baseUrl = import.meta.env.VITE_API_URL || "http://localhost:8000";
-    window.open(`${baseUrl}/api/tenants/${tenantId}/statement-pdf/`, "_blank");
+  const handleDownloadStatement = async () => {
+    try {
+      await downloadPdf(`/tenants/${tenantId}/statement-pdf/`, `wilkem-statement-${tenantId}.pdf`);
+    } catch {
+      toast.error("Failed to download statement");
+    }
   };
 
 
@@ -244,12 +247,12 @@ function TenantDetailModal({ tenantId, onClose }: { tenantId: number; onClose: (
                 <p className="text-[11px] font-medium uppercase tracking-wider text-ink-500 mb-3">Payment Analytics</p>
                 <div className="grid grid-cols-2 gap-3">
                   <div className="rounded-md bg-white p-3 text-center dark:bg-ink-800">
-                    <p className="font-display text-xl font-semibold text-sage-700">KES {((tenant as Record<string,unknown>).total_paid as number ?? 0).toLocaleString()}</p>
+                    <p className="font-display text-xl font-semibold text-sage-700">KES {((tenant as unknown as Record<string,unknown>).total_paid as number ?? 0).toLocaleString()}</p>
                     <p className="text-[11px] text-ink-500">Total paid</p>
                   </div>
                   <div className="rounded-md bg-white p-3 text-center dark:bg-ink-800">
-                    <p className={`font-display text-xl font-semibold ${((tenant as Record<string,unknown>).total_arrears as number ?? 0) > 0 ? "text-status-unpaid" : "text-sage-700"}`}>
-                      KES {((tenant as Record<string,unknown>).total_arrears as number ?? 0).toLocaleString()}
+                    <p className={`font-display text-xl font-semibold ${((tenant as unknown as Record<string,unknown>).total_arrears as number ?? 0) > 0 ? "text-status-unpaid" : "text-sage-700"}`}>
+                      KES {((tenant as unknown as Record<string,unknown>).total_arrears as number ?? 0).toLocaleString()}
                     </p>
                     <p className="text-[11px] text-ink-500">Arrears</p>
                   </div>
@@ -259,7 +262,7 @@ function TenantDetailModal({ tenantId, onClose }: { tenantId: number; onClose: (
           )}
           {tenant && mode === "edit" && (
             <form onSubmit={editForm.handleSubmit(async (v) => {
-              try { await updateTenant.mutateAsync(v); toast.success("Updated"); setMode("view"); }
+              try { await updateTenant.mutateAsync(v as unknown as Record<string, unknown>); toast.success("Updated"); setMode("view"); }
               catch { toast.error("Failed to update"); }
             })} className="space-y-4">
               <p className="font-medium text-ink-900">Edit Tenant Details</p>

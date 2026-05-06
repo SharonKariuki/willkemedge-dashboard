@@ -1,5 +1,5 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Banknote, Building2, CreditCard, FileText, Plus, Smartphone, Sparkles, UserPlus, Wallet, X } from "lucide-react";
+import { Banknote, Building2, CreditCard, FileText, Mail, Plus, Smartphone, Sparkles, UserPlus, Wallet, X } from "lucide-react";
 
 import { useState } from "react";
 import { useForm } from "react-hook-form";
@@ -12,6 +12,7 @@ import {
   Badge,
   Button,
   Card,
+  DatePicker,
   EmptyState,
   PageHeader,
   Skeleton,
@@ -27,9 +28,11 @@ import {
   useCreatePayment,
   useMockPayment,
   usePayments,
+  useResendReceipt,
 } from "@/hooks/usePayments";
 import { useTenants } from "@/hooks/useTenants";
 import { cn } from "@/lib/cn";
+import { downloadPdf } from "@/lib/downloadPdf";
 import { avatarFor } from "@/lib/images";
 
 const SOURCES = [
@@ -226,9 +229,22 @@ export default function PaymentsPage() {
   const [showForm, setShowForm] = useState(false);
   const [showMock, setShowMock] = useState(false);
 
-  const handleDownloadReceipt = (txnId: number) => {
-    const baseUrl = import.meta.env.VITE_API_URL || "http://localhost:8000";
-    window.open(`${baseUrl}/api/payments/transactions/${txnId}/receipt-pdf/`, "_blank");
+  const handleDownloadReceipt = async (txnId: number) => {
+    try {
+      await downloadPdf(`/transactions/${txnId}/receipt-pdf/`, `wilkem-receipt-${txnId}.pdf`);
+    } catch {
+      toast.error("Failed to download receipt");
+    }
+  };
+
+  const resendReceipt = useResendReceipt();
+  const handleResendReceipt = async (paymentId: number) => {
+    try {
+      await resendReceipt.mutateAsync(paymentId);
+      toast.success("Receipt resent");
+    } catch {
+      toast.error("Failed to resend receipt");
+    }
   };
 
   const filters: Record<string, string> = {};
@@ -537,6 +553,14 @@ export default function PaymentsPage() {
                             <FileText className="h-3.5 w-3.5" />
                           </button>
                         )}
+                        <button
+                          onClick={() => handleResendReceipt(p.id)}
+                          disabled={resendReceipt.isPending}
+                          className="rounded p-1 hover:bg-sage-50 text-sage-600 transition-colors disabled:opacity-40"
+                          title="Resend receipt by SMS + email"
+                        >
+                          <Mail className="h-3.5 w-3.5" />
+                        </button>
                       </div>
                     </TD>
 
@@ -563,21 +587,33 @@ export default function PaymentsPage() {
                         KES {Number(p.amount).toLocaleString()}
                       </p>
                     </div>
-                    <div className="mt-2 flex items-center justify-between">
+                    <div className="mt-2 flex items-center justify-between gap-2">
                       <SourceChip source={p.source} label={p.source_display} />
                       <p className="text-[11px] text-ink-400">{p.payment_date}</p>
-                      {p.transaction_id && (
+                      <div className="flex items-center gap-3">
+                        {p.transaction_id && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDownloadReceipt(p.transaction_id!);
+                            }}
+
+                            className="flex items-center gap-1 text-[11px] text-sage-600 font-medium"
+                          >
+                            <FileText className="h-3 w-3" /> Receipt
+                          </button>
+                        )}
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            handleDownloadReceipt(p.transaction_id!);
+                            handleResendReceipt(p.id);
                           }}
-
-                          className="flex items-center gap-1 text-[11px] text-sage-600 font-medium"
+                          disabled={resendReceipt.isPending}
+                          className="flex items-center gap-1 text-[11px] text-sage-600 font-medium disabled:opacity-40"
                         >
-                          <FileText className="h-3 w-3" /> Receipt
+                          <Mail className="h-3 w-3" /> Resend
                         </button>
-                      )}
+                      </div>
                     </div>
 
                   </div>

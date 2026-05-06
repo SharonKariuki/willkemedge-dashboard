@@ -50,13 +50,14 @@ const buildingSchema = z.object({
   total_floors: z.coerce.number().int().min(1, "At least 1 floor"),
   notes: z.string().optional(),
   unit_count: z.coerce.number().int().min(1, "At least 1 unit"),
+  building_type: z.enum(["RESIDENTIAL", "BUSINESS"]),
 });
 
 const unitRowSchema = z.object({
   label: z.string().min(1, "Label required"),
   floor: z.coerce.number().int().min(0),
   unit_type: z.string().min(1),
-  classification: z.string().default("RESIDENTIAL"),
+  classification: z.string().min(1).default("RESIDENTIAL"),
   monthly_rent: z.coerce.number().min(1, "Rent required"),
   notes: z.string().optional(),
 });
@@ -108,18 +109,51 @@ function StepBuilding({ onNext }: { onNext: (v: BuildingFormValues) => void }) {
     register,
     handleSubmit,
     watch,
+    setValue,
     formState: { errors },
   } = useForm<BuildingFormValues>({
 
     resolver: zodResolver(buildingSchema),
-    defaultValues: { name: "", address: "", total_floors: 1, notes: "", unit_count: 1 },
+    defaultValues: { name: "", address: "", total_floors: 1, notes: "", unit_count: 1, building_type: "RESIDENTIAL" },
   });
 
   const floors = watch("total_floors");
   const unitCount = watch("unit_count");
+  const buildingType = watch("building_type");
 
   return (
     <form onSubmit={handleSubmit(onNext)} className="space-y-5">
+      <div>
+        <label className="mb-1.5 block text-[11px] font-medium uppercase tracking-[0.14em] text-gray-600">
+          Building type *
+        </label>
+        <div className="grid grid-cols-2 gap-2">
+          {([
+            { value: "RESIDENTIAL", title: "Residential", desc: "Tenants are exempt from VAT" },
+            { value: "BUSINESS", title: "Business / Commercial", desc: "Tenants pay 16% VAT on rent" },
+          ] as const).map((opt) => {
+            const active = buildingType === opt.value;
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => setValue("building_type", opt.value, { shouldDirty: true })}
+                className={cn(
+                  "rounded-lg border p-3 text-left transition-all",
+                  active
+                    ? "border-blue-500 bg-blue-50 ring-2 ring-blue-500/20"
+                    : "border-gray-200 bg-white hover:border-gray-300"
+                )}
+              >
+                <p className={cn("text-sm font-semibold", active ? "text-blue-700" : "text-gray-900")}>
+                  {opt.title}
+                </p>
+                <p className="mt-0.5 text-[11px] text-gray-500">{opt.desc}</p>
+              </button>
+            );
+          })}
+        </div>
+      </div>
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Building name *" error={errors.name?.message}>
           <input {...register("name")} className={inputCls} placeholder="e.g. Maple Court" />
@@ -170,19 +204,21 @@ function StepBuilding({ onNext }: { onNext: (v: BuildingFormValues) => void }) {
 function StepUnits({
   count,
   floors,
+  buildingType,
   onBack,
   onNext,
 }: {
   count: number;
   floors: number;
+  buildingType: "RESIDENTIAL" | "BUSINESS";
   onBack: () => void;
   onNext: (v: UnitsFormValues) => void;
 }) {
   const defaultUnit = (i: number) => ({
     label: `Unit ${i + 1}`,
     floor: Math.min(i, floors - 1),
-    unit_type: "single",
-    classification: "RESIDENTIAL",
+    unit_type: buildingType === "BUSINESS" ? "shop" : "single",
+    classification: buildingType,
     monthly_rent: 0,
     notes: "",
   });
@@ -193,9 +229,8 @@ function StepUnits({
     control,
     watch,
     formState: { errors },
-  } = useForm<UnitsFormValues>({
-
-    resolver: zodResolver(unitsSchema),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  } = useForm<UnitsFormValues>({ resolver: zodResolver(unitsSchema) as any,
     defaultValues: { units: Array.from({ length: count }, (_, i) => defaultUnit(i)) },
   });
   const { fields, append, remove } = useFieldArray({ control, name: "units" });
@@ -341,8 +376,18 @@ function StepPreview({
   return (
     <div className="space-y-4">
       <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
-        <p className="font-semibold text-gray-900">{building.name}</p>
-        {building.address && <p className="text-sm text-gray-500 mt-0.5">{building.address}</p>}
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="font-semibold text-gray-900">{building.name}</p>
+            {building.address && <p className="text-sm text-gray-500 mt-0.5">{building.address}</p>}
+          </div>
+          <span className={cn(
+            "shrink-0 rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider",
+            building.building_type === "BUSINESS" ? "bg-blue-100 text-blue-700" : "bg-gray-200 text-gray-700"
+          )}>
+            {building.building_type === "BUSINESS" ? "Business · 16% VAT" : "Residential"}
+          </span>
+        </div>
         <div className="mt-2 flex gap-4 text-xs text-gray-500">
           <span>{building.total_floors} floor{building.total_floors !== 1 ? "s" : ""}</span>
           <span>{units.length} unit{units.length !== 1 ? "s" : ""}</span>
@@ -435,7 +480,7 @@ function CreateBuildingWizard({ onClose }: { onClose: () => void }) {
           label: u.label,
           floor: u.floor,
           unit_type: u.unit_type as UnitType,
-          classification: u.classification,
+          classification: u.classification as import("@/lib/types").UnitClassification,
           monthly_rent: String(u.monthly_rent),
           notes: u.notes || "",
         }))
@@ -489,6 +534,7 @@ function CreateBuildingWizard({ onClose }: { onClose: () => void }) {
             <StepUnits
               count={buildingData.unit_count}
               floors={buildingData.total_floors}
+              buildingType={buildingData.building_type}
               onBack={() => setStep(1)}
               onNext={handleUnitsNext}
             />
@@ -573,6 +619,7 @@ function AdjustRentModal({
 // ─── Maintenance Log Modal ───────────────────────────────────────────────────
 function MaintenanceModal({
   unit,
+  onClose,
 }: {
   unit: Unit;
   onClose: () => void;

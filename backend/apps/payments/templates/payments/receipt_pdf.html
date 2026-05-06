@@ -4,28 +4,29 @@
     <meta charset="utf-8">
     <title>Receipt - {{ receipt.reference_code }}</title>
     <style>
-        body { font-family: sans-serif; color: #333; line-height: 1.4; }
-        .header { text-align: center; margin-bottom: 30px; border-bottom: 2px solid #16a34a; padding-bottom: 10px; }
-        .header h1 { color: #16a34a; margin: 0; font-size: 24px; }
-        .header p { margin: 5px 0 0; color: #666; font-size: 12px; }
-        .meta { margin-bottom: 30px; display: block; width: 100%; }
+        body { font-family: sans-serif; color: #000000; line-height: 1.4; background-color: #ffffff; padding: 20px; }
+        .header { text-align: center; margin-bottom: 30px; border-bottom: 2px solid #000000; padding-bottom: 12px; }
+        .header h1 { color: #000000; margin: 0; font-size: 26px; letter-spacing: 3px; }
+        .header p { margin: 5px 0 0; color: #000000; font-size: 12px; letter-spacing: 1px; text-transform: uppercase; }
+        .meta { margin-bottom: 30px; display: block; width: 100%; color: #000000; }
         .meta table { width: 100%; }
         .meta td { vertical-align: top; }
+        .meta strong { color: #000000; }
         .details { margin-bottom: 30px; }
         .details table { width: 100%; border-collapse: collapse; }
-        .details th, .details td { padding: 10px; border: 1px solid #e5e7eb; text-align: left; }
-        .details th { bg-color: #f9fafb; font-size: 12px; text-transform: uppercase; color: #6b7280; }
-        .footer { margin-top: 50px; text-align: center; font-size: 10px; color: #9ca3af; border-top: 1px solid #e5e7eb; padding-top: 20px; }
-        .amount { font-size: 18px; font-weight: bold; color: #16a34a; }
-        .summary { margin-top: 20px; text-align: right; }
+        .details th, .details td { padding: 10px; border: 1px solid #000000; text-align: left; color: #000000; }
+        .details th { background-color: #ffffff; font-size: 12px; text-transform: uppercase; color: #000000; }
+        .footer { margin-top: 50px; text-align: center; font-size: 10px; color: #000000; border-top: 1px solid #000000; padding-top: 20px; }
+        .amount { font-size: 18px; font-weight: bold; color: #000000; }
+        .summary { margin-top: 20px; text-align: right; color: #000000; }
         .summary table { width: 250px; margin-left: auto; }
         .summary td { padding: 5px 0; }
-        .summary .total { font-size: 16px; font-weight: bold; border-top: 2px solid #16a34a; padding-top: 10px; }
+        .summary .total { font-size: 16px; font-weight: bold; border-top: 2px solid #000000; padding-top: 10px; }
     </style>
 </head>
 <body>
     <div class="header">
-        <h1>DR. OSORO PROPERTIES</h1>
+        <h1>WILKEM</h1>
         <p>Rental Payment Receipt</p>
     </div>
 
@@ -78,8 +79,8 @@
             </tr>
             {% if receipt.outstanding_balance %}
             <tr>
-                <td style="color: #dc2626;"><strong>Remaining Balance:</strong></td>
-                <td style="text-align: right; color: #dc2626;">KES {{ receipt.outstanding_balance|floatformat:2 }}</td>
+                <td><strong>Remaining Balance:</strong></td>
+                <td style="text-align: right;">KES {{ receipt.outstanding_balance|floatformat:2 }}</td>
             </tr>
             {% endif %}
         </table>

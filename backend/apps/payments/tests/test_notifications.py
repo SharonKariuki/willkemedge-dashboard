@@ -115,11 +115,16 @@ class TestSendSmsSkippedWithoutApiKey:
         assert "AT_API_KEY not set" in caplog.text
 
 
-class TestSendEmailSkippedWithoutApiKey:
-    def test_logs_warning_when_no_api_key(self, caplog):
+class TestSendEmailSkippedWithoutCredentials:
+    @patch("apps.payments.notifications.settings")
+    def test_logs_warning_when_no_credentials(self, mock_settings, caplog):
         import logging
+
+        mock_settings.EMAIL_HOST_USER = ""
+        mock_settings.EMAIL_HOST_PASSWORD = ""
+        mock_settings.DEFAULT_FROM_EMAIL = "noreply@willkemedge.co.ke"
 
         from apps.payments.notifications import send_email
         with caplog.at_level(logging.WARNING):
             send_email("test@example.com", "Subject", "<p>Body</p>")
-        assert "SENDGRID_API_KEY not set" in caplog.text
+        assert "EMAIL_HOST_USER/PASSWORD not set" in caplog.text

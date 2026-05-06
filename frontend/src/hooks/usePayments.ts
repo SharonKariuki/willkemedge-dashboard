@@ -87,6 +87,15 @@ export function useCreatePayment() {
   });
 }
 
+export function useResendReceipt() {
+  return useMutation({
+    mutationFn: async (paymentId: number) => {
+      const { data } = await api.post(`/payments/${paymentId}/resend-receipt/`);
+      return data;
+    },
+  });
+}
+
 interface MockPaymentPayload {
   tenant: number;
   amount: string | number;

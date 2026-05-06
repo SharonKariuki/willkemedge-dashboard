@@ -23,7 +23,7 @@ from .serializers import (
     TransactionSerializer,
 )
 from .services import get_collection_progress, process_payment
-from .tasks import generate_monthly_arrears
+from .tasks import generate_monthly_arrears, send_payment_confirmation
 
 
 class MockPaymentSerializer(serializers.Serializer):
@@ -91,7 +91,7 @@ class PaymentViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         data = serializer.validated_data
-        process_payment(
+        payment = process_payment(
             tenant=data["tenant"],
             amount=data["amount"],
             payment_date=data["payment_date"],
@@ -101,12 +101,20 @@ class PaymentViewSet(viewsets.ModelViewSet):
             reference=data.get("reference", ""),
             notes=data.get("notes", ""),
         )
+        send_payment_confirmation.delay(payment.id)
 
     @action(detail=False, methods=["get"], url_path="recent")
     def recent(self, request):
         """GET /api/payments/recent/ — last 10 payments."""
         qs = self.get_queryset()[:10]
         return Response(PaymentSerializer(qs, many=True).data)
+
+    @action(detail=True, methods=["post"], url_path="resend-receipt")
+    def resend_receipt(self, request, pk=None):
+        """POST /api/payments/{id}/resend-receipt/ — re-fire the SMS+email receipt."""
+        payment = self.get_object()
+        send_payment_confirmation.delay(payment.id)
+        return Response({"detail": "Receipt queued for resend."})
 
     @action(detail=False, methods=["post"], url_path="mock")
     def mock(self, request):

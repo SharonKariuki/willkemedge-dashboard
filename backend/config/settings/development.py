@@ -19,8 +19,17 @@ CORS_ALLOWED_ORIGINS = [
     "http://127.0.0.1:5173",
 ]
 
-# Email to console in dev
-EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+# Email — console by default in dev. Set EMAIL_BACKEND in .env to override
+# (e.g. "django.core.mail.backends.smtp.EmailBackend" to send real mail locally).
+EMAIL_BACKEND = config(
+    "EMAIL_BACKEND",
+    default="django.core.mail.backends.console.EmailBackend",
+)
 
 # Disable throttling in dev/test so tests don't get rate-limited
 REST_FRAMEWORK["DEFAULT_THROTTLE_CLASSES"] = []  # noqa: F405
+
+# Run Celery tasks synchronously in dev — avoids needing Redis running locally.
+# Production keeps the real broker (Redis) configured in base.py.
+CELERY_TASK_ALWAYS_EAGER = True
+CELERY_TASK_EAGER_PROPAGATES = True

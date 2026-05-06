@@ -1,4 +1,6 @@
 """Tenant API views — updated with move-out notice, deposit refund, and edit."""
+from decimal import Decimal
+
 from django.db import models, transaction
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -112,7 +114,7 @@ class TenantViewSet(viewsets.ModelViewSet):
         # Calculate deposit refund
         refund_pct = ser.validated_data.get("deposit_refund_percentage", 100)
         tenant.deposit_refund_percentage = refund_pct
-        tenant.deposit_refund_amount = tenant.deposit_paid * (refund_pct / 100)
+        tenant.deposit_refund_amount = tenant.deposit_paid * (Decimal(refund_pct) / Decimal(100))
         tenant.save(update_fields=["deposit_refund_percentage", "deposit_refund_amount"])
 
         with transaction.atomic():

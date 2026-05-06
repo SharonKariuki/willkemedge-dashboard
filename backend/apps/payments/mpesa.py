@@ -44,6 +44,10 @@ class DarajaClient:
     # Internal helpers
     # ------------------------------------------------------------------
 
+    def is_safaricom_ip(self, ip: str) -> bool:
+        """Return True if the request originated from a known Safaricom callback IP."""
+        return ip in SAFARICOM_IPS
+
     @property
     def base_url(self) -> str:
         env = getattr(settings, "MPESA_ENV", "sandbox")
