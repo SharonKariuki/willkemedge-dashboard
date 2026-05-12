@@ -12,12 +12,23 @@ ALLOWED_HOSTS = config("DJANGO_ALLOWED_HOSTS", cast=Csv())
 DATABASE_URL = config("DATABASE_URL", default="")
 if DATABASE_URL:
     DATABASES = {
-        "default": dj_database_url.parse(DATABASE_URL, conn_max_age=600, ssl_require=True)
+        "default": dj_database_url.parse(
+            DATABASE_URL,
+            conn_max_age=600,
+            # Neon compute auto-suspends when idle and can drop pooled
+            # connections; verify a connection is alive before reusing it.
+            conn_health_checks=True,
+            ssl_require=True,
+        )
     }
+    # Neon's pooled endpoint runs PgBouncer in transaction-pooling mode, which
+    # does not support PostgreSQL server-side cursors. Disable them so large
+    # queryset iteration (.iterator()) doesn't raise "cursor does not exist".
+    DATABASES["default"]["DISABLE_SERVER_SIDE_CURSORS"] = True
 else:
     raise RuntimeError(
         "DATABASE_URL environment variable is required in production. "
-        "Get it from your Render PostgreSQL dashboard → External Database URL."
+        "Get it from your Neon dashboard → Connection Details → Pooled connection string."
     )
 
 CORS_ALLOWED_ORIGINS = config("CORS_ALLOWED_ORIGINS", default="", cast=Csv())
