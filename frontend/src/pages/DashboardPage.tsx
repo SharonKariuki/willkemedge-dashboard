@@ -26,6 +26,7 @@ import {
 } from "@/components/ui";
 import { useAuth } from "@/hooks/useAuth";
 import { useDashboard, type DashboardData } from "@/hooks/useDashboard";
+import { displayName } from "@/lib/displayName";
 import { avatarFor, propertyImage } from "@/lib/images";
 
 const OCCUPANCY_COLORS = [
@@ -88,7 +89,7 @@ export default function DashboardPage() {
   const { data, isLoading } = useDashboard();
   const { user } = useAuth();
 
-  const firstName = user?.first_name?.trim() || user?.email?.split("@")[0] || "there";
+  const firstName = user?.first_name?.trim() || displayName(user?.email?.split("@")[0]) || "there";
   const today = new Date();
   const dateLine = format(today, "EEEE, d MMMM").toUpperCase();
   const greeting = `${greetingFor(today.getHours())}, ${firstName}.`;

@@ -13,8 +13,9 @@ import { Button } from "./ui";
 export default function AuthLayout() {
   const { user, logout } = useAuth();
 
-  const initials = (user?.email ?? "??")
-    .split("@")[0]
+  const mappedHandle = displayName(user?.email?.split("@")[0] ?? "");
+
+  const initials = (mappedHandle || "??")
     .split(/[._-]/)
     .slice(0, 2)
     .map((s) => s[0]?.toUpperCase() ?? "")
@@ -52,7 +53,7 @@ export default function AuthLayout() {
               <div className="flex items-center gap-2 pl-1">
                 <div className="hidden text-right sm:block">
                   <p className="text-xs font-medium text-ink-900">
-                    {user?.email?.split("@")[0] ?? "User"}
+                    {mappedHandle || "User"}
                   </p>
                   <p className="text-[10px] uppercase tracking-wider text-ink-500">Admin</p>
                 </div>
