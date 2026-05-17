@@ -12,8 +12,20 @@ class UnitInline(admin.TabularInline):
 
 @admin.register(Building)
 class BuildingAdmin(admin.ModelAdmin):
-    list_display = ("name", "address", "total_floors", "created_at")
+    list_display = ("name", "address", "total_floors", "paybill_number", "created_at")
     search_fields = ("name",)
+    fieldsets = (
+        (None, {"fields": ("name", "address", "total_floors", "notes")}),
+        ("Statement header", {
+            "fields": ("legal_name", "postal_address", "contact_phone", "contact_email"),
+        }),
+        ("Payment options (shown on rent statements)", {
+            "fields": (
+                "paybill_number", "paybill_account_format",
+                "bank_name", "bank_branch", "bank_account", "bank_account_name",
+            ),
+        }),
+    )
     inlines = [UnitInline]
 
 

@@ -2,9 +2,10 @@
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
-from .views import ExpenseCategoryViewSet, ExpenseViewSet
+from .views import AccountViewSet, ExpenseCategoryViewSet, ExpenseViewSet
 
 router = DefaultRouter()
+router.register("accounting/accounts", AccountViewSet, basename="account")
 router.register("expenses/categories", ExpenseCategoryViewSet, basename="expense-category")
 router.register("expenses", ExpenseViewSet, basename="expense")
 

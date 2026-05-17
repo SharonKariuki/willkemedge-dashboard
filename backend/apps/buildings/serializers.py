@@ -14,7 +14,8 @@ class UnitSerializer(serializers.ModelSerializer):
         fields = [
             "id", "building", "building_name", "label", "floor", "unit_type",
             "classification", "classification_display", "monthly_rent",
-            "status", "status_display", "notes", "created_at", "updated_at",
+            "status", "status_display", "statement_descriptor", "notes",
+            "created_at", "updated_at",
         ]
         read_only_fields = ["status", "created_at", "updated_at"]
 
@@ -27,6 +28,9 @@ class BuildingSerializer(serializers.ModelSerializer):
         model = Building
         fields = [
             "id", "name", "address", "total_floors", "notes",
+            "legal_name", "postal_address", "contact_phone", "contact_email",
+            "paybill_number", "paybill_account_format",
+            "bank_name", "bank_branch", "bank_account", "bank_account_name",
             "unit_count", "occupied_count", "created_at", "updated_at",
         ]
         read_only_fields = ["created_at", "updated_at"]

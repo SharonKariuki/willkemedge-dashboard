@@ -9,8 +9,8 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.buildings.models import Building, Unit, UnitStatus
-from apps.expenses.models import Expense
-from apps.payments.models import Arrears, Payment
+from apps.expenses.models import Account, AccountType, Expense
+from apps.payments.models import Arrears, Payment, PaymentType
 from apps.tenants.models import Tenant, TenantStatus
 
 
@@ -247,6 +247,238 @@ class TrialBalanceView(APIView):
             "total_credit": round(total_credit, 2),
             "is_balanced": is_balanced,
         })
+
+
+class AccountingDashboardView(APIView):
+    """GET /api/reports/accounting/?tab=coa|pnl|balance_sheet|ledger|petty_cash|budgeting&month=&year=
+
+    Drives the Accounting Suite tabs on ExpensesPage. Each tab returns the shape
+    that its frontend view expects (see ExpensesPage CoAView, PnLView, etc.).
+
+    Built around the Wilkem Ventures Chart of Accounts:
+      Assets 1010-1210, Liabilities 2100-2200, Equity 3010-3020,
+      Income 4000-4010, Expenses 5010-5100.
+    """
+    permission_classes = [IsAuthenticated]
+
+    VALID_TABS = {"coa", "pnl", "balance_sheet", "ledger", "petty_cash", "budgeting"}
+
+    def get(self, request):
+        tab = request.query_params.get("tab", "coa")
+        if tab not in self.VALID_TABS:
+            return Response({"detail": f"Unknown tab '{tab}'."}, status=400)
+
+        now = timezone.now()
+        month = int(request.query_params.get("month", now.month))
+        year = int(request.query_params.get("year", now.year))
+
+        handler = getattr(self, f"_tab_{tab}")
+        return Response(handler(month, year))
+
+    # ── Chart of Accounts ──────────────────────────────────────────────────
+    def _tab_coa(self, month: int, year: int):
+        """List all GL accounts with the in-period balance where it can be computed."""
+        income_by_type = self._income_by_payment_type(month, year)
+        expense_by_account = self._expense_by_account(month, year)
+        accounts = []
+        for acct in Account.objects.filter(is_active=True).order_by("code"):
+            balance = self._account_balance(acct, income_by_type, expense_by_account)
+            accounts.append({
+                "code": acct.code,
+                "name": acct.name,
+                "type": acct.get_account_type_display(),
+                "balance": float(balance),
+            })
+        return {"period": f"{month}/{year}", "accounts": accounts}
+
+    # ── Profit & Loss ──────────────────────────────────────────────────────
+    def _tab_pnl(self, month: int, year: int):
+        """4000/4010 income minus 5xxx expense, with a per-account breakdown."""
+        income_by_type = self._income_by_payment_type(month, year)
+        rental_income = income_by_type.get(PaymentType.RENT, Decimal("0"))
+        late_fees = income_by_type.get(PaymentType.LATE_FEE, Decimal("0"))
+        other_income = income_by_type.get(PaymentType.OTHER, Decimal("0"))
+        total_income = rental_income + late_fees + other_income
+
+        expense_rows = []
+        total_expenses = Decimal("0")
+        for row in (
+            Expense.objects.filter(period_month=month, period_year=year)
+            .values("category__name", "category__account__code", "category__account__name")
+            .annotate(total=Sum("amount"))
+            .order_by("category__account__code", "category__name")
+        ):
+            amount = row["total"] or Decimal("0")
+            total_expenses += amount
+            label = row["category__account__name"] or row["category__name"]
+            code = row["category__account__code"]
+            expense_rows.append({
+                "category": f"{code} — {label}" if code else label,
+                "amount": float(amount),
+            })
+
+        return {
+            "period": f"{month}/{year}",
+            "income": float(total_income),
+            "rental_income": float(rental_income),
+            "late_fees": float(late_fees),
+            "other_income": float(other_income),
+            "total_expenses": float(total_expenses),
+            "net_profit": float(total_income - total_expenses),
+            "expense_breakdown": expense_rows,
+        }
+
+    # ── Balance Sheet (best-effort with current models) ────────────────────
+    def _tab_balance_sheet(self, month: int, year: int):
+        """Snapshot up to the end of the requested period.
+
+        We have no GL postings for fixed assets, mortgage, or owner equity yet,
+        so 1200/1210/2200/3010/3020 stay at zero. Cash, A/R, and deposits-held
+        are derived from Payments/Arrears/Tenants.
+        """
+        period_filter = Q(period_year__lt=year) | Q(period_year=year, period_month__lte=month)
+
+        rent_collected = (
+            Payment.objects.filter(period_filter, payment_type=PaymentType.RENT)
+            .aggregate(t=Sum("amount"))["t"] or Decimal("0")
+        )
+        late_fee_collected = (
+            Payment.objects.filter(period_filter, payment_type=PaymentType.LATE_FEE)
+            .aggregate(t=Sum("amount"))["t"] or Decimal("0")
+        )
+        deposits_collected = (
+            Payment.objects.filter(period_filter, payment_type=PaymentType.DEPOSIT)
+            .aggregate(t=Sum("amount"))["t"] or Decimal("0")
+        )
+        accounts_receivable = (
+            Arrears.objects.filter(period_filter, is_cleared=False)
+            .aggregate(t=Sum("balance"))["t"] or Decimal("0")
+        )
+        # Deposits liability uses Tenant.deposit_paid for active tenants (the
+        # current "held" balance), since we don't yet track refunds as journal
+        # entries. Falls back to payment-typed deposits if no tenants exist.
+        deposit_liability = (
+            Tenant.objects.filter(status=TenantStatus.ACTIVE)
+            .aggregate(t=Sum("deposit_paid"))["t"] or deposits_collected
+        )
+        expenses_paid = (
+            Expense.objects.filter(period_filter)
+            .aggregate(t=Sum("amount"))["t"] or Decimal("0")
+        )
+
+        operating_cash = rent_collected + late_fee_collected - expenses_paid
+
+        assets = {
+            "1010 Checking - Operating":         float(operating_cash),
+            "1020 Checking - Security Deposits": float(deposits_collected),
+            "1200 Building Cost":                0.0,
+            "1210 Land Cost":                    0.0,
+            "Accounts Receivable (Arrears)":     float(accounts_receivable),
+        }
+        liabilities = {
+            "2100 Security Deposits Held": float(deposit_liability),
+            "2200 Mortgage Payable":       0.0,
+        }
+        # Equity plugged so the sheet balances; flagged so the UI can show a note.
+        total_assets = sum(assets.values())
+        total_liabilities = sum(liabilities.values())
+        equity = total_assets - total_liabilities
+
+        return {
+            "period": f"{month}/{year}",
+            "assets": assets,
+            "liabilities": liabilities,
+            "equity": float(equity),
+            "note": (
+                "Fixed assets, mortgage principal, and owner equity are not "
+                "yet tracked as journal entries — equity is shown as the "
+                "plug figure (assets − liabilities)."
+            ),
+        }
+
+    # ── General Ledger (placeholder — needs double-entry to be meaningful) ─
+    def _tab_ledger(self, month: int, year: int):
+        return {
+            "period": f"{month}/{year}",
+            "entries": [],
+            "note": (
+                "General ledger detail requires double-entry journal entries, "
+                "which are not yet implemented. Use the Chart of Accounts and "
+                "P&L tabs to see per-account totals."
+            ),
+        }
+
+    # ── Petty Cash (placeholder — no petty cash model yet) ─────────────────
+    def _tab_petty_cash(self, month: int, year: int):
+        return {
+            "period": f"{month}/{year}",
+            "entries": [],
+            "closing_balance": 0,
+            "note": "Petty cash is not tracked separately yet.",
+        }
+
+    # ── Budgeting (placeholder — no budget model yet) ──────────────────────
+    def _tab_budgeting(self, month: int, year: int):
+        actual = (
+            Payment.objects.filter(period_month=month, period_year=year, payment_type=PaymentType.RENT)
+            .aggregate(t=Sum("amount"))["t"] or Decimal("0")
+        )
+        expected = (
+            Tenant.objects.filter(status=TenantStatus.ACTIVE)
+            .aggregate(t=Sum("monthly_rent"))["t"] or Decimal("0")
+        )
+        variance = actual - expected
+        return {
+            "period": f"{month}/{year}",
+            "rows": [
+                {
+                    "category": "Rent (portfolio)",
+                    "budgeted": float(expected),
+                    "actual": float(actual),
+                    "variance": float(variance),
+                },
+            ],
+            "total_budgeted": float(expected),
+            "total_actual": float(actual),
+            "total_variance": float(variance),
+            "note": (
+                "Budgeted income is derived from the sum of active tenants' "
+                "monthly rent. Per-category budgets aren't tracked yet."
+            ),
+        }
+
+    # ── helpers ────────────────────────────────────────────────────────────
+    @staticmethod
+    def _income_by_payment_type(month: int, year: int) -> dict:
+        rows = (
+            Payment.objects.filter(period_month=month, period_year=year)
+            .values("payment_type")
+            .annotate(total=Sum("amount"))
+        )
+        return {r["payment_type"]: r["total"] or Decimal("0") for r in rows}
+
+    @staticmethod
+    def _expense_by_account(month: int, year: int) -> dict:
+        rows = (
+            Expense.objects.filter(period_month=month, period_year=year)
+            .values("category__account__code")
+            .annotate(total=Sum("amount"))
+        )
+        return {r["category__account__code"]: r["total"] or Decimal("0") for r in rows if r["category__account__code"]}
+
+    @staticmethod
+    def _account_balance(acct, income_by_type, expense_by_account) -> Decimal:
+        """Best-effort in-period balance per account using existing data."""
+        if acct.account_type == AccountType.INCOME:
+            if acct.code == "4000":
+                return income_by_type.get(PaymentType.RENT, Decimal("0"))
+            if acct.code == "4010":
+                return income_by_type.get(PaymentType.LATE_FEE, Decimal("0"))
+            return Decimal("0")
+        if acct.account_type == AccountType.EXPENSE:
+            return expense_by_account.get(acct.code, Decimal("0"))
+        # Assets, liabilities, equity — not yet GL-tracked.
+        return Decimal("0")
 
 
 class ExpenseBreakdownReportView(APIView):

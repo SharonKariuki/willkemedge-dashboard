@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, LogOut, Mail, Pencil, Save, Shield, User, X, XCircle } from "lucide-react";
+import { CheckCircle2, Eye, LogOut, Mail, Pencil, RotateCcw, Save, Shield, User, X, XCircle } from "lucide-react";
 import { useState } from "react";
 import toast from "react-hot-toast";
 
@@ -12,6 +12,7 @@ import {
   EmptyState,
   PageHeader,
   Skeleton,
+  Switch,
   Table,
   TBody,
   TD,
@@ -20,9 +21,11 @@ import {
   TR,
 } from "@/components/ui";
 import { useAuth } from "@/hooks/useAuth";
+import { useViewPreferences } from "@/hooks/useViewPreferences";
 import { api } from "@/lib/api";
 import { displayName } from "@/lib/displayName";
 import { avatarFor } from "@/lib/images";
+import { NAV_ITEMS } from "@/lib/nav";
 import type { StoredUser } from "@/lib/types";
 
 interface LoginAttempt {
@@ -51,6 +54,9 @@ export default function SettingsPage() {
   const user = rawUser as StoredUser | null;
   const qc = useQueryClient();
   const { data: audit, isLoading } = useLoginAudit();
+  const { prefs, setView, resetViews } = useViewPreferences();
+  const togglableItems = NAV_ITEMS.filter((i) => i.togglable);
+  const hiddenCount = togglableItems.filter((i) => !prefs[i.key]).length;
 
   const [editing, setEditing] = useState(false);
   const [profileForm, setProfileForm] = useState({
@@ -291,6 +297,53 @@ export default function SettingsPage() {
           )}
         </Card>
       </div>
+
+      {/* View preferences */}
+      <Card variant="glass" padding="md">
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <Eye className="h-4 w-4 text-sage-600" />
+            <CardTitle>View preferences</CardTitle>
+          </div>
+          <div className="flex items-center gap-2">
+            {hiddenCount > 0 && (
+              <Badge tone="neutral">{hiddenCount} hidden</Badge>
+            )}
+            <Button size="sm" variant="glass" onClick={resetViews} disabled={hiddenCount === 0}>
+              <RotateCcw className="h-3.5 w-3.5" /> Reset
+            </Button>
+          </div>
+        </CardHeader>
+        <p className="mb-4 text-sm text-ink-500">
+          Choose which sections appear in your sidebar and mobile menu. Dashboard and Settings are always shown.
+        </p>
+        <ul className="divide-y divide-gray-200/70">
+          {togglableItems.map(({ key, label, icon: Icon, description }) => {
+            const checked = prefs[key];
+            return (
+              <li key={key} className="flex items-center gap-4 py-3">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-white/60 text-ink-700 ring-1 ring-gray-200/70">
+                  <Icon className="h-4 w-4" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <label htmlFor={`view-${key}`} className="block text-sm font-medium text-ink-900">
+                    {label}
+                  </label>
+                  {description && (
+                    <p className="text-xs text-ink-500">{description}</p>
+                  )}
+                </div>
+                <Switch
+                  id={`view-${key}`}
+                  checked={checked}
+                  onChange={(next) => setView(key, next)}
+                  label={`Show ${label}`}
+                />
+              </li>
+            );
+          })}
+        </ul>
+      </Card>
 
       {/* Login audit */}
       <Card variant="glass" padding="md">

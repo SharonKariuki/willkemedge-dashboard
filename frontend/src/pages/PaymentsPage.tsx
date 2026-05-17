@@ -43,15 +43,25 @@ const SOURCES = [
   { value: "cheque", label: "Cheque" },
 ];
 
+const PAYMENT_TYPES = [
+  { value: "rent",     label: "Rental Income (4000)" },
+  { value: "late_fee", label: "Late Fee (4010)" },
+  { value: "deposit",  label: "Security Deposit (2100)" },
+  { value: "other",    label: "Other Income" },
+] as const;
+
 const now = new Date();
 
 const schema = z.object({
   tenant: z.coerce.number().min(1, "Select a tenant"),
-  amount: z.string().min(1, "Required"),
+  amount: z.string()
+    .min(1, "Required")
+    .refine((v) => Number(v) > 0, "Amount must be greater than 0"),
   payment_date: z.string().min(1, "Required"),
   period_month: z.coerce.number().min(1).max(12),
-  period_year: z.coerce.number().min(2020),
+  period_year: z.coerce.number().min(2020).max(2100),
   source: z.string().min(1),
+  payment_type: z.enum(["rent", "late_fee", "deposit", "other"]),
   reference: z.string().optional(),
   notes: z.string().optional(),
 });
@@ -273,6 +283,7 @@ export default function PaymentsPage() {
       period_month: now.getMonth() + 1,
       period_year: now.getFullYear(),
       source: "cash",
+      payment_type: "rent",
       reference: "",
       notes: "",
     },
@@ -435,6 +446,13 @@ export default function PaymentsPage() {
                   <option value="mpesa">M-Pesa</option>
                   <option value="bank">Bank transfer</option>
                   <option value="cheque">Cheque</option>
+                </select>
+              </Field>
+              <Field label="Type">
+                <select {...register("payment_type")} className={inputCls}>
+                  {PAYMENT_TYPES.map((t) => (
+                    <option key={t.value} value={t.value}>{t.label}</option>
+                  ))}
                 </select>
               </Field>
               <Field label="Period month">

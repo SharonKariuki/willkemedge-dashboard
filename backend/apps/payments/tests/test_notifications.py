@@ -122,7 +122,7 @@ class TestSendEmailSkippedWithoutCredentials:
 
         mock_settings.EMAIL_HOST_USER = ""
         mock_settings.EMAIL_HOST_PASSWORD = ""
-        mock_settings.DEFAULT_FROM_EMAIL = "noreply@willkemedge.co.ke"
+        mock_settings.DEFAULT_FROM_EMAIL = "wilkem.ventures@gmail.com"
 
         from apps.payments.notifications import send_email
         with caplog.at_level(logging.WARNING):

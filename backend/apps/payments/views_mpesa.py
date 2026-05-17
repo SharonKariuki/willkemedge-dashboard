@@ -12,12 +12,15 @@ Idempotency: TransID is stored as `reference` on Payment. A duplicate
 TransID (replay) is silently accepted so Safaricom doesn't keep retrying.
 """
 import logging
+import re
 from decimal import Decimal
 
+from django.conf import settings
 from django.utils import timezone
 from rest_framework.permissions import AllowAny
 from rest_framework.request import Request
 from rest_framework.response import Response
+from rest_framework.throttling import SimpleRateThrottle
 from rest_framework.views import APIView
 
 from apps.buildings.models import Unit
@@ -33,6 +36,10 @@ logger = logging.getLogger(__name__)
 MPESA_ACCEPT = {"ResultCode": 0, "ResultDesc": "Accepted"}
 MPESA_REJECT = {"ResultCode": 1, "ResultDesc": "Rejected"}
 
+# Separators a tenant might type between the account prefix and the house
+# number (e.g. "90290#A12", "90290 A12", "90290-A12").
+_BILL_REF_SEP_RE = re.compile(r"^[\s#*\-./]+")
+
 
 def _get_client_ip(request: Request) -> str:
     x_forwarded = request.META.get("HTTP_X_FORWARDED_FOR")
@@ -41,12 +48,47 @@ def _get_client_ip(request: Request) -> str:
     return request.META.get("REMOTE_ADDR", "")
 
 
+class MpesaWebhookThrottle(SimpleRateThrottle):
+    """Per-IP throttle for the M-Pesa C2B endpoints.
+
+    Safaricom retries timed-out webhooks, but legitimate traffic for a
+    single shortcode tops out at a few requests per second. 60/minute per
+    IP is comfortably above legitimate volume and an order of magnitude
+    below what an attacker would need to spam payments / notifications.
+    """
+    scope = "mpesa_webhook"
+
+    def get_cache_key(self, request, view):
+        return self.cache_format % {"scope": self.scope, "ident": _get_client_ip(request)}
+
+
+def _normalize_bill_ref(bill_ref: str) -> str:
+    """
+    Recover the bare house number from a paybill BillRefNumber.
+
+    Tenants pay paybill <MPESA_SHORTCODE> with account "<prefix>#<house number>"
+    (e.g. "90290#A12"), so Safaricom forwards "90290#A12" — or with a space,
+    dash, or no separator at all. Strip the configured MPESA_ACCOUNT_PREFIX and
+    any leading separator so what's left can be matched against Unit.label.
+    A tenant who typed just the house number ("A12") still works.
+    """
+    ref = (bill_ref or "").strip().upper()
+    prefix = str(getattr(settings, "MPESA_ACCOUNT_PREFIX", "") or "").strip().upper()
+    if prefix and ref.startswith(prefix):
+        ref = ref[len(prefix):]
+    return _BILL_REF_SEP_RE.sub("", ref).strip()
+
+
 def _match_tenant(bill_ref: str) -> Tenant | None:
     """
-    Match BillRefNumber (unit label, e.g. 'A1', 'B12') to the active tenant.
-    Returns None if no active tenant found on that unit.
+    Match BillRefNumber to the active tenant on the referenced unit.
+    BillRefNumber is normalized first (prefix stripped) to a bare house
+    number, e.g. 'A1' / 'B12'. Returns None if no active tenant is found.
     """
-    unit = Unit.objects.filter(label__iexact=bill_ref.strip()).first()
+    house_number = _normalize_bill_ref(bill_ref)
+    if not house_number:
+        return None
+    unit = Unit.objects.filter(label__iexact=house_number).first()
     if not unit:
         return None
     return Tenant.objects.filter(unit=unit, status=TenantStatus.ACTIVE).first()
@@ -60,6 +102,7 @@ class MpesaValidateView(APIView):
     """
     permission_classes = [AllowAny]
     authentication_classes = []
+    throttle_classes = [MpesaWebhookThrottle]
 
     def post(self, request: Request, *_args, **_kwargs) -> Response:
         ip = _get_client_ip(request)
@@ -103,6 +146,7 @@ class MpesaConfirmView(APIView):
     """
     permission_classes = [AllowAny]
     authentication_classes = []
+    throttle_classes = [MpesaWebhookThrottle]
 
     def post(self, request: Request, *_args, **_kwargs) -> Response:
         ip = _get_client_ip(request)
@@ -147,4 +191,112 @@ class MpesaConfirmView(APIView):
         # Dispatch async tasks — fire and forget.
         send_payment_confirmation.delay(payment.id)
         logger.info("M-Pesa confirm: recorded payment %s KES %s", trans_id, amount)
+        return Response(MPESA_ACCEPT)
+
+
+def _normalize_msisdn(phone: str | int) -> str:
+    """Reduce any Kenyan phone format to bare digits starting with 254."""
+    digits = "".join(c for c in str(phone) if c.isdigit())
+    if digits.startswith("0"):
+        digits = "254" + digits[1:]
+    return digits
+
+
+def _tenant_by_phone(msisdn: str) -> Tenant | None:
+    """Find the active tenant whose stored phone matches the M-Pesa MSISDN."""
+    target = _normalize_msisdn(msisdn)
+    for tenant in Tenant.objects.filter(status=TenantStatus.ACTIVE):
+        if _normalize_msisdn(tenant.phone) == target:
+            return tenant
+    return None
+
+
+class MpesaStkCallbackView(APIView):
+    """
+    POST /api/payments/mpesa/stk-callback/
+    Safaricom posts the result of an STK Push (Lipa Na M-Pesa Online) here.
+
+    Payload (success):
+        {"Body": {"stkCallback": {
+            "MerchantRequestID": "...",
+            "CheckoutRequestID": "ws_CO_...",
+            "ResultCode": 0,
+            "CallbackMetadata": {"Item": [
+                {"Name": "Amount", "Value": 100.0},
+                {"Name": "MpesaReceiptNumber", "Value": "ABC123XYZ"},
+                {"Name": "PhoneNumber", "Value": 254708374149},
+                ...
+            ]}
+        }}}
+
+    On failure ResultCode != 0 and CallbackMetadata is absent (e.g. user
+    cancelled, insufficient funds, timeout). We log and return 200 either way
+    so Safaricom doesn't keep retrying.
+    """
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def post(self, request: Request, *_args, **_kwargs) -> Response:
+        ip = _get_client_ip(request)
+        if not daraja.is_safaricom_ip(ip):
+            logger.warning("STK callback: rejected non-Safaricom IP %s", ip)
+            return Response(MPESA_ACCEPT)  # 200 to avoid retries from spoofed IPs
+
+        body = (request.data or {}).get("Body", {}).get("stkCallback", {}) or {}
+        result_code = body.get("ResultCode")
+        checkout_id = body.get("CheckoutRequestID", "")
+        result_desc = body.get("ResultDesc", "")
+
+        if result_code != 0:
+            logger.info(
+                "STK callback: payment NOT completed — CheckoutRequestID=%s code=%s desc=%s",
+                checkout_id, result_code, result_desc,
+            )
+            return Response(MPESA_ACCEPT)
+
+        items = {
+            i.get("Name"): i.get("Value")
+            for i in body.get("CallbackMetadata", {}).get("Item", [])
+        }
+        receipt = str(items.get("MpesaReceiptNumber", "")).strip()
+        amount_raw = items.get("Amount")
+        phone_raw = items.get("PhoneNumber", "")
+
+        if not receipt or amount_raw is None:
+            logger.error("STK callback: missing receipt or amount in payload: %s", items)
+            return Response(MPESA_ACCEPT)
+
+        # Idempotency — Safaricom can retry the callback.
+        if Payment.objects.filter(reference=receipt).exists():
+            logger.info("STK callback: duplicate receipt %s — skipped", receipt)
+            return Response(MPESA_ACCEPT)
+
+        tenant = _tenant_by_phone(phone_raw)
+        if not tenant:
+            logger.error(
+                "STK callback: no active tenant matches phone %s (receipt %s)",
+                phone_raw, receipt,
+            )
+            return Response(MPESA_ACCEPT)
+
+        try:
+            amount = Decimal(str(amount_raw))
+        except Exception:
+            logger.error("STK callback: invalid amount '%s'", amount_raw)
+            return Response(MPESA_ACCEPT)
+
+        now = timezone.now()
+        payment = process_payment(
+            tenant=tenant,
+            amount=amount,
+            payment_date=now.date(),
+            period_month=now.month,
+            period_year=now.year,
+            source=PaymentSource.MPESA,
+            reference=receipt,
+            notes=f"M-Pesa STK Push. CheckoutRequestID: {checkout_id}",
+        )
+
+        send_payment_confirmation.delay(payment.id)
+        logger.info("STK callback: recorded payment %s KES %s", receipt, amount)
         return Response(MPESA_ACCEPT)

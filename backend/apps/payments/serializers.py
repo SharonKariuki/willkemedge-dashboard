@@ -26,6 +26,7 @@ class PaymentSerializer(serializers.ModelSerializer):
             "period_year",
             "source",
             "source_display",
+            "payment_type",
             "reference",
             "transaction_id",
             "notes",
@@ -44,6 +45,7 @@ class PaymentCreateSerializer(serializers.ModelSerializer):
             "period_month",
             "period_year",
             "source",
+            "payment_type",
             "reference",
             "notes",
         ]
@@ -56,6 +58,11 @@ class PaymentCreateSerializer(serializers.ModelSerializer):
     def validate_period_month(self, value):
         if not 1 <= value <= 12:
             raise serializers.ValidationError("Month must be between 1 and 12.")
+        return value
+
+    def validate_period_year(self, value):
+        if not 2020 <= value <= 2100:
+            raise serializers.ValidationError("Year must be between 2020 and 2100.")
         return value
 
 

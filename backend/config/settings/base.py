@@ -128,6 +128,7 @@ REST_FRAMEWORK = {
     "DEFAULT_THROTTLE_RATES": {
         "anon": "20/minute",
         "user": "120/minute",
+        "mpesa_webhook": "60/minute",
     },
     "DEFAULT_RENDERER_CLASSES": (
         "rest_framework.renderers.JSONRenderer",
@@ -186,6 +187,10 @@ MPESA_SHORTCODE = config("MPESA_SHORTCODE", default="")
 MPESA_ENV = config("MPESA_ENV", default="sandbox")
 MPESA_CONFIRM_URL = config("MPESA_CONFIRM_URL", default="")
 MPESA_VALIDATE_URL = config("MPESA_VALIDATE_URL", default="")
+# Paybill account-number prefix: tenants pay "<prefix>#<house number>"
+# (e.g. "90290#A12"). The C2B webhook strips this prefix to recover the bare
+# house number, which must equal a Unit.label. Override via env if it changes.
+MPESA_ACCOUNT_PREFIX = config("MPESA_ACCOUNT_PREFIX", default="90290")
 
 # ---------------------------------------------------------------------------
 # Notifications
@@ -204,7 +209,7 @@ EMAIL_PORT = config("EMAIL_PORT", default=587, cast=int)
 EMAIL_USE_TLS = config("EMAIL_USE_TLS", default=True, cast=bool)
 EMAIL_HOST_USER = config("EMAIL_HOST_USER", default="")
 EMAIL_HOST_PASSWORD = config("EMAIL_HOST_PASSWORD", default="")
-DEFAULT_FROM_EMAIL = config("DEFAULT_FROM_EMAIL", default="noreply@willkemedge.co.ke")
+DEFAULT_FROM_EMAIL = config("DEFAULT_FROM_EMAIL", default="Wilkem Ventures <wilkem.ventures@gmail.com>")
 
 FRONTEND_URL = config("FRONTEND_URL", default="http://localhost:5173")
 

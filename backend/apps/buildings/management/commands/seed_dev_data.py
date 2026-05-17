@@ -13,7 +13,7 @@ from apps.buildings.models import Building, Unit, UnitStatus
 
 BUILDINGS = [
     {
-        "name": "Willkemedge Apartments",
+        "name": "Wilkem Ventures Apartments",
         "address": "Moi Avenue, Nairobi",
         "total_floors": 5,
         "units": [
@@ -43,7 +43,7 @@ BUILDINGS = [
         ],
     },
     {
-        "name": "Willkemedge Commercial",
+        "name": "Wilkem Ventures Commercial",
         "address": "Tom Mboya St, Nairobi",
         "total_floors": 1,
         "units": [
@@ -56,7 +56,7 @@ BUILDINGS = [
 
 # Assign some units a non-vacant status for visual variety in dev.
 STATUS_OVERRIDES = {
-    "Willkemedge Apartments": {
+    "Wilkem Ventures Apartments": {
         "A1": UnitStatus.OCCUPIED_PAID,
         "A2": UnitStatus.OCCUPIED_PARTIAL,
         "B1": UnitStatus.OCCUPIED_UNPAID,
@@ -67,7 +67,7 @@ STATUS_OVERRIDES = {
         "101": UnitStatus.OCCUPIED_PAID,
         "201": UnitStatus.OCCUPIED_PARTIAL,
     },
-    "Willkemedge Commercial": {
+    "Wilkem Ventures Commercial": {
         "Shop 1": UnitStatus.OCCUPIED_PAID,
         "Shop 3": UnitStatus.ARREARS,
     },

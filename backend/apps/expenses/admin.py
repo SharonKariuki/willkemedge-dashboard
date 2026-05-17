@@ -1,12 +1,22 @@
 from django.contrib import admin
 
-from .models import Expense, ExpenseCategory
+from .models import Account, Expense, ExpenseCategory
+
+
+@admin.register(Account)
+class AccountAdmin(admin.ModelAdmin):
+    list_display = ["code", "name", "account_type", "is_active"]
+    list_filter = ["account_type", "is_active"]
+    search_fields = ["code", "name"]
+    ordering = ["code"]
 
 
 @admin.register(ExpenseCategory)
 class ExpenseCategoryAdmin(admin.ModelAdmin):
-    list_display = ["name", "description", "created_at"]
+    list_display = ["name", "account", "description", "created_at"]
+    list_filter = ["account"]
     search_fields = ["name"]
+    autocomplete_fields = ["account"]
 
 
 @admin.register(Expense)

@@ -64,8 +64,9 @@ def signed_post(client, payload: dict, secret: str = ""):
 class TestBankWebhook:
     @patch("apps.payments.bank.send_payment_confirmation.delay")
     def test_records_payment_for_matched_tenant(self, mock_task, api_client, tenant, settings):
-        settings.BANK_WEBHOOK_SECRET = ""  # skip sig check in dev/DEBUG
+        settings.BANK_WEBHOOK_SECRET = ""
         settings.DEBUG = True
+        settings.ALLOW_INSECURE_BANK_WEBHOOK = True  # explicit dev opt-in
         payload = {
             "amount": "18000", "reference": "BANK_REF_001",
             "bill_ref": "C2", "sender_name": "Alice Njeri",
@@ -79,6 +80,7 @@ class TestBankWebhook:
     def test_idempotent_on_duplicate_reference(self, mock_task, api_client, tenant, settings):
         settings.BANK_WEBHOOK_SECRET = ""
         settings.DEBUG = True
+        settings.ALLOW_INSECURE_BANK_WEBHOOK = True
         payload = {
             "amount": "18000", "reference": "BANK_DUP_001",
             "bill_ref": "C2", "sender_name": "Alice Njeri",
@@ -91,6 +93,7 @@ class TestBankWebhook:
     def test_returns_200_for_unmatched_bill_ref(self, api_client, db, settings):
         settings.BANK_WEBHOOK_SECRET = ""
         settings.DEBUG = True
+        settings.ALLOW_INSECURE_BANK_WEBHOOK = True
         payload = {
             "amount": "5000", "reference": "BANK_UNKNOWN_001",
             "bill_ref": "ZZZZZ", "sender_name": "Mystery Person",
@@ -102,6 +105,21 @@ class TestBankWebhook:
     def test_returns_400_for_missing_amount(self, api_client, db, settings):
         settings.BANK_WEBHOOK_SECRET = ""
         settings.DEBUG = True
+        settings.ALLOW_INSECURE_BANK_WEBHOOK = True
         payload = {"reference": "BANK_NO_AMT", "bill_ref": "C2"}
         resp = api_client.post(WEBHOOK_URL, payload, format="json")
         assert resp.status_code == 400
+
+    def test_rejects_when_secret_missing_and_no_dev_opt_in(self, api_client, db, settings):
+        """Fail-closed: missing BANK_WEBHOOK_SECRET must reject even with DEBUG=True
+        unless the explicit ALLOW_INSECURE_BANK_WEBHOOK dev flag is also set."""
+        settings.BANK_WEBHOOK_SECRET = ""
+        settings.DEBUG = True
+        settings.ALLOW_INSECURE_BANK_WEBHOOK = False
+        payload = {
+            "amount": "1000", "reference": "BANK_FAIL_CLOSED",
+            "bill_ref": "C2", "sender_name": "Anybody",
+        }
+        resp = api_client.post(WEBHOOK_URL, payload, format="json")
+        assert resp.status_code == 401
+        assert not Payment.objects.filter(reference="BANK_FAIL_CLOSED").exists()

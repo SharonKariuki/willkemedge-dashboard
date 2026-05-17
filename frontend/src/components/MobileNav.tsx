@@ -1,35 +1,15 @@
-import {
-  BarChart3,
-  Bell,
-  Building2,
-  CreditCard,
-  Home,
-  LayoutDashboard,
-  MoreHorizontal,
-  Receipt,
-  Settings,
-  Users,
-  X,
-} from "lucide-react";
-import { useEffect, useState } from "react";
+import { MoreHorizontal, X } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 
+import { useViewPreferences } from "@/hooks/useViewPreferences";
 import { cn } from "@/lib/cn";
+import { NAV_ITEMS, type ViewKey } from "@/lib/nav";
 
-const PRIMARY = [
-  { to: "/dashboard", label: "Home", icon: LayoutDashboard },
-  { to: "/units", label: "Units", icon: Home },
-  { to: "/tenants", label: "Tenants", icon: Users },
-  { to: "/payments", label: "Payments", icon: CreditCard },
-];
+const PRIMARY_KEYS: ViewKey[] = ["dashboard", "units", "tenants", "payments"];
+const OVERFLOW_KEYS: ViewKey[] = ["buildings", "expenses", "notifications", "reports", "settings"];
 
-const OVERFLOW = [
-  { to: "/buildings", label: "Buildings", icon: Building2 },
-  { to: "/expenses", label: "Expenses", icon: Receipt },
-  { to: "/notifications", label: "Notifications", icon: Bell },
-  { to: "/reports", label: "Reports", icon: BarChart3 },
-  { to: "/settings", label: "Settings", icon: Settings },
-];
+const byKey = (key: ViewKey) => NAV_ITEMS.find((i) => i.key === key)!;
 
 export default function MobileNav() {
   const [open, setOpen] = useState(false);
@@ -46,7 +26,14 @@ export default function MobileNav() {
     };
   }, [open]);
 
-  const overflowActive = OVERFLOW.some((i) => pathname.startsWith(i.to));
+  const { prefs } = useViewPreferences();
+  const visible = (keys: ViewKey[]) =>
+    keys.map(byKey).filter((item) => !item.togglable || prefs[item.key]);
+
+  const primaryItems = useMemo(() => visible(PRIMARY_KEYS), [prefs]);
+  const overflowItems = useMemo(() => visible(OVERFLOW_KEYS), [prefs]);
+
+  const overflowActive = overflowItems.some((i) => pathname.startsWith(i.to));
 
   return (
     <>
@@ -57,7 +44,7 @@ export default function MobileNav() {
         style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
       >
         <div className="glass-strong flex items-center justify-around rounded-xl px-2 py-2 ring-1 ring-ochre-500/15">
-          {PRIMARY.map(({ to, label, icon: Icon }) => (
+          {primaryItems.map(({ to, label, icon: Icon }) => (
             <NavLink
               key={to}
               to={to}
@@ -129,7 +116,7 @@ export default function MobileNav() {
               </button>
             </div>
             <div className="grid grid-cols-2 gap-2">
-              {OVERFLOW.map(({ to, label, icon: Icon }) => (
+              {overflowItems.map(({ to, label, icon: Icon }) => (
                 <NavLink
                   key={to}
                   to={to}

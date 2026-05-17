@@ -564,19 +564,25 @@ function AdjustRentModal({
 }) {
   const qc = useQueryClient();
   const [rent, setRent] = useState(String(unit.monthly_rent));
+  const [descriptor, setDescriptor] = useState(
+    (unit as unknown as { statement_descriptor?: string }).statement_descriptor ?? "",
+  );
   const [saving, setSaving] = useState(false);
 
   const handleSave = async () => {
     if (!rent || isNaN(Number(rent))) return;
     setSaving(true);
     try {
-      await api.patch(`/units/${unit.id}/`, { monthly_rent: rent });
+      await api.patch(`/units/${unit.id}/`, {
+        monthly_rent: rent,
+        statement_descriptor: descriptor,
+      });
       qc.invalidateQueries({ queryKey: ["buildings"] });
       qc.invalidateQueries({ queryKey: ["units"] });
-      toast.success(`Rent for ${unit.label} updated to KES ${Number(rent).toLocaleString()}`);
+      toast.success(`Unit ${unit.label} updated`);
       onClose();
     } catch {
-      toast.error("Failed to update rent");
+      toast.error("Failed to update unit");
     } finally {
       setSaving(false);
     }
@@ -587,9 +593,9 @@ function AdjustRentModal({
       <div className="absolute inset-0 bg-gray-900/40 backdrop-blur-sm" onClick={onClose} />
       <div className="relative w-full max-w-sm rounded-xl bg-white p-6 shadow-2xl animate-fade-up">
 
-        <h3 className="font-semibold text-gray-900 mb-1">Adjust Rent</h3>
+        <h3 className="font-semibold text-gray-900 mb-1">Edit Unit</h3>
         <p className="text-sm text-gray-500 mb-4">{unit.label} — current: KES {Number(unit.monthly_rent).toLocaleString()}</p>
-        <label className="mb-1 block text-xs font-medium text-gray-600 uppercase tracking-wider">New monthly rent (KES)</label>
+        <label className="mb-1 block text-xs font-medium text-gray-600 uppercase tracking-wider">Monthly rent (KES)</label>
         <input
           type="number"
           min={0}
@@ -599,6 +605,19 @@ function AdjustRentModal({
           className={inputCls}
           autoFocus
         />
+        <label className="mt-3 mb-1 block text-xs font-medium text-gray-600 uppercase tracking-wider">
+          Statement descriptor
+        </label>
+        <input
+          type="text"
+          value={descriptor}
+          onChange={(e) => setDescriptor(e.target.value)}
+          placeholder="e.g. Unit G05 - Hospital"
+          className={inputCls}
+        />
+        <p className="mt-1 text-[11px] text-gray-500">
+          Right-hand cell on the rent statement. Leave blank to auto-build from unit label and building name.
+        </p>
         <div className="mt-4 flex gap-2 justify-end">
           <button onClick={onClose} className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors">
             Cancel

@@ -11,6 +11,7 @@ from rest_framework.response import Response
 from .models import Tenant, TenantDocument, TenantStatus
 from .serializers import (
     DocumentUploadSerializer,
+    KycRejectSerializer,
     MoveOutNoticeSerializer,
     MoveOutSerializer,
     TenantCreateSerializer,
@@ -61,6 +62,10 @@ class TenantViewSet(viewsets.ModelViewSet):
         unit_id = self.request.query_params.get("unit")
         if unit_id:
             qs = qs.filter(unit_id=unit_id)
+
+        kyc = self.request.query_params.get("kyc_status")
+        if kyc:
+            qs = qs.filter(kyc_status=kyc)
 
         search = self.request.query_params.get("search")
         if search:
@@ -141,7 +146,31 @@ class TenantViewSet(viewsets.ModelViewSet):
             file=uploaded_file,
             original_name=uploaded_file.name,
         )
+        # Auto-advance KYC to "pending review" once the minimum identity data is on file.
+        tenant.submit_kyc()
         return Response(TenantDocumentSerializer(doc).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["post"], url_path="verify-kyc")
+    def verify_kyc(self, request, pk=None):
+        """POST /api/tenants/<id>/verify-kyc/ — admin confirms identity is verified."""
+        tenant = self.get_object()
+        missing = tenant.kyc_missing_items
+        if missing:
+            return Response(
+                {"detail": "Cannot verify — still missing: " + ", ".join(missing)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        tenant.mark_kyc_verified(request.user)
+        return Response(TenantDetailSerializer(tenant).data)
+
+    @action(detail=True, methods=["post"], url_path="reject-kyc")
+    def reject_kyc(self, request, pk=None):
+        """POST /api/tenants/<id>/reject-kyc/ — admin rejects with a reason."""
+        tenant = self.get_object()
+        ser = KycRejectSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        tenant.reject_kyc(request.user, ser.validated_data["reason"])
+        return Response(TenantDetailSerializer(tenant).data)
 
     @action(detail=True, methods=["get"], url_path="documents/list")
     def list_documents(self, request, pk=None):
@@ -238,16 +267,17 @@ class TenantViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["get"], url_path="statement-pdf")
     def statement_pdf(self, request, pk=None):
-        """GET /api/tenants/<id>/statement-pdf/"""
+        """GET /api/tenants/<id>/statement-pdf/ — official Wilkem rent statement."""
         from django.http import HttpResponse
 
-        # Reuse the statement logic by calling the method
-        res = self.statement(request, pk=pk)
-        data = res.data
+        from apps.payments.statement_service import build_statement
+
+        tenant = self.get_object()
+        data = build_statement(tenant)
 
         pdf = render_to_pdf("payments/statement_pdf.html", data)
         if pdf:
-            filename = f"Statement_{data['tenant_name'].replace(' ', '_')}.pdf"
+            filename = f"Rent_Statement_{tenant.full_name.replace(' ', '_')}.pdf"
             response = HttpResponse(pdf, content_type="application/pdf")
             response["Content-Disposition"] = f'attachment; filename="{filename}"'
             return response

@@ -8,3 +8,4 @@ export { EmptyState } from "./EmptyState";
 export { Table, THead, TBody, TR, TH, TD } from "./Table";
 export { PageHeader } from "./PageHeader";
 export { DatePicker } from "./DatePicker";
+export { Switch } from "./Switch";

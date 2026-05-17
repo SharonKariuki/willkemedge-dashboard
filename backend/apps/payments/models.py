@@ -10,6 +10,8 @@ Arrears track outstanding balances per tenant per month.
 Transaction is the auditable financial record that stores every tax-derived
 value at write time so reads never recalculate derived figures.
 """
+import datetime as _dt
+
 from django.conf import settings
 from django.db import models
 
@@ -22,6 +24,14 @@ class PaymentSource(models.TextChoices):
     BANK = "bank", "Bank Transfer"
     CASH = "cash", "Cash"
     CHEQUE = "cheque", "Cheque"
+
+
+class PaymentType(models.TextChoices):
+    """How the money is booked in the chart of accounts."""
+    RENT = "rent", "Rental Income (4000)"
+    LATE_FEE = "late_fee", "Late Fees (4010)"
+    DEPOSIT = "deposit", "Security Deposit (2100)"
+    OTHER = "other", "Other Income"
 
 
 class Payment(models.Model):
@@ -45,6 +55,12 @@ class Payment(models.Model):
         choices=PaymentSource.choices,
         default=PaymentSource.CASH,
     )
+    payment_type = models.CharField(
+        max_length=10,
+        choices=PaymentType.choices,
+        default=PaymentType.RENT,
+        help_text="Used to split income into 4000 (rent), 4010 (late fees), or 2100 (deposit liability).",
+    )
     reference = models.CharField(
         max_length=100,
         blank=True,
@@ -59,6 +75,7 @@ class Payment(models.Model):
         ordering = ["-payment_date", "-created_at"]
         indexes = [
             models.Index(fields=["tenant", "period_year", "period_month"]),
+            models.Index(fields=["period_year", "period_month"]),
             models.Index(fields=["reference"]),
         ]
 
@@ -104,6 +121,76 @@ class Arrears(models.Model):
     def __str__(self) -> str:
         status = "cleared" if self.is_cleared else f"KES {self.balance} owed"
         return f"{self.tenant} — {self.period_month}/{self.period_year} ({status})"
+
+
+# ---------------------------------------------------------------------------
+# UtilityCharge — water / electricity / other monthly usage billed to a tenant
+# ---------------------------------------------------------------------------
+
+class UtilityCharge(models.Model):
+    """
+    A non-rent charge that appears on the tenant's statement ledger.
+
+    Designed to render lines like:
+        "Water Usage Feb. '26"                            3,700
+        "Water usage - Mar. '26 (7 units)
+         Opening Reading: 1449
+         Closing Reading: 1456"                           1,050
+    """
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.PROTECT,
+        related_name="utility_charges",
+    )
+    posting_date = models.DateField(help_text="Date this charge posts to the ledger.")
+    period_month = models.PositiveSmallIntegerField(help_text="Usage month (1-12).")
+    period_year = models.PositiveIntegerField()
+    label = models.CharField(
+        max_length=60,
+        default="Water Usage",
+        help_text="Charge label, e.g. 'Water Usage', 'Electricity'.",
+    )
+    units = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True,
+        help_text="Usage in units (m³, kWh, …). Optional; shown as '(7 units)' if present.",
+    )
+    opening_reading = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True,
+    )
+    closing_reading = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True,
+    )
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "payments_utility_charge"
+        ordering = ["-posting_date", "-id"]
+        indexes = [
+            models.Index(fields=["tenant", "period_year", "period_month"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.label} {self.period_month}/{self.period_year} — KES {self.amount}"
+
+    def description(self) -> str:
+        """Render the multi-line description used in the rent statement ledger."""
+        try:
+            period_short = _dt.date(self.period_year, self.period_month, 1).strftime("%b. '%y")
+        except ValueError:
+            period_short = f"{self.period_month}/{self.period_year}"
+        first = f"{self.label} {period_short}"
+        if self.units is not None:
+            units_int = int(self.units) if self.units == self.units.to_integral_value() else self.units
+            first += f" ({units_int} Units)"
+        extra = []
+        if self.opening_reading is not None:
+            extra.append(f"Opening Reading: {int(self.opening_reading) if self.opening_reading == self.opening_reading.to_integral_value() else self.opening_reading}")
+        if self.closing_reading is not None:
+            extra.append(f"Closing Reading: {int(self.closing_reading) if self.closing_reading == self.closing_reading.to_integral_value() else self.closing_reading}")
+        return "\n".join([first, *extra])
 
 
 # ---------------------------------------------------------------------------

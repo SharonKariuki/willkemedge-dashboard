@@ -4,6 +4,7 @@ import type { TenantDetail, TenantListItem } from "@/lib/types";
 
 interface TenantFilters {
   status?: string;
+  kyc_status?: string;
   building?: number | string;
   unit?: number | string;
   search?: string;
@@ -99,6 +100,33 @@ export function useUploadDocument(tenantId: number | string) {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["tenants", tenantId] });
+      qc.invalidateQueries({ queryKey: ["tenants"] });
+    },
+  });
+}
+
+export function useVerifyKyc(id: number | string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      const { data } = await api.post(`/tenants/${id}/verify-kyc/`);
+      return data as TenantDetail;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["tenants"] });
+    },
+  });
+}
+
+export function useRejectKyc(id: number | string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: { reason: string }) => {
+      const { data } = await api.post(`/tenants/${id}/reject-kyc/`, payload);
+      return data as TenantDetail;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["tenants"] });
     },
   });
 }

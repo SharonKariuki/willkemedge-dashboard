@@ -1,0 +1,2 @@
+# Keep shell scripts LF on Linux so Render/CI bash can execute them.
+*.sh text eol=lf
