@@ -1,32 +1,10 @@
-import {
-  BarChart3,
-  Bell,
-  Building2,
-  ChevronLeft,
-  ChevronRight,
-  CreditCard,
-  Home,
-  LayoutDashboard,
-  Receipt,
-  Settings,
-  Users,
-} from "lucide-react";
-import { useEffect, useState } from "react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { NavLink } from "react-router-dom";
 
+import { useViewPreferences } from "@/hooks/useViewPreferences";
 import { cn } from "@/lib/cn";
-
-const NAV_ITEMS = [
-  { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { to: "/buildings", label: "Buildings", icon: Building2 },
-  { to: "/units", label: "Units", icon: Home },
-  { to: "/tenants", label: "Tenants", icon: Users },
-  { to: "/payments", label: "Payments", icon: CreditCard },
-  { to: "/expenses", label: "Expenses", icon: Receipt },
-  { to: "/notifications", label: "Notifications", icon: Bell },
-  { to: "/reports", label: "Reports", icon: BarChart3 },
-  { to: "/settings", label: "Settings", icon: Settings },
-];
+import { NAV_ITEMS } from "@/lib/nav";
 
 const STORAGE_KEY = "willkemedge-sidebar-collapsed";
 
@@ -48,6 +26,12 @@ export default function Sidebar() {
   }, [collapsed]);
 
   const toggle = () => setCollapsed((c) => !c);
+
+  const { prefs } = useViewPreferences();
+  const visibleItems = useMemo(
+    () => NAV_ITEMS.filter((item) => !item.togglable || prefs[item.key]),
+    [prefs]
+  );
 
   return (
     <aside
@@ -84,7 +68,7 @@ export default function Sidebar() {
           {!collapsed && (
             <div className="min-w-0 animate-fade-up">
               <p className="font-display text-base font-semibold leading-tight text-white">
-                Willkemedge
+                Wilkem Ventures
               </p>
               <p className="truncate text-[11px] uppercase tracking-[0.14em] text-ochre-400/80">
                 Property Suite
@@ -95,7 +79,7 @@ export default function Sidebar() {
 
         {/* Primary nav */}
         <nav className="flex flex-1 flex-col gap-1">
-          {NAV_ITEMS.map(({ to, label, icon: Icon }) => (
+          {visibleItems.map(({ to, label, icon: Icon }) => (
             <NavLink
               key={to}
               to={to}

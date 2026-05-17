@@ -78,5 +78,7 @@ frontend/.eslintcache
 frontend/*.tsbuildinfo
 frontend/.cache/
 
-# ----- Claude Code local settings -----
-.claude/settings.local.json
+# ----- Claude Code / AI tooling local state -----
+.claude/
+.agents/
+skills-lock.json

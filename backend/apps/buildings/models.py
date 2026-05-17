@@ -2,6 +2,7 @@
 Building and Unit models — updated with UNDER_MAINTENANCE status and
 MaintenanceRequest model for tracking repairs per unit.
 """
+from django.core.exceptions import ValidationError
 from django.db import models
 
 
@@ -24,6 +25,37 @@ class Building(models.Model):
     address = models.TextField(blank=True)
     total_floors = models.PositiveSmallIntegerField(default=1)
     notes = models.TextField(blank=True)
+
+    # --- Statement / receipt header & payment options -----------------------
+    # These appear verbatim on the rent statement PDF a tenant receives after
+    # paying. Leave blank to fall back to project-wide defaults.
+    legal_name = models.CharField(
+        max_length=160, blank=True,
+        help_text="Legal entity name shown on statements, e.g. 'Wilkem Ventures Company Ltd.'",
+    )
+    postal_address = models.CharField(
+        max_length=160, blank=True,
+        help_text="Postal address line, e.g. 'PO Box 66741 - 00800, Nairobi, Kenya'.",
+    )
+    contact_phone = models.CharField(max_length=80, blank=True)
+    contact_email = models.EmailField(blank=True)
+
+    paybill_number = models.CharField(
+        max_length=20, blank=True,
+        help_text="M-Pesa Paybill business number, e.g. '400222'.",
+    )
+    paybill_account_format = models.CharField(
+        max_length=60, blank=True,
+        help_text=(
+            "Paybill account number. Use '{unit}' as a placeholder for the unit "
+            "label, e.g. '90290#{unit}' or a fixed value like '839800'."
+        ),
+    )
+    bank_name = models.CharField(max_length=80, blank=True)
+    bank_branch = models.CharField(max_length=80, blank=True)
+    bank_account = models.CharField(max_length=40, blank=True)
+    bank_account_name = models.CharField(max_length=120, blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -33,6 +65,28 @@ class Building(models.Model):
 
     def __str__(self) -> str:
         return self.name
+
+    def paybill_account_for(self, unit_label: str) -> str:
+        """Resolve the Paybill account string for a given unit label."""
+        fmt = self.paybill_account_format or ""
+        if "{unit}" in fmt:
+            return fmt.replace("{unit}", unit_label or "")
+        return fmt
+
+    def clean(self):
+        super().clean()
+        fmt = (self.paybill_account_format or "").strip()
+        # Allow blank, a literal value, or a format string that uses {unit}.
+        # Reject typo placeholders (`{building}`, `{tenant}`, …) before they
+        # silently produce empty paybill accounts on rent statements.
+        if "{" in fmt or "}" in fmt:
+            if "{unit}" not in fmt:
+                raise ValidationError({
+                    "paybill_account_format": (
+                        "Paybill account format may only use the '{unit}' placeholder, "
+                        "or be a fixed literal value with no braces."
+                    ),
+                })
 
 
 class Unit(models.Model):
@@ -61,6 +115,14 @@ class Unit(models.Model):
     monthly_rent = models.DecimalField(max_digits=10, decimal_places=2)
     status = models.CharField(
         max_length=20, choices=UnitStatus.choices, default=UnitStatus.VACANT, db_index=True
+    )
+    statement_descriptor = models.CharField(
+        max_length=80, blank=True,
+        help_text=(
+            "Right-hand cell on the rent statement, e.g. 'Unit G05 - Hospital' "
+            "or 'House 3A - Donholm Estate'. Leave blank to auto-build from "
+            "the unit label and building name."
+        ),
     )
     notes = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)

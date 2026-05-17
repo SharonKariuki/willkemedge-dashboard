@@ -107,6 +107,13 @@ class TestMpesaValidate:
         assert resp.status_code == 200
         assert resp.data["ResultCode"] == 1
 
+    @pytest.mark.parametrize("bill_ref", ["90290#A1", "90290 A1", "90290-A1", "90290A1", "a1"])
+    def test_accepts_with_paybill_account_prefix(self, client, tenant, bill_ref):
+        """Tenants pay account '90290#<house number>' — the prefix is stripped before matching."""
+        resp = client.post(VALIDATE_URL, mpesa_payload(bill_ref=bill_ref), format="json")
+        assert resp.status_code == 200
+        assert resp.data["ResultCode"] == 0
+
 
 # ── Confirm ─────────────────────────────────────────────────────────────────
 
@@ -132,6 +139,13 @@ class TestMpesaConfirm:
         resp = client.post(CONFIRM_URL, mpesa_payload(bill_ref="UNKNOWN"), format="json")
         assert resp.status_code == 200
         assert resp.data["ResultCode"] == 0
+
+    @patch("apps.payments.views_mpesa.send_payment_confirmation.delay")
+    def test_records_payment_when_bill_ref_has_account_prefix(self, _mock, client, tenant):
+        """A real paybill BillRefNumber like '90290#A1' records against unit A1."""
+        resp = client.post(CONFIRM_URL, mpesa_payload(bill_ref="90290#A1"), format="json")
+        assert resp.status_code == 200
+        assert Payment.objects.filter(reference="MPE123ABC", tenant=tenant).exists()
 
     @patch("apps.payments.views_mpesa.send_payment_confirmation.delay")
     def test_full_payment_sets_unit_to_paid(self, _mock, client, tenant):

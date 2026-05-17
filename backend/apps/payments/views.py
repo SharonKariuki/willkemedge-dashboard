@@ -296,27 +296,24 @@ class TransactionViewSet(viewsets.ReadOnlyModelViewSet):
 
     @action(detail=True, methods=["get"], url_path="receipt-pdf")
     def receipt_pdf(self, request, pk=None):
-        """GET /api/payments/transactions/{id}/receipt-pdf/"""
+        """
+        GET /api/payments/transactions/{id}/receipt-pdf/
+
+        Returns the official Wilkem rent statement for the transaction's tenant,
+        as of the payment date — the document the tenant receives after paying.
+        """
         from django.http import HttpResponse
 
+        from .statement_service import build_statement
+
         txn = self.get_object()
-        outstanding = None
-        try:
-            latest_arrears = (
-                Arrears.objects.filter(tenant=txn.tenant, is_cleared=False)
-                .order_by("-period_year", "-period_month")
-                .first()
-            )
-            if latest_arrears:
-                outstanding = latest_arrears.balance
-        except Exception:
-            pass
+        as_of = txn.payment.payment_date if txn.payment_id else None
+        data = build_statement(txn.tenant, statement_date=as_of, as_of=as_of)
 
-        receipt_data = generate_receipt(txn, outstanding_balance=outstanding)
-        pdf = render_to_pdf("payments/receipt_pdf.html", {"receipt": receipt_data})
-
+        pdf = render_to_pdf("payments/statement_pdf.html", data)
         if pdf:
-            filename = f"Receipt_{receipt_data.reference_code}.pdf"
+            safe_name = txn.tenant.full_name.replace(" ", "_")
+            filename = f"Rent_Statement_{safe_name}.pdf"
             response = HttpResponse(pdf, content_type="application/pdf")
             response["Content-Disposition"] = f'attachment; filename="{filename}"'
             return response

@@ -10,12 +10,12 @@
  */
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
-  AlertTriangle, FileText, LogOut,
-  Pencil, Phone, Plus, Search, UserPlus, X,
+  AlertTriangle, CheckCircle2, FileText, LogOut,
+  Pencil, Phone, Plus, Search, ShieldCheck, Upload, UserPlus, X, XCircle,
 } from "lucide-react";
 
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import toast from "react-hot-toast";
 import { useSearchParams } from "react-router-dom";
@@ -27,11 +27,13 @@ import {
 } from "@/components/ui";
 import {
   useCreateTenant, useMoveOutNotice, useMoveOutTenant,
-  useTenant, useTenants, useUpdateTenant,
+  useRejectKyc, useTenant, useTenants, useUpdateTenant,
+  useUploadDocument, useVerifyKyc,
 } from "@/hooks/useTenants";
 import { useBuildings } from "@/hooks/useBuildings";
 import { useUnits } from "@/hooks/useUnits";
 import { cn } from "@/lib/cn";
+import type { KycStatus, TenantDetail } from "@/lib/types";
 import { downloadPdf } from "@/lib/downloadPdf";
 import { avatarFor } from "@/lib/images";
 
@@ -51,11 +53,175 @@ function Field({
   );
 }
 
+// ─── KYC helpers ─────────────────────────────────────────────────────────────
+const KYC_TONE: Record<KycStatus, "paid" | "ochre" | "coral" | "neutral"> = {
+  verified: "paid",
+  pending: "ochre",
+  rejected: "coral",
+  not_started: "neutral",
+};
+
+function KycBadge({ status, label }: { status: KycStatus; label: string }) {
+  return <Badge tone={KYC_TONE[status]} withDot>KYC: {label}</Badge>;
+}
+
+const KYC_DOC_TYPES = [
+  { value: "id_front", label: "ID — Front" },
+  { value: "id_back", label: "ID — Back" },
+  { value: "passport", label: "Passport" },
+  { value: "kra_pin_certificate", label: "KRA PIN Certificate" },
+] as const;
+
+function KycPanel({ tenant }: { tenant: TenantDetail }) {
+  const upload = useUploadDocument(tenant.id);
+  const verify = useVerifyKyc(tenant.id);
+  const reject = useRejectKyc(tenant.id);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [docType, setDocType] = useState<string>("id_front");
+  const [rejecting, setRejecting] = useState(false);
+  const [reason, setReason] = useState("");
+
+  const handleUpload = async (file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("doc_type", docType);
+    try {
+      await upload.mutateAsync(fd);
+      toast.success("Document uploaded");
+    } catch {
+      toast.error("Upload failed");
+    }
+  };
+
+  const kycDocs = tenant.documents.filter((d) =>
+    KYC_DOC_TYPES.some((t) => t.value === d.doc_type),
+  );
+
+  return (
+    <div className="rounded-md border border-ink-100 p-4 dark:border-ink-700">
+      <div className="mb-3 flex items-center justify-between">
+        <p className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-wider text-ink-500">
+          <ShieldCheck className="h-3.5 w-3.5" /> KYC Verification
+        </p>
+        <KycBadge status={tenant.kyc_status} label={tenant.kyc_status_display} />
+      </div>
+
+      {/* KRA PIN */}
+      <div className="mb-3 flex justify-between gap-2 rounded-md bg-ink-50 px-3 py-2 text-sm dark:bg-ink-800">
+        <span className="text-ink-500">KRA PIN</span>
+        <span className="font-mono font-medium text-ink-900 dark:text-white">{tenant.kra_pin || "—"}</span>
+      </div>
+
+      {/* Missing items / reviewer notes */}
+      {tenant.kyc_missing_items.length > 0 ? (
+        <div className="mb-3 rounded-md bg-ochre-500/10 p-3 text-sm text-ink-700">
+          <p className="font-medium text-ochre-700">Still needed before verification:</p>
+          <ul className="mt-1 list-inside list-disc text-ink-600">
+            {tenant.kyc_missing_items.map((m) => <li key={m}>{m}</li>)}
+          </ul>
+        </div>
+      ) : tenant.kyc_status === "verified" ? (
+        <div className="mb-3 rounded-md bg-status-paid/10 p-3 text-sm text-status-paid flex items-center gap-2">
+          <CheckCircle2 className="h-4 w-4 shrink-0" />
+          Verified{tenant.kyc_verified_by_name ? ` by ${tenant.kyc_verified_by_name}` : ""}
+          {tenant.kyc_verified_at ? ` on ${tenant.kyc_verified_at.slice(0, 10)}` : ""}.
+        </div>
+      ) : null}
+      {tenant.kyc_status === "rejected" && tenant.kyc_notes && (
+        <div className="mb-3 rounded-md bg-status-unpaid/10 p-3 text-sm text-status-unpaid">
+          <span className="font-medium">Rejected:</span> {tenant.kyc_notes}
+        </div>
+      )}
+
+      {/* Document list */}
+      {kycDocs.length > 0 && (
+        <ul className="mb-3 space-y-1.5">
+          {kycDocs.map((d) => (
+            <li key={d.id} className="flex items-center justify-between gap-2 rounded-md bg-ink-50 px-3 py-1.5 text-xs dark:bg-ink-800">
+              <span className="flex items-center gap-1.5 text-ink-700 dark:text-ink-200">
+                <FileText className="h-3.5 w-3.5 text-ink-400" />
+                {d.doc_type_display}
+                <span className="text-ink-400">· {d.original_name}</span>
+              </span>
+              <a href={d.file} target="_blank" rel="noreferrer" className="text-sage-600 hover:underline">View</a>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {/* Upload */}
+      <div className="mb-3 flex flex-wrap items-end gap-2">
+        <Field label="Document type" className="flex-1 min-w-[160px]">
+          <select value={docType} onChange={(e) => setDocType(e.target.value)} className={inputCls}>
+            {KYC_DOC_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+          </select>
+        </Field>
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/*,application/pdf"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) handleUpload(f);
+            e.target.value = "";
+          }}
+        />
+        <Button type="button" variant="glass" size="sm" loading={upload.isPending} onClick={() => fileRef.current?.click()}>
+          <Upload className="h-3.5 w-3.5" /> Upload
+        </Button>
+      </div>
+
+      {/* Verify / reject actions */}
+      {tenant.kyc_status !== "verified" && (
+        rejecting ? (
+          <div className="space-y-2">
+            <Field label="Rejection reason">
+              <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} className={inputCls} placeholder="What's wrong / what the tenant needs to re-submit…" />
+            </Field>
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="ghost" size="sm" onClick={() => { setRejecting(false); setReason(""); }}>Cancel</Button>
+              <Button
+                type="button" variant="danger" size="sm" loading={reject.isPending} disabled={!reason.trim()}
+                onClick={async () => {
+                  try { await reject.mutateAsync({ reason: reason.trim() }); toast.success("KYC rejected"); setRejecting(false); setReason(""); }
+                  catch { toast.error("Failed"); }
+                }}
+              >
+                <XCircle className="h-3.5 w-3.5" /> Confirm rejection
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex justify-end gap-2">
+            {(tenant.kyc_status === "pending" || tenant.kyc_status === "rejected") && (
+              <Button type="button" variant="ghost" size="sm" onClick={() => setRejecting(true)}>Reject</Button>
+            )}
+            <Button
+              type="button" size="sm" loading={verify.isPending} disabled={tenant.kyc_missing_items.length > 0}
+              onClick={async () => {
+                try { await verify.mutateAsync(); toast.success("KYC verified"); }
+                catch (e) {
+                  const detail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+                  toast.error(detail ?? "Failed to verify");
+                }
+              }}
+            >
+              <ShieldCheck className="h-3.5 w-3.5" /> Mark verified
+            </Button>
+          </div>
+        )
+      )}
+    </div>
+  );
+}
+
 // ─── Create Tenant Form ──────────────────────────────────────────────────────
 const createSchema = z.object({
   first_name: z.string().min(1, "Required"),
   last_name: z.string().min(1, "Required"),
   id_number: z.string().min(1, "Required"),
+  kra_pin: z.string().regex(/^[AP]\d{9}[A-Z]$/, "Format: A007523148T").or(z.literal("")).optional(),
   phone: z.string().min(1, "Required"),
   email: z.string().email().or(z.literal("")).optional(),
   emergency_contact: z.string().optional(),
@@ -94,6 +260,9 @@ function CreateTenantForm({ onClose }: { onClose: () => void }) {
         </Field>
         <Field label="ID number *" error={errors.id_number?.message}>
           <input {...register("id_number")} className={inputCls} />
+        </Field>
+        <Field label="KRA PIN" error={errors.kra_pin?.message}>
+          <input {...register("kra_pin")} className={inputCls} placeholder="A007523148T" />
         </Field>
         <Field label="Phone *" error={errors.phone?.message}>
           <input {...register("phone")} className={inputCls} placeholder="+254…" />
@@ -168,7 +337,9 @@ function TenantDetailModal({ tenantId, onClose }: { tenantId: number; onClose: (
     if (tenant) {
       editForm.reset({
         first_name: tenant.first_name, last_name: tenant.last_name,
+        kra_pin: tenant.kra_pin ?? "",
         phone: tenant.phone, email: tenant.email ?? "",
+        care_of: (tenant as unknown as { care_of?: string }).care_of ?? "",
         monthly_rent: String(tenant.monthly_rent),
         deposit_paid: String(tenant.deposit_paid),
         deposit_refund_percentage: String(tenant.deposit_refund_percentage ?? "100"),
@@ -215,9 +386,12 @@ function TenantDetailModal({ tenantId, onClose }: { tenantId: number; onClose: (
                 <div>
                   <p className="font-display text-xl font-semibold text-ink-900">{tenant.full_name}</p>
                   <p className="text-sm text-ink-500">{tenant.building_name} — {tenant.unit_label}</p>
-                  <Badge tone={tenant.status === "active" ? "sage" : tenant.status === "notice_given" ? "ochre" : "neutral"} withDot className="mt-1">
-                    {tenant.status_display}
-                  </Badge>
+                  <div className="mt-1 flex flex-wrap gap-1.5">
+                    <Badge tone={tenant.status === "active" ? "sage" : tenant.status === "notice_given" ? "ochre" : "neutral"} withDot>
+                      {tenant.status_display}
+                    </Badge>
+                    <KycBadge status={tenant.kyc_status} label={tenant.kyc_status_display} />
+                  </div>
                 </div>
               </div>
               <div className="grid gap-2 sm:grid-cols-2 text-sm">
@@ -258,6 +432,7 @@ function TenantDetailModal({ tenantId, onClose }: { tenantId: number; onClose: (
                   </div>
                 </div>
               </div>
+              <KycPanel tenant={tenant} />
             </>
           )}
           {tenant && mode === "edit" && (
@@ -269,6 +444,7 @@ function TenantDetailModal({ tenantId, onClose }: { tenantId: number; onClose: (
               <div className="grid gap-3 sm:grid-cols-2">
                 <Field label="First name"><input {...editForm.register("first_name")} className={inputCls} /></Field>
                 <Field label="Last name"><input {...editForm.register("last_name")} className={inputCls} /></Field>
+                <Field label="KRA PIN"><input {...editForm.register("kra_pin")} className={inputCls} placeholder="A007523148T" /></Field>
                 <Field label="Phone"><input {...editForm.register("phone")} className={inputCls} /></Field>
                 <Field label="Email"><input {...editForm.register("email")} className={inputCls} /></Field>
                 <Field label="Monthly rent (KES)"><input {...editForm.register("monthly_rent")} className={inputCls} /></Field>
@@ -280,6 +456,9 @@ function TenantDetailModal({ tenantId, onClose }: { tenantId: number; onClose: (
                 </Field>
                 <Field label="Emergency contact"><input {...editForm.register("emergency_contact")} className={inputCls} /></Field>
                 <Field label="Emergency phone"><input {...editForm.register("emergency_phone")} className={inputCls} /></Field>
+                <Field label="c/o (appears on rent statement)">
+                  <input {...editForm.register("care_of")} className={inputCls} placeholder="e.g. David Chibeka" />
+                </Field>
               </div>
               <div className="flex justify-end gap-2">
                 <Button type="button" variant="ghost" onClick={() => setMode("view")}>Cancel</Button>
@@ -339,6 +518,7 @@ function TenantDetailModal({ tenantId, onClose }: { tenantId: number; onClose: (
 export default function TenantsPage() {
   const [searchParams] = useSearchParams();
   const [statusFilter, setStatusFilter] = useState("");
+  const [kycFilter, setKycFilter] = useState("");
   const [buildingFilter, setBuildingFilter] = useState<number | "">("");
   const [search, setSearch] = useState(searchParams.get("q") ?? "");
   const [showForm, setShowForm] = useState(false);
@@ -348,6 +528,7 @@ export default function TenantsPage() {
 
   const filters: Record<string, string | number> = {};
   if (statusFilter) filters.status = statusFilter;
+  if (kycFilter) filters.kyc_status = kycFilter;
   if (buildingFilter) filters.building = buildingFilter;
   if (search) filters.search = search;
 
@@ -367,6 +548,16 @@ export default function TenantsPage() {
     { value: "moved_out", label: "Moved Out" },
   ];
 
+  const KYC_FILTERS = [
+    { value: "", label: "All KYC" },
+    { value: "not_started", label: "Not Started" },
+    { value: "pending", label: "Pending Review" },
+    { value: "verified", label: "Verified" },
+    { value: "rejected", label: "Rejected" },
+  ];
+
+  const pendingKycCount = tenants?.filter((t) => t.kyc_status === "pending").length ?? 0;
+
   const activeCount = tenants?.filter((t) => t.status === "active").length ?? 0;
 
   return (
@@ -375,7 +566,7 @@ export default function TenantsPage() {
         <PageHeader
           eyebrow="People"
           title="Tenants"
-          description={`${activeCount} active · ${tenants?.length ?? 0} total on file.`}
+          description={`${activeCount} active · ${tenants?.length ?? 0} total on file${pendingKycCount > 0 ? ` · ${pendingKycCount} pending KYC` : ""}.`}
           actions={
             <Button onClick={() => setShowForm(!showForm)}>
               {showForm ? <X className="h-4 w-4" /> : <UserPlus className="h-4 w-4" />}
@@ -414,6 +605,20 @@ export default function TenantsPage() {
               </button>
             ))}
           </div>
+          {/* KYC tabs */}
+          <div className="flex flex-wrap gap-1.5">
+            {KYC_FILTERS.map((s) => (
+              <button key={s.value} onClick={() => setKycFilter(s.value)}
+                className={cn("flex items-center gap-1 rounded-full px-3 py-1.5 text-xs font-medium transition-all",
+                  kycFilter === s.value ? "bg-ink-900 text-canvas shadow-float" : "glass text-ink-700")}>
+                {s.value === "pending" && <ShieldCheck className="h-3 w-3" />}
+                {s.label}
+                {s.value === "pending" && pendingKycCount > 0 && (
+                  <span className="ml-0.5 rounded-full bg-ochre-500 px-1.5 text-[10px] font-semibold text-ink-900">{pendingKycCount}</span>
+                )}
+              </button>
+            ))}
+          </div>
         </div>
 
         {isLoading ? (
@@ -435,6 +640,7 @@ export default function TenantsPage() {
                     <TH>Deposit (KES)</TH>
                     <TH>Move-in</TH>
                     <TH>Status</TH>
+                    <TH>KYC</TH>
                   </TR>
                 </THead>
                 <TBody>
@@ -457,6 +663,9 @@ export default function TenantsPage() {
                           {t.status_display}
                         </Badge>
                       </TD>
+                      <TD>
+                        <Badge tone={KYC_TONE[t.kyc_status]} withDot>{t.kyc_status_display}</Badge>
+                      </TD>
                     </TR>
                   ))}
                 </TBody>
@@ -474,7 +683,10 @@ export default function TenantsPage() {
                           <p className="truncate font-medium text-ink-900">{t.full_name}</p>
                           <p className="truncate text-[11px] text-ink-500">{t.building_name} · {t.unit_label}</p>
                         </div>
-                        <Badge tone={t.status === "active" ? "sage" : t.status === "notice_given" ? "ochre" : "neutral"} withDot>{t.status_display}</Badge>
+                        <div className="flex flex-col items-end gap-1">
+                          <Badge tone={t.status === "active" ? "sage" : t.status === "notice_given" ? "ochre" : "neutral"} withDot>{t.status_display}</Badge>
+                          <Badge tone={KYC_TONE[t.kyc_status]} withDot>{t.kyc_status_display}</Badge>
+                        </div>
                       </div>
                       <div className="mt-2 flex items-center justify-between text-xs">
                         <a href={`tel:${t.phone}`} onClick={(e) => e.stopPropagation()} className="flex items-center gap-1 text-sage-600">

@@ -19,6 +19,7 @@ class TenantListSerializer(serializers.ModelSerializer):
     building_name = serializers.CharField(source="unit.building.name", read_only=True)
     building_id = serializers.IntegerField(source="unit.building.id", read_only=True)
     status_display = serializers.CharField(source="get_status_display", read_only=True)
+    kyc_status_display = serializers.CharField(source="get_kyc_status_display", read_only=True)
 
     class Meta:
         model = Tenant
@@ -26,6 +27,7 @@ class TenantListSerializer(serializers.ModelSerializer):
             "id", "full_name", "first_name", "last_name", "phone",
             "unit", "unit_label", "building_name", "building_id",
             "monthly_rent", "deposit_paid", "due_day", "status", "status_display",
+            "kyc_status", "kyc_status_display",
             "move_in_date", "move_out_date", "notice_date", "intended_move_out_date",
 
         ]
@@ -41,12 +43,17 @@ class TenantDetailSerializer(serializers.ModelSerializer):
     # Payment analytics
     total_paid = serializers.SerializerMethodField()
     total_arrears = serializers.SerializerMethodField()
+    # KYC
+    kyc_status_display = serializers.CharField(source="get_kyc_status_display", read_only=True)
+    kyc_complete = serializers.BooleanField(read_only=True)
+    kyc_missing_items = serializers.ListField(child=serializers.CharField(), read_only=True)
+    kyc_verified_by_name = serializers.CharField(source="kyc_verified_by.get_full_name", read_only=True, default=None)
 
     class Meta:
         model = Tenant
         fields = [
-            "id", "full_name", "first_name", "last_name", "id_number",
-            "phone", "email", "emergency_contact", "emergency_phone",
+            "id", "full_name", "first_name", "last_name", "id_number", "kra_pin",
+            "phone", "email", "emergency_contact", "emergency_phone", "care_of",
             "unit", "unit_label", "building_name", "building_id",
             "monthly_rent", "deposit_paid", "due_day",
 
@@ -54,10 +61,15 @@ class TenantDetailSerializer(serializers.ModelSerializer):
             "move_in_date", "move_out_date",
             "notice_date", "intended_move_out_date",
             "status", "status_display", "move_out_notes", "notes",
+            "kyc_status", "kyc_status_display", "kyc_complete", "kyc_missing_items",
+            "kyc_verified_at", "kyc_verified_by", "kyc_verified_by_name", "kyc_notes",
             "documents", "total_paid", "total_arrears",
             "created_at", "updated_at",
         ]
-        read_only_fields = ["status", "move_out_date", "move_out_notes", "created_at", "updated_at"]
+        read_only_fields = [
+            "status", "move_out_date", "move_out_notes", "created_at", "updated_at",
+            "kyc_status", "kyc_verified_at", "kyc_verified_by", "kyc_notes",
+        ]
 
     def get_total_paid(self, obj):
         from django.db.models import Sum
@@ -74,7 +86,7 @@ class TenantCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Tenant
         fields = [
-            "id", "first_name", "last_name", "id_number", "phone", "email",
+            "id", "first_name", "last_name", "id_number", "kra_pin", "phone", "email",
             "emergency_contact", "emergency_phone", "unit",
             "monthly_rent", "deposit_paid", "due_day", "move_in_date", "notes",
 
@@ -95,8 +107,8 @@ class TenantEditSerializer(serializers.ModelSerializer):
     class Meta:
         model = Tenant
         fields = [
-            "first_name", "last_name", "phone", "email",
-            "emergency_contact", "emergency_phone",
+            "first_name", "last_name", "kra_pin", "phone", "email",
+            "emergency_contact", "emergency_phone", "care_of",
             "monthly_rent", "deposit_paid", "due_day", "deposit_refund_percentage",
             "notes",
 
@@ -120,3 +132,8 @@ class MoveOutSerializer(serializers.Serializer):
 class DocumentUploadSerializer(serializers.Serializer):
     file = serializers.FileField()
     doc_type = serializers.ChoiceField(choices=DocumentType.choices, default=DocumentType.OTHER)
+
+
+class KycRejectSerializer(serializers.Serializer):
+    """Reason is required when rejecting a tenant's KYC."""
+    reason = serializers.CharField()

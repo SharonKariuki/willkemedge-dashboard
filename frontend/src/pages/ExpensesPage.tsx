@@ -25,11 +25,13 @@ const expenseSchema = z.object({
   date: z.string().min(1, "Date is required"),
   building: z.string().optional(),
   category: z.coerce.number().min(1, "Category is required"),
-  amount: z.string().min(1, "Amount is required"),
+  amount: z.string()
+    .min(1, "Amount is required")
+    .refine((v) => Number(v) > 0, "Amount must be greater than 0"),
   description: z.string().min(2, "Description is required"),
   reference: z.string().optional(),
   period_month: z.coerce.number().min(1).max(12),
-  period_year: z.coerce.number().min(2000),
+  period_year: z.coerce.number().min(2000).max(2100),
   notes: z.string().optional(),
 });
 type ExpenseFormData = z.infer<typeof expenseSchema>;
@@ -128,13 +130,25 @@ function AccountingPanel() {
 }
 
 function AccountingContent({ tab, data }: { tab: string; data: Record<string, unknown> }) {
-  if (tab === "balance_sheet") return <BalanceSheetView data={data} />;
-  if (tab === "pnl")           return <PnLView data={data} />;
-  if (tab === "ledger")        return <LedgerView data={data} />;
-  if (tab === "coa")           return <CoAView data={data} />;
-  if (tab === "petty_cash")    return <PettyCashView data={data} />;
-  if (tab === "budgeting")     return <BudgetingView data={data} />;
-  return null;
+  const note = typeof data.note === "string" ? data.note : "";
+  const body =
+    tab === "balance_sheet" ? <BalanceSheetView data={data} /> :
+    tab === "pnl"           ? <PnLView data={data} /> :
+    tab === "ledger"        ? <LedgerView data={data} /> :
+    tab === "coa"           ? <CoAView data={data} /> :
+    tab === "petty_cash"    ? <PettyCashView data={data} /> :
+    tab === "budgeting"     ? <BudgetingView data={data} /> :
+    null;
+  return (
+    <div className="space-y-3">
+      {note && (
+        <div className="rounded-md border border-ochre-500/30 bg-ochre-500/8 px-3 py-2 text-[12px] text-ink-700">
+          {note}
+        </div>
+      )}
+      {body}
+    </div>
+  );
 }
 
 function KV({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
@@ -176,9 +190,17 @@ function BalanceSheetView({ data }: { data: Record<string, unknown> }) {
 
 function PnLView({ data }: { data: Record<string, unknown> }) {
   const income = Number(data.income ?? 0);
+  const rental = Number(data.rental_income ?? 0);
+  const lateFees = Number(data.late_fees ?? 0);
+  const other = Number(data.other_income ?? 0);
   const expenses = Number(data.total_expenses ?? 0);
   const net = Number(data.net_profit ?? 0);
   const breakdown = (data.expense_breakdown as { category: string; amount: number }[]) ?? [];
+  const incomeRows = [
+    { code: "4000", label: "Rental Income",  amount: rental },
+    { code: "4010", label: "Late Fees",      amount: lateFees },
+    { code: "—",    label: "Other Income",   amount: other },
+  ].filter((r) => r.amount > 0 || r.code !== "—");
   return (
     <div className="space-y-3">
       <div className="grid gap-3 sm:grid-cols-3">
@@ -197,16 +219,36 @@ function PnLView({ data }: { data: Record<string, unknown> }) {
           </div>
         ))}
       </div>
-      {breakdown.length > 0 && (
+      <div>
+        <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-ink-500">Income</p>
         <Table>
-          <THead><TR><TH>Expense Category</TH><TH className="text-right">Amount (KES)</TH></TR></THead>
+          <THead><TR><TH className="w-16">Code</TH><TH>Account</TH><TH className="text-right">Amount (KES)</TH></TR></THead>
           <TBody>
-            {breakdown.map((r) => (
-              <TR key={r.category}><TD>{r.category}</TD><TD className="text-right tabular-nums">{Number(r.amount).toLocaleString()}</TD></TR>
+            {incomeRows.map((r) => (
+              <TR key={r.label}>
+                <TD className="font-mono text-xs">{r.code}</TD>
+                <TD>{r.label}</TD>
+                <TD className="text-right tabular-nums">{Number(r.amount).toLocaleString()}</TD>
+              </TR>
             ))}
           </TBody>
         </Table>
-      )}
+      </div>
+      <div>
+        <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-ink-500">Expenses</p>
+        {breakdown.length > 0 ? (
+          <Table>
+            <THead><TR><TH>Expense Category</TH><TH className="text-right">Amount (KES)</TH></TR></THead>
+            <TBody>
+              {breakdown.map((r) => (
+                <TR key={r.category}><TD>{r.category}</TD><TD className="text-right tabular-nums">{Number(r.amount).toLocaleString()}</TD></TR>
+              ))}
+            </TBody>
+          </Table>
+        ) : (
+          <p className="text-xs text-ink-400">No expenses recorded for this period.</p>
+        )}
+      </div>
     </div>
   );
 }

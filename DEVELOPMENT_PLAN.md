@@ -413,7 +413,7 @@ AT_SENDER_ID=
 
 # SendGrid
 SENDGRID_API_KEY=
-DEFAULT_FROM_EMAIL=noreply@willkemedge.co.ke
+DEFAULT_FROM_EMAIL=Wilkem Ventures <wilkem.ventures@gmail.com>
 
 # CORS
 CORS_ALLOWED_ORIGINS=http://localhost:5173

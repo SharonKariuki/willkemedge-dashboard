@@ -19,7 +19,7 @@ export default function AuthShell({ children, title, subtitle }: Props) {
             <span className="font-display text-base font-semibold">W</span>
           </div>
           <div>
-            <p className="font-display text-sm font-semibold text-ink-900">Willkemedge</p>
+            <p className="font-display text-sm font-semibold text-ink-900">Wilkem Ventures</p>
             <p className="text-[10px] uppercase tracking-[0.14em] text-ink-500">Property Suite</p>
           </div>
         </div>
@@ -36,7 +36,7 @@ export default function AuthShell({ children, title, subtitle }: Props) {
         </div>
 
         <p className="absolute bottom-6 left-6 text-[11px] text-ink-400 sm:left-10 lg:left-16">
-          © {new Date().getFullYear()} Willkemedge · Dr. William Osoro
+          © {new Date().getFullYear()} Wilkem Ventures · Dr. William Osoro
         </p>
       </div>
 

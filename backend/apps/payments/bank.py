@@ -31,13 +31,24 @@ logger = logging.getLogger(__name__)
 
 
 def _verify_signature(request: Request) -> bool:
-    """HMAC-SHA256 signature verification."""
+    """HMAC-SHA256 signature verification.
+
+    Fail-closed: if BANK_WEBHOOK_SECRET is missing we reject the webhook in
+    every environment except when DEBUG=True AND ALLOW_INSECURE_BANK_WEBHOOK=True
+    is explicitly set, which lets local dev bypass the check during testing.
+    """
     secret = getattr(settings, "BANK_WEBHOOK_SECRET", "")
     if not secret:
-        # No secret configured — skip verification in dev only.
-        return getattr(settings, "DEBUG", False)
+        allow_insecure = getattr(settings, "ALLOW_INSECURE_BANK_WEBHOOK", False)
+        if getattr(settings, "DEBUG", False) and allow_insecure:
+            logger.warning("bank webhook: signature check skipped (DEBUG + ALLOW_INSECURE_BANK_WEBHOOK)")
+            return True
+        logger.error("bank webhook rejected: BANK_WEBHOOK_SECRET is not configured")
+        return False
 
     received = request.headers.get("X-Webhook-Signature", "")
+    if not received:
+        return False
     expected = hmac.new(
         secret.encode(), request.body, hashlib.sha256
     ).hexdigest()

@@ -67,7 +67,15 @@ export interface UnitStatusSummary {
 
 export type TenantStatus = "active" | "moved_out" | "archived" | "notice_given";
 
-export type DocumentType = "id_front" | "id_back" | "passport" | "lease" | "other";
+export type KycStatus = "not_started" | "pending" | "verified" | "rejected";
+
+export type DocumentType =
+  | "id_front"
+  | "id_back"
+  | "passport"
+  | "kra_pin_certificate"
+  | "lease"
+  | "other";
 
 export interface TenantDocument {
   id: number;
@@ -92,6 +100,8 @@ export interface TenantListItem {
   deposit_paid: string;
   status: TenantStatus;
   status_display: string;
+  kyc_status: KycStatus;
+  kyc_status_display: string;
   move_in_date: string;
   move_out_date: string | null;
   due_day: number;
@@ -99,6 +109,7 @@ export interface TenantListItem {
 
 export interface TenantDetail extends TenantListItem {
   id_number: string;
+  kra_pin: string;
   email: string;
   emergency_contact: string;
   emergency_phone: string;
@@ -110,6 +121,13 @@ export interface TenantDetail extends TenantListItem {
   intended_move_out_date: string | null;
   move_out_notes: string;
   notes: string;
+  // KYC
+  kyc_complete: boolean;
+  kyc_missing_items: string[];
+  kyc_verified_at: string | null;
+  kyc_verified_by: number | null;
+  kyc_verified_by_name: string | null;
+  kyc_notes: string;
   documents: TenantDocument[];
   created_at: string;
   updated_at: string;

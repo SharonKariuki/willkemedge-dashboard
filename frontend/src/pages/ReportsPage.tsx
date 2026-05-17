@@ -89,7 +89,7 @@ function exportPDF(title: string, headers: string[], rows: (string | number)[][]
   h1{font-size:18px;margin-bottom:6px}.sub{color:#636776;font-size:11px;margin-bottom:20px;text-transform:uppercase;letter-spacing:.14em}
   table{width:100%;border-collapse:collapse}th{background:#F0EDE5;text-align:left;padding:10px 12px;font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:#636776}
   td{padding:10px 12px;border-bottom:1px solid #E1E1E6}</style></head><body>
-  <div class="sub">Willkemedge Property Suite</div><h1>${title}</h1>
+  <div class="sub">Wilkem Ventures Property Suite</div><h1>${title}</h1>
   <table><thead><tr>${headers.map((h) => `<th>${h}</th>`).join("")}</tr></thead>
   <tbody>${rows.map((r) => `<tr>${r.map((c) => `<td>${c}</td>`).join("")}</tr>`).join("")}</tbody>
   </table></body></html>`;

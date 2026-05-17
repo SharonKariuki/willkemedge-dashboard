@@ -1,17 +1,54 @@
 """
-Expense tracking models.
+Expense tracking + Chart of Accounts.
 
-ExpenseCategory: reusable tags (Repairs, Security, Water, etc.)
+Account: a row in the chart of accounts (e.g. 5070 Repairs & Maintenance).
+ExpenseCategory: reusable tag the user picks when recording an expense;
+    each category maps to one expense Account so the P&L groups by GL code.
 Expense: an immutable financial record of money spent.
 """
 from django.db import models
 
 
+class AccountType(models.TextChoices):
+    ASSET = "asset", "Asset"
+    LIABILITY = "liability", "Liability"
+    EQUITY = "equity", "Equity"
+    INCOME = "income", "Income"
+    EXPENSE = "expense", "Expense"
+
+
+class Account(models.Model):
+    """A single row in the Chart of Accounts."""
+
+    code = models.CharField(max_length=8, unique=True, help_text="4-digit GL code (e.g. 5070).")
+    name = models.CharField(max_length=120)
+    account_type = models.CharField(max_length=10, choices=AccountType.choices)
+    description = models.CharField(max_length=255, blank=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "accounting_account"
+        ordering = ["code"]
+
+    def __str__(self) -> str:
+        return f"{self.code} — {self.name}"
+
+
 class ExpenseCategory(models.Model):
-    """A named bucket for grouping expenses."""
+    """A named bucket for grouping expenses; maps to one expense Account."""
 
     name = models.CharField(max_length=100, unique=True)
     description = models.CharField(max_length=255, blank=True)
+    account = models.ForeignKey(
+        Account,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="expense_categories",
+        limit_choices_to={"account_type": AccountType.EXPENSE},
+        help_text="GL account this category posts to (5010-5100).",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

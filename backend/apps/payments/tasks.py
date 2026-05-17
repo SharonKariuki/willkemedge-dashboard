@@ -30,11 +30,13 @@ def send_payment_confirmation(self, payment_id: int) -> None:
     """
     from .models import Payment
     from .notifications import (
-        payment_email_html,
         payment_sms_message,
+        payment_statement_email_html,
         send_email,
         send_sms,
     )
+    from .pdf_service import render_to_pdf
+    from .statement_service import build_statement
 
     try:
         payment = Payment.objects.select_related(
@@ -46,7 +48,6 @@ def send_payment_confirmation(self, payment_id: int) -> None:
 
     tenant = payment.tenant
     unit_label = f"{tenant.unit.building.name} – {tenant.unit.label}"
-    period = f"{payment.period_month}/{payment.period_year}"
     ref = payment.reference or str(payment.id)
 
     try:
@@ -54,15 +55,22 @@ def send_payment_confirmation(self, payment_id: int) -> None:
         msg = payment_sms_message(tenant.full_name, payment.amount, unit_label, ref)
         send_sms(tenant.phone, msg)
 
-        # Email (optional)
+        # Email + rent statement PDF (optional — only if tenant has an email)
         if tenant.email:
-            html = payment_email_html(
-                tenant.full_name, payment.amount, unit_label, period, ref
+            statement = build_statement(
+                tenant, statement_date=payment.payment_date, as_of=payment.payment_date
             )
+            html = payment_statement_email_html(tenant.full_name, payment.amount, ref, statement)
+            attachments = []
+            pdf = render_to_pdf("payments/statement_pdf.html", statement)
+            if pdf:
+                safe_name = tenant.full_name.replace(" ", "_")
+                attachments.append((f"Rent_Statement_{safe_name}.pdf", pdf, "application/pdf"))
             send_email(
                 tenant.email,
-                f"Payment Received – KES {payment.amount:,.2f}",
+                f"Rent Statement – {tenant.unit.building.name} {tenant.unit.label}",
                 html,
+                attachments=attachments,
             )
     except Exception as exc:
         logger.warning("send_payment_confirmation retry %s: %s", self.request.retries, exc)

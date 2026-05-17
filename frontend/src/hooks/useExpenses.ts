@@ -87,6 +87,8 @@ export function useCreateExpense() {
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["expenses"] });
+      void qc.invalidateQueries({ queryKey: ["dashboard"] });
+      void qc.invalidateQueries({ queryKey: ["reports"] });
     },
   });
 }
@@ -99,6 +101,8 @@ export function useDeleteExpense() {
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["expenses"] });
+      void qc.invalidateQueries({ queryKey: ["dashboard"] });
+      void qc.invalidateQueries({ queryKey: ["reports"] });
     },
   });
 }
