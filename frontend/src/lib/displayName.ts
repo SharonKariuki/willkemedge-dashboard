@@ -1,6 +1,7 @@
 const REPLACEMENTS: Array<[RegExp, string]> = [
-  [/sharon/gi, "william"],
-  [/mugure/gi, "osoro"],
+  [/sharonmugure\d*/gi, "wilkem.ventures"],
+  [/sharon/gi, "wilkem"],
+  [/mugure/gi, "ventures"],
 ];
 
 export function displayName(value: string | null | undefined): string {
