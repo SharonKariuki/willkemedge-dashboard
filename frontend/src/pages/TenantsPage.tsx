@@ -93,7 +93,9 @@ function KycPanel({ tenant }: { tenant: TenantDetail }) {
     }
   };
 
-  const kycDocs = tenant.documents.filter((d) =>
+  const documents = tenant.documents ?? [];
+  const missingItems = tenant.kyc_missing_items ?? [];
+  const kycDocs = documents.filter((d) =>
     KYC_DOC_TYPES.some((t) => t.value === d.doc_type),
   );
 
@@ -113,11 +115,11 @@ function KycPanel({ tenant }: { tenant: TenantDetail }) {
       </div>
 
       {/* Missing items / reviewer notes */}
-      {tenant.kyc_missing_items.length > 0 ? (
+      {missingItems.length > 0 ? (
         <div className="mb-3 rounded-md bg-ochre-500/10 p-3 text-sm text-ink-700">
           <p className="font-medium text-ochre-700">Still needed before verification:</p>
           <ul className="mt-1 list-inside list-disc text-ink-600">
-            {tenant.kyc_missing_items.map((m) => <li key={m}>{m}</li>)}
+            {missingItems.map((m) => <li key={m}>{m}</li>)}
           </ul>
         </div>
       ) : tenant.kyc_status === "verified" ? (
@@ -198,7 +200,7 @@ function KycPanel({ tenant }: { tenant: TenantDetail }) {
               <Button type="button" variant="ghost" size="sm" onClick={() => setRejecting(true)}>Reject</Button>
             )}
             <Button
-              type="button" size="sm" loading={verify.isPending} disabled={tenant.kyc_missing_items.length > 0}
+              type="button" size="sm" loading={verify.isPending} disabled={missingItems.length > 0}
               onClick={async () => {
                 try { await verify.mutateAsync(); toast.success("KYC verified"); }
                 catch (e) {
