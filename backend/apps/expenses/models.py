@@ -18,11 +18,25 @@ class AccountType(models.TextChoices):
 
 
 class Account(models.Model):
-    """A single row in the Chart of Accounts."""
+    """A single row in the Chart of Accounts.
 
-    code = models.CharField(max_length=8, unique=True, help_text="4-digit GL code (e.g. 5070).")
+    The Wilkem Ventures COA is a two-level hierarchy: section headers
+    (1000 ASSETS, 5000 OPERATING EXPENSES, …) carry ``is_header=True`` and
+    no balance; each posting account hangs off a header via ``parent_code``.
+    """
+
+    code = models.CharField(max_length=8, unique=True, help_text="GL code (e.g. 5200 Repairs & Maintenance).")
     name = models.CharField(max_length=120)
     account_type = models.CharField(max_length=10, choices=AccountType.choices)
+    parent_code = models.CharField(
+        max_length=8,
+        blank=True,
+        help_text="Section header this account rolls up to (e.g. 5000). Blank for headers themselves.",
+    )
+    is_header = models.BooleanField(
+        default=False,
+        help_text="True for section headers (1000/2000/…) that group postings but hold no balance.",
+    )
     description = models.CharField(max_length=255, blank=True)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -46,8 +60,8 @@ class ExpenseCategory(models.Model):
         null=True,
         blank=True,
         related_name="expense_categories",
-        limit_choices_to={"account_type": AccountType.EXPENSE},
-        help_text="GL account this category posts to (5010-5100).",
+        limit_choices_to={"account_type": AccountType.EXPENSE, "is_header": False},
+        help_text="GL account this category posts to (5100-6600).",
     )
     created_at = models.DateTimeField(auto_now_add=True)
 

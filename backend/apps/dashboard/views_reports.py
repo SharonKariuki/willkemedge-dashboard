@@ -8,7 +8,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.buildings.models import Building, Unit, UnitStatus
+from apps.buildings.models import Building, Unit, UnitClassification, UnitStatus
 from apps.expenses.models import Account, AccountType, Expense
 from apps.payments.models import Arrears, Payment, PaymentType
 from apps.tenants.models import Tenant, TenantStatus
@@ -255,9 +255,10 @@ class AccountingDashboardView(APIView):
     Drives the Accounting Suite tabs on ExpensesPage. Each tab returns the shape
     that its frontend view expects (see ExpensesPage CoAView, PnLView, etc.).
 
-    Built around the Wilkem Ventures Chart of Accounts:
-      Assets 1010-1210, Liabilities 2100-2200, Equity 3010-3020,
-      Income 4000-4010, Expenses 5010-5100.
+    Built around the Wilkem Ventures Rentals & Commercials Chart of Accounts:
+      Assets 1010-1370, Liabilities 2010-2800, Equity 3100-3300,
+      Income 4110-4250, Operating Expenses 5100-5940,
+      Fixed/Non-operating 6100-6600.
     """
     permission_classes = [IsAuthenticated]
 
@@ -279,23 +280,29 @@ class AccountingDashboardView(APIView):
     def _tab_coa(self, month: int, year: int):
         """List all GL accounts with the in-period balance where it can be computed."""
         income_by_type = self._income_by_payment_type(month, year)
+        rent_by_class = self._rent_income_by_classification(month, year)
         expense_by_account = self._expense_by_account(month, year)
         accounts = []
         for acct in Account.objects.filter(is_active=True).order_by("code"):
-            balance = self._account_balance(acct, income_by_type, expense_by_account)
+            balance = self._account_balance(acct, income_by_type, rent_by_class, expense_by_account)
             accounts.append({
                 "code": acct.code,
                 "name": acct.name,
                 "type": acct.get_account_type_display(),
-                "balance": float(balance),
+                "parent_code": acct.parent_code,
+                "is_header": acct.is_header,
+                "balance": None if acct.is_header else float(balance),
             })
         return {"period": f"{month}/{year}", "accounts": accounts}
 
     # ── Profit & Loss ──────────────────────────────────────────────────────
     def _tab_pnl(self, month: int, year: int):
-        """4000/4010 income minus 5xxx expense, with a per-account breakdown."""
+        """4110/4120/4200 income minus 5xxx-6xxx expense, with a per-account breakdown."""
         income_by_type = self._income_by_payment_type(month, year)
-        rental_income = income_by_type.get(PaymentType.RENT, Decimal("0"))
+        rent_by_class = self._rent_income_by_classification(month, year)
+        residential_income = rent_by_class.get(UnitClassification.RESIDENTIAL, Decimal("0"))
+        commercial_income = rent_by_class.get(UnitClassification.BUSINESS, Decimal("0"))
+        rental_income = residential_income + commercial_income
         late_fees = income_by_type.get(PaymentType.LATE_FEE, Decimal("0"))
         other_income = income_by_type.get(PaymentType.OTHER, Decimal("0"))
         total_income = rental_income + late_fees + other_income
@@ -321,6 +328,8 @@ class AccountingDashboardView(APIView):
             "period": f"{month}/{year}",
             "income": float(total_income),
             "rental_income": float(rental_income),
+            "residential_income": float(residential_income),
+            "commercial_income": float(commercial_income),
             "late_fees": float(late_fees),
             "other_income": float(other_income),
             "total_expenses": float(total_expenses),
@@ -333,7 +342,7 @@ class AccountingDashboardView(APIView):
         """Snapshot up to the end of the requested period.
 
         We have no GL postings for fixed assets, mortgage, or owner equity yet,
-        so 1200/1210/2200/3010/3020 stay at zero. Cash, A/R, and deposits-held
+        so 1060/1350/2500/3100-3300 stay at zero. Cash, A/R, and deposits-held
         are derived from Payments/Arrears/Tenants.
         """
         period_filter = Q(period_year__lt=year) | Q(period_year=year, period_month__lte=month)
@@ -369,15 +378,15 @@ class AccountingDashboardView(APIView):
         operating_cash = rent_collected + late_fee_collected - expenses_paid
 
         assets = {
-            "1010 Checking - Operating":         float(operating_cash),
-            "1020 Checking - Security Deposits": float(deposits_collected),
-            "1200 Building Cost":                0.0,
-            "1210 Land Cost":                    0.0,
-            "Accounts Receivable (Arrears)":     float(accounts_receivable),
+            "1020 Operating Bank Account":              float(operating_cash),
+            "1030 Tenant Security Deposit Bank Account": float(deposits_collected),
+            "1040 Accounts Receivable (Rent Arrears)":   float(accounts_receivable),
+            "1060 Investment Property / Land":           0.0,
+            "1350 Buildings & Improvements":             0.0,
         }
         liabilities = {
-            "2100 Security Deposits Held": float(deposit_liability),
-            "2200 Mortgage Payable":       0.0,
+            "2100 Tenant Security Deposits Held": float(deposit_liability),
+            "2500 Mortgages Payable / Bank Loans": 0.0,
         }
         # Equity plugged so the sheet balances; flagged so the UI can show a note.
         total_assets = sum(assets.values())
@@ -458,6 +467,16 @@ class AccountingDashboardView(APIView):
         return {r["payment_type"]: r["total"] or Decimal("0") for r in rows}
 
     @staticmethod
+    def _rent_income_by_classification(month: int, year: int) -> dict:
+        """Split rent collected into residential vs commercial by the unit's classification."""
+        rows = (
+            Payment.objects.filter(period_month=month, period_year=year, payment_type=PaymentType.RENT)
+            .values("tenant__unit__classification")
+            .annotate(total=Sum("amount"))
+        )
+        return {r["tenant__unit__classification"]: r["total"] or Decimal("0") for r in rows}
+
+    @staticmethod
     def _expense_by_account(month: int, year: int) -> dict:
         rows = (
             Expense.objects.filter(period_month=month, period_year=year)
@@ -467,12 +486,15 @@ class AccountingDashboardView(APIView):
         return {r["category__account__code"]: r["total"] or Decimal("0") for r in rows if r["category__account__code"]}
 
     @staticmethod
-    def _account_balance(acct, income_by_type, expense_by_account) -> Decimal:
+    def _account_balance(acct, income_by_type, rent_by_class, expense_by_account) -> Decimal:
         """Best-effort in-period balance per account using existing data."""
         if acct.account_type == AccountType.INCOME:
-            if acct.code == "4000":
-                return income_by_type.get(PaymentType.RENT, Decimal("0"))
-            if acct.code == "4010":
+            # Rent is split by the unit's classification (residential vs commercial).
+            if acct.code == "4110":
+                return rent_by_class.get(UnitClassification.RESIDENTIAL, Decimal("0"))
+            if acct.code == "4120":
+                return rent_by_class.get(UnitClassification.BUSINESS, Decimal("0"))
+            if acct.code == "4200":
                 return income_by_type.get(PaymentType.LATE_FEE, Decimal("0"))
             return Decimal("0")
         if acct.account_type == AccountType.EXPENSE:
