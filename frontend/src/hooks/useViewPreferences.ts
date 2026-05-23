@@ -13,6 +13,7 @@ const DEFAULTS: ViewPreferences = {
   tenants: true,
   payments: true,
   expenses: true,
+  accounting: true,
   notifications: true,
   reports: true,
   settings: true,
