@@ -28,8 +28,8 @@ class PaymentSource(models.TextChoices):
 
 class PaymentType(models.TextChoices):
     """How the money is booked in the chart of accounts."""
-    RENT = "rent", "Rental Income (4000)"
-    LATE_FEE = "late_fee", "Late Fees (4010)"
+    RENT = "rent", "Rental Income (4110/4120)"
+    LATE_FEE = "late_fee", "Late Fees (4200)"
     DEPOSIT = "deposit", "Security Deposit (2100)"
     OTHER = "other", "Other Income"
 
@@ -59,7 +59,7 @@ class Payment(models.Model):
         max_length=10,
         choices=PaymentType.choices,
         default=PaymentType.RENT,
-        help_text="Used to split income into 4000 (rent), 4010 (late fees), or 2100 (deposit liability).",
+        help_text="Used to split income into 4110/4120 (rent), 4200 (late fees), or 2100 (deposit liability).",
     )
     reference = models.CharField(
         max_length=100,

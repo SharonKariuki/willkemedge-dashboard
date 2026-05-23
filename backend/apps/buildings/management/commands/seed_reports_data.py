@@ -18,7 +18,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.buildings.models import Building, Unit, UnitStatus
-from apps.expenses.models import Expense, ExpenseCategory
+from apps.expenses.models import Account, Expense, ExpenseCategory
 from apps.payments.models import Arrears, Payment, PaymentSource
 from apps.tenants.models import Tenant, TenantStatus
 
@@ -244,10 +244,23 @@ class Command(BaseCommand):
 
     # ────────────────────────────────────────────────────────────────────────
     def _seed_expenses(self, periods):
-        categories = {
-            name: ExpenseCategory.objects.get_or_create(name=name)[0]
-            for name in EXPENSE_CATEGORIES
+        # Map each seeded category to its Wilkem COA expense account so a fresh
+        # seed produces P&L/COA-ready data (mirrors expenses migration 0005).
+        category_to_code = {
+            "Maintenance": "5200", "Repairs": "5200",
+            "Utilities": "5300", "Water": "5300", "Electricity": "5300",
+            "Cleaning": "5220", "Garbage Collection": "5220",
+            "Security": "5600", "Management Fee": "5100",
         }
+        accounts_by_code = {a.code: a for a in Account.objects.all()}
+        categories = {}
+        for name in EXPENSE_CATEGORIES:
+            cat = ExpenseCategory.objects.get_or_create(name=name)[0]
+            acct = accounts_by_code.get(category_to_code.get(name, ""))
+            if acct and cat.account_id != acct.id:
+                cat.account = acct
+                cat.save(update_fields=["account"])
+            categories[name] = cat
         buildings = list(Building.objects.all())
         amount_bands = [1500, 2500, 3500, 5000, 7500, 12000, 18000, 25000]
 

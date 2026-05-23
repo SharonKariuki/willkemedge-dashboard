@@ -7,7 +7,7 @@ from .models import Account, Expense, ExpenseCategory
 class AccountSerializer(serializers.ModelSerializer):
     class Meta:
         model = Account
-        fields = ["id", "code", "name", "account_type", "description", "is_active"]
+        fields = ["id", "code", "name", "account_type", "parent_code", "is_header", "description", "is_active"]
         read_only_fields = ["id"]
 
 
