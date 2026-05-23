@@ -22,7 +22,7 @@ import { useSearchParams } from "react-router-dom";
 import { z } from "zod";
 
 import {
-  Badge, Button, Card, DatePicker, EmptyState, Input,
+  Badge, Button, Card, DatePicker, EmptyState, Input, Modal,
   PageHeader, Skeleton, Table, TBody, TD, TH, THead, TR,
 } from "@/components/ui";
 import {
@@ -357,29 +357,30 @@ function TenantDetailModal({ tenantId, onClose }: { tenantId: number; onClose: (
 
   const isActive = tenant?.status === "active" || tenant?.status === "notice_given";
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-ink-900/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-xl bg-white shadow-float dark:bg-ink-900 animate-fade-up">
-        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-ink-100 bg-white px-6 py-4 dark:border-ink-700 dark:bg-ink-900">
-          <p className="font-display text-lg font-semibold text-ink-900 dark:text-white">
-            {isLoading ? "Loading…" : tenant?.full_name}
-          </p>
-          <div className="flex items-center gap-2">
-            {isActive && mode === "view" && (
-              <>
-                <Button size="sm" variant="glass" onClick={() => setMode("edit")}><Pencil className="h-3.5 w-3.5" /> Edit</Button>
-                <Button size="sm" variant="glass" onClick={handleDownloadStatement}><FileText className="h-3.5 w-3.5" /> Statement PDF</Button>
-                <Button size="sm" variant="glass" onClick={() => setMode("notice")}><AlertTriangle className="h-3.5 w-3.5" /> Notice</Button>
-                <Button size="sm" variant="danger" onClick={() => setMode("moveout")}><LogOut className="h-3.5 w-3.5" /> Move Out</Button>
-              </>
-            )}
+  const headerActions = (
+    <>
+      {isActive && mode === "view" && (
+        <>
+          <Button size="sm" variant="glass" onClick={() => setMode("edit")}><Pencil className="h-3.5 w-3.5" /> Edit</Button>
+          <Button size="sm" variant="glass" onClick={handleDownloadStatement}><FileText className="h-3.5 w-3.5" /> Statement PDF</Button>
+          <Button size="sm" variant="glass" onClick={() => setMode("notice")}><AlertTriangle className="h-3.5 w-3.5" /> Notice</Button>
+          <Button size="sm" variant="danger" onClick={() => setMode("moveout")}><LogOut className="h-3.5 w-3.5" /> Move Out</Button>
+        </>
+      )}
+      {mode !== "view" && <Button size="sm" variant="ghost" onClick={() => setMode("view")}>Cancel</Button>}
+    </>
+  );
 
-            {mode !== "view" && <Button size="sm" variant="ghost" onClick={() => setMode("view")}>Cancel</Button>}
-            <button onClick={onClose} className="rounded-md p-1.5 text-ink-400 hover:text-ink-700"><X className="h-4 w-4" /></button>
-          </div>
-        </div>
-        <div className="p-6 space-y-5">
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      size="lg"
+      eyebrow={tenant ? `${tenant.building_name} · ${tenant.unit_label}` : undefined}
+      title={isLoading ? "Loading…" : tenant?.full_name}
+      headerActions={headerActions}
+    >
+        <div className="space-y-5">
           {isLoading && <div className="space-y-3">{Array.from({length:4}).map((_,i) => <div key={i} className="h-8 rounded bg-ink-100 animate-pulse" />)}</div>}
           {tenant && mode === "view" && (
             <>
@@ -511,8 +512,7 @@ function TenantDetailModal({ tenantId, onClose }: { tenantId: number; onClose: (
             </form>
           )}
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }
 

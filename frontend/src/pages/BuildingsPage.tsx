@@ -10,7 +10,6 @@ import {
   Search,
   Trash2,
   Wrench,
-  X,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useFieldArray, useForm } from "react-hook-form";
@@ -26,6 +25,7 @@ import {
   DatePicker,
   EmptyState,
   Input,
+  Modal,
   PageHeader,
   Skeleton,
 } from "@/components/ui";
@@ -101,7 +101,7 @@ function Field({
 }
 
 const inputCls =
-  "w-full rounded-md border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20";
+  "w-full rounded-md bg-surface-raised hairline px-3 py-2.5 text-sm text-ink-900 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-sage-500/40";
 
 // ─── Wizard steps ───────────────────────────────────────────────────────────
 function StepBuilding({ onNext }: { onNext: (v: BuildingFormValues) => void }) {
@@ -494,63 +494,58 @@ function CreateBuildingWizard({ onClose }: { onClose: () => void }) {
 
   const stepLabels = ["Building info", "Configure units", "Review & confirm"];
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-gray-900/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative w-full max-w-2xl overflow-hidden rounded-xl bg-white shadow-2xl animate-fade-up">
-
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-gray-200 bg-gray-900 px-6 py-4">
-          <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-white/10">
-              <Building2 className="h-5 w-5 text-white" />
-            </div>
-            <div>
-              <p className="font-semibold text-white">Add Building</p>
-              <p className="text-[11px] text-gray-400">Step {step} of 3 — {stepLabels[step - 1]}</p>
-            </div>
-          </div>
-          {/* Step indicator */}
-          <div className="flex items-center gap-1.5">
-            {[1, 2, 3].map((s) => (
-              <div
-                key={s}
-                className={cn(
-                  "h-1.5 rounded-full transition-all",
-                  s === step ? "w-8 bg-blue-400" : s < step ? "w-4 bg-blue-600/60" : "w-4 bg-white/20"
-                )}
-              />
-            ))}
-          </div>
-          <button onClick={onClose} className="rounded-lg p-1.5 text-gray-400 hover:text-white transition-colors" aria-label="Close">
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-
-        {/* Body */}
-        <div className="max-h-[75vh] overflow-y-auto p-6">
-          {step === 1 && <StepBuilding onNext={handleBuildingNext} />}
-          {step === 2 && buildingData && (
-            <StepUnits
-              count={buildingData.unit_count}
-              floors={buildingData.total_floors}
-              buildingType={buildingData.building_type}
-              onBack={() => setStep(1)}
-              onNext={handleUnitsNext}
-            />
-          )}
-          {step === 3 && buildingData && unitsData && (
-            <StepPreview
-              building={buildingData}
-              units={unitsData}
-              onBack={() => setStep(2)}
-              onConfirm={handleConfirm}
-              isPending={bulkCreate.isPending}
-            />
-          )}
-        </div>
+  const headerSlot = (
+    <div className="flex min-w-0 flex-1 items-center gap-3">
+      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-ochre-500/15 text-ochre-700">
+        <Building2 className="h-4.5 w-4.5" />
+      </div>
+      <div className="min-w-0">
+        <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-ochre-600">
+          New building
+        </p>
+        <p className="font-display text-lg font-semibold leading-tight text-ink-900 dark:text-white">
+          {stepLabels[step - 1]}
+        </p>
       </div>
     </div>
+  );
+
+  const stepIndicator = (
+    <div className="hidden items-center gap-1.5 sm:flex" aria-label={`Step ${step} of 3`}>
+      {[1, 2, 3].map((s) => (
+        <div
+          key={s}
+          className={cn(
+            "h-1 rounded-full transition-all",
+            s === step ? "w-8 bg-ochre-500" : s < step ? "w-5 bg-ochre-500/50" : "w-5 bg-ink-200",
+          )}
+        />
+      ))}
+    </div>
+  );
+
+  return (
+    <Modal open onClose={onClose} size="lg" header={headerSlot} headerActions={stepIndicator}>
+      {step === 1 && <StepBuilding onNext={handleBuildingNext} />}
+      {step === 2 && buildingData && (
+        <StepUnits
+          count={buildingData.unit_count}
+          floors={buildingData.total_floors}
+          buildingType={buildingData.building_type}
+          onBack={() => setStep(1)}
+          onNext={handleUnitsNext}
+        />
+      )}
+      {step === 3 && buildingData && unitsData && (
+        <StepPreview
+          building={buildingData}
+          units={unitsData}
+          onBack={() => setStep(2)}
+          onConfirm={handleConfirm}
+          isPending={bulkCreate.isPending}
+        />
+      )}
+    </Modal>
   );
 }
 
@@ -589,49 +584,50 @@ function AdjustRentModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-gray-900/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative w-full max-w-sm rounded-xl bg-white p-6 shadow-2xl animate-fade-up">
+    <Modal
+      open
+      onClose={onClose}
+      size="sm"
+      eyebrow="Unit"
+      title={`${unit.label}`}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button onClick={handleSave} loading={saving}>Save</Button>
+        </>
+      }
+    >
+      <p className="-mt-1 mb-4 text-sm text-ink-500">
+        Current rent: <span className="font-medium text-ink-900">KES {Number(unit.monthly_rent).toLocaleString()}</span>
+      </p>
 
-        <h3 className="font-semibold text-gray-900 mb-1">Edit Unit</h3>
-        <p className="text-sm text-gray-500 mb-4">{unit.label} — current: KES {Number(unit.monthly_rent).toLocaleString()}</p>
-        <label className="mb-1 block text-xs font-medium text-gray-600 uppercase tracking-wider">Monthly rent (KES)</label>
-        <input
-          type="number"
-          min={0}
-          step={100}
-          value={rent}
-          onChange={(e) => setRent(e.target.value)}
-          className={inputCls}
-          autoFocus
-        />
-        <label className="mt-3 mb-1 block text-xs font-medium text-gray-600 uppercase tracking-wider">
-          Statement descriptor
-        </label>
-        <input
-          type="text"
-          value={descriptor}
-          onChange={(e) => setDescriptor(e.target.value)}
-          placeholder="e.g. Unit G05 - Hospital"
-          className={inputCls}
-        />
-        <p className="mt-1 text-[11px] text-gray-500">
-          Right-hand cell on the rent statement. Leave blank to auto-build from unit label and building name.
-        </p>
-        <div className="mt-4 flex gap-2 justify-end">
-          <button onClick={onClose} className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors">
-            Cancel
-          </button>
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-800 disabled:opacity-60 transition-colors"
-          >
-            {saving ? "Saving…" : "Save"}
-          </button>
-        </div>
-      </div>
-    </div>
+      <label className="mb-1 block text-[11px] font-medium uppercase tracking-[0.14em] text-ink-500">
+        Monthly rent (KES)
+      </label>
+      <input
+        type="number"
+        min={0}
+        step={100}
+        value={rent}
+        onChange={(e) => setRent(e.target.value)}
+        className={inputCls}
+        autoFocus
+      />
+
+      <label className="mb-1 mt-4 block text-[11px] font-medium uppercase tracking-[0.14em] text-ink-500">
+        Statement descriptor
+      </label>
+      <input
+        type="text"
+        value={descriptor}
+        onChange={(e) => setDescriptor(e.target.value)}
+        placeholder="e.g. Unit G05 — Hospital"
+        className={inputCls}
+      />
+      <p className="mt-1.5 text-[11px] text-ink-500">
+        Right-hand cell on the rent statement. Leave blank to auto-build from unit label and building name.
+      </p>
+    </Modal>
   );
 }
 
@@ -685,104 +681,105 @@ function MaintenanceModal({
     }
   };
 
+  const formId = "maintenance-form";
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-gray-900/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-xl bg-white shadow-2xl animate-fade-up">
-
-        <div className="flex items-center justify-between border-b border-gray-200 bg-orange-600 px-5 py-4 rounded-t-xl">
-          <div className="flex items-center gap-2">
-            <Wrench className="h-5 w-5 text-white" />
-            <p className="font-semibold text-white">Log Maintenance — {unit.label}</p>
+    <Modal
+      open
+      onClose={onClose}
+      size="xl"
+      eyebrow={`Unit ${unit.label}`}
+      title="Log maintenance"
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button type="submit" form={formId} loading={saving}>
+            <Wrench className="h-4 w-4" /> Log maintenance
+          </Button>
+        </>
+      }
+    >
+      <form id={formId} onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <label className="mb-1 block text-[11px] font-medium uppercase tracking-[0.14em] text-ink-500">
+            What needs to be done? *
+          </label>
+          <textarea
+            required
+            rows={3}
+            value={form.description}
+            onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+            className={inputCls}
+            placeholder="e.g. Fix leaking pipe in bathroom, replace broken window…"
+          />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="mb-1 block text-[11px] font-medium uppercase tracking-[0.14em] text-ink-500">
+              Cost (KES)
+            </label>
+            <input
+              type="number"
+              min={0}
+              step={100}
+              value={form.cost}
+              onChange={(e) => setForm((f) => ({ ...f, cost: e.target.value }))}
+              className={inputCls}
+              placeholder="0"
+            />
+            <p className="mt-1 text-[10px] text-ink-500">Will auto-sync to Expenses tab</p>
           </div>
-          <button onClick={onClose} className="text-white/70 hover:text-white"><X className="h-5 w-5" /></button>
+          <DatePicker
+            label="Reported date *"
+            required
+            value={form.reported_date}
+            onChange={(e) => setForm((f) => ({ ...f, reported_date: e.target.value }))}
+          />
         </div>
-        <div className="p-5 space-y-4">
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label className="mb-1 block text-xs font-medium text-gray-600 uppercase tracking-wider">What needs to be done? *</label>
-              <textarea
-                required
-                rows={3}
-                value={form.description}
-                onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-                className={inputCls}
-                placeholder="e.g. Fix leaking pipe in bathroom, replace broken window…"
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="mb-1 block text-xs font-medium text-gray-600 uppercase tracking-wider">Cost (KES)</label>
-                <input
-                  type="number"
-                  min={0}
-                  step={100}
-                  value={form.cost}
-                  onChange={(e) => setForm((f) => ({ ...f, cost: e.target.value }))}
-                  className={inputCls}
-                  placeholder="0"
-                />
-                <p className="mt-1 text-[10px] text-gray-500">Will auto-sync to Expenses tab</p>
-              </div>
-              <DatePicker
-                label="Reported date *"
-                required
-                value={form.reported_date}
-                onChange={(e) => setForm((f) => ({ ...f, reported_date: e.target.value }))}
-              />
-
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium text-gray-600 uppercase tracking-wider">Additional notes</label>
-              <input
-                value={form.notes}
-                onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
-                className={inputCls}
-                placeholder="Any additional details…"
-              />
-            </div>
-            <div className="flex justify-end gap-2">
-              <button type="button" onClick={onClose} className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors">
-                Cancel
-              </button>
-              <button type="submit" disabled={saving} className="flex items-center gap-2 rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-700 disabled:opacity-60 transition-colors">
-                <Wrench className="h-4 w-4" />
-                {saving ? "Logging…" : "Log maintenance"}
-              </button>
-            </div>
-          </form>
-
-          {/* Existing requests for this unit */}
-          {loadingRequests ? (
-            <p className="text-xs text-gray-500">Loading maintenance history…</p>
-          ) : requests.length > 0 ? (
-            <div className="border-t border-gray-100 pt-4">
-              <p className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">Maintenance history</p>
-              <ul className="space-y-2">
-                {requests.map((r: Record<string, unknown>, i: number) => (
-                  <li key={i} className="rounded-lg bg-gray-50 px-3 py-2 text-xs">
-                    <div className="flex items-start justify-between gap-2">
-                      <p className="text-gray-900 font-medium">{r.description as string}</p>
-                      <span className={cn(
-                        "shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold",
-                        r.status === "done" ? "bg-green-100 text-green-700" :
-                        r.status === "in_progress" ? "bg-blue-100 text-blue-700" :
-                        "bg-orange-100 text-orange-700"
-                      )}>
-                        {String(r.status).replace("_", " ")}
-                      </span>
-                    </div>
-                    <p className="text-gray-500 mt-1">
-                      KES {Number(r.cost).toLocaleString()} · {String(r.reported_date)}
-                    </p>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
+        <div>
+          <label className="mb-1 block text-[11px] font-medium uppercase tracking-[0.14em] text-ink-500">
+            Additional notes
+          </label>
+          <input
+            value={form.notes}
+            onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
+            className={inputCls}
+            placeholder="Any additional details…"
+          />
         </div>
-      </div>
-    </div>
+      </form>
+
+      {/* Existing requests for this unit */}
+      {loadingRequests ? (
+        <p className="mt-6 text-xs text-ink-500">Loading maintenance history…</p>
+      ) : requests.length > 0 ? (
+        <div className="mt-6 border-t border-ink-100 pt-4 dark:border-ink-700">
+          <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.14em] text-ink-500">
+            Maintenance history
+          </p>
+          <ul className="space-y-2">
+            {requests.map((r: Record<string, unknown>, i: number) => (
+              <li key={i} className="rounded-md bg-surface-sunk px-3 py-2 text-xs">
+                <div className="flex items-start justify-between gap-2">
+                  <p className="font-medium text-ink-900 dark:text-white">{r.description as string}</p>
+                  <span className={cn(
+                    "shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium tracking-wide",
+                    r.status === "done" ? "bg-sage-500/12 text-sage-700" :
+                    r.status === "in_progress" ? "bg-peri-500/12 text-peri-600" :
+                    "bg-ochre-500/12 text-ochre-700"
+                  )}>
+                    {String(r.status).replace("_", " ")}
+                  </span>
+                </div>
+                <p className="mt-1 text-ink-500">
+                  KES {Number(r.cost).toLocaleString()} · {String(r.reported_date)}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </Modal>
   );
 }
 
