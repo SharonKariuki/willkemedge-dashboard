@@ -2,6 +2,7 @@ import {
   BarChart3,
   Bell,
   Building2,
+  Calculator,
   CreditCard,
   Home,
   LayoutDashboard,
@@ -18,6 +19,7 @@ export type ViewKey =
   | "tenants"
   | "payments"
   | "expenses"
+  | "accounting"
   | "notifications"
   | "reports"
   | "settings";
@@ -38,6 +40,7 @@ export const NAV_ITEMS: NavItem[] = [
   { key: "tenants", to: "/tenants", label: "Tenants", icon: Users, togglable: true, description: "Tenant directory and KYC" },
   { key: "payments", to: "/payments", label: "Payments", icon: CreditCard, togglable: true, description: "Rent collection, M-Pesa, receipts" },
   { key: "expenses", to: "/expenses", label: "Expenses", icon: Receipt, togglable: true, description: "Operating costs and disbursements" },
+  { key: "accounting", to: "/accounting", label: "Accounting", icon: Calculator, togglable: true, description: "Chart of accounts, P&L, balance sheet" },
   { key: "notifications", to: "/notifications", label: "Notifications", icon: Bell, togglable: true, description: "Reminders and alerts" },
   { key: "reports", to: "/reports", label: "Reports", icon: BarChart3, togglable: true, description: "Statements and analytics" },
   { key: "settings", to: "/settings", label: "Settings", icon: Settings, togglable: false },
