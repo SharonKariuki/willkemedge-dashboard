@@ -2,10 +2,9 @@
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
-from .bank import BankWebhookView
+from .coop_ipn import CoopIpnView
 from .notification_views import NotificationViewSet
 from .views import ArrearsViewSet, PaymentViewSet, TransactionViewSet
-from .views_mpesa import MpesaConfirmView, MpesaStkCallbackView, MpesaValidateView
 
 router = DefaultRouter()
 router.register("payments", PaymentViewSet, basename="payment")
@@ -17,8 +16,5 @@ app_name = "payments"
 
 urlpatterns = [
     path("", include(router.urls)),
-    path("payments/mpesa/validate/",     MpesaValidateView.as_view(),    name="mpesa-validate"),
-    path("payments/mpesa/confirm/",      MpesaConfirmView.as_view(),     name="mpesa-confirm"),
-    path("payments/mpesa/stk-callback/", MpesaStkCallbackView.as_view(), name="mpesa-stk-callback"),
-    path("payments/bank/webhook/",    BankWebhookView.as_view(),   name="bank-webhook"),
+    path("payments/coop/ipn/", CoopIpnView.as_view(), name="coop-ipn"),
 ]

@@ -1,5 +1,5 @@
 """Tenant API views — updated with move-out notice, deposit refund, and edit."""
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 from django.db import models, transaction
 from rest_framework import status, viewsets
@@ -21,6 +21,15 @@ from .serializers import (
     TenantListSerializer,
 )
 from .services import FileValidationError, move_in_tenant, move_out_tenant, validate_upload
+
+
+def _money(value) -> str:
+    """Quantize a monetary value to 2 dp and return it as a string.
+
+    Money is kept in Decimal end-to-end to avoid binary float drift; we
+    serialize as a string so the JSON value is exact (e.g. "10000.00").
+    """
+    return str(Decimal(str(value or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
 
 def render_to_pdf(template_src, context_dict=None):
@@ -137,14 +146,17 @@ class TenantViewSet(viewsets.ModelViewSet):
         ser.is_valid(raise_exception=True)
         uploaded_file = ser.validated_data["file"]
         try:
-            validate_upload(uploaded_file)
+            safe_name = validate_upload(uploaded_file)
         except FileValidationError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        # Store under a sanitized name so the path can't be manipulated, and
+        # keep a sanitized original_name (never the raw client value).
+        uploaded_file.name = safe_name
         doc = TenantDocument.objects.create(
             tenant=tenant,
             doc_type=ser.validated_data["doc_type"],
             file=uploaded_file,
-            original_name=uploaded_file.name,
+            original_name=safe_name,
         )
         # Auto-advance KYC to "pending review" once the minimum identity data is on file.
         tenant.submit_kyc()
@@ -178,6 +190,30 @@ class TenantViewSet(viewsets.ModelViewSet):
         docs = tenant.documents.all()
         return Response(TenantDocumentSerializer(docs, many=True).data)
 
+    @action(detail=True, methods=["get"], url_path=r"documents/(?P<doc_id>[0-9]+)/download")
+    def download_document(self, request, pk=None, doc_id=None):
+        """GET /api/tenants/<id>/documents/<doc_id>/download/ — stream a KYC document.
+
+        Authenticated-only (IsAuthenticated on the viewset). We serve the file
+        through FileResponse rather than relying on static/media serving so the
+        document is never reachable via a guessable URL.
+        """
+        from django.http import FileResponse, Http404
+
+        tenant = self.get_object()
+        try:
+            doc = tenant.documents.get(pk=doc_id)
+        except TenantDocument.DoesNotExist as exc:
+            raise Http404("Document not found.") from exc
+        if not doc.file:
+            raise Http404("Document file is missing.")
+        # original_name is already sanitized on upload.
+        return FileResponse(
+            doc.file.open("rb"),
+            as_attachment=True,
+            filename=doc.original_name or "document",
+        )
+
     @action(detail=True, methods=["get"], url_path="payment-history")
     def payment_history(self, request, pk=None):
         """GET /api/tenants/<id>/payment-history/ — payment analytics for tenant detail page."""
@@ -187,15 +223,15 @@ class TenantViewSet(viewsets.ModelViewSet):
         tenant = self.get_object()
         payments = Payment.objects.filter(tenant=tenant).order_by("-payment_date")[:24]
         arrears = Arrears.objects.filter(tenant=tenant, is_cleared=False)
-        total_paid = tenant.payments.aggregate(total=Sum("amount"))["total"] or 0
-        total_arrears = arrears.aggregate(total=Sum("balance"))["total"] or 0
+        total_paid = tenant.payments.aggregate(total=Sum("amount"))["total"] or Decimal("0")
+        total_arrears = arrears.aggregate(total=Sum("balance"))["total"] or Decimal("0")
         return Response({
-            "total_paid": float(total_paid),
-            "total_arrears": float(total_arrears),
+            "total_paid": _money(total_paid),
+            "total_arrears": _money(total_arrears),
             "payments": [
                 {
                     "id": p.id,
-                    "amount": float(p.amount),
+                    "amount": _money(p.amount),
                     "payment_date": p.payment_date.isoformat(),
                     "period_month": p.period_month,
                     "period_year": p.period_year,
@@ -207,9 +243,9 @@ class TenantViewSet(viewsets.ModelViewSet):
             "arrears": [
                 {
                     "period": f"{a.period_month}/{a.period_year}",
-                    "expected": float(a.expected_rent),
-                    "paid": float(a.amount_paid),
-                    "balance": float(a.balance),
+                    "expected": _money(a.expected_rent),
+                    "paid": _money(a.amount_paid),
+                    "balance": _money(a.balance),
                 }
                 for a in arrears
             ],
@@ -226,42 +262,44 @@ class TenantViewSet(viewsets.ModelViewSet):
         credits = Payment.objects.filter(tenant=tenant).order_by("payment_date")
 
         ledger = []
-        running_balance = 0
+        running_balance = Decimal("0")
 
         # Arrears entries represent the rent obligation for each month
         for c in charges:
-            running_balance += float(c.expected_rent)
+            running_balance += c.expected_rent
             ledger.append({
                 "date": f"{c.period_year}-{c.period_month:02d}-01",
                 "description": f"Rent Charge - {c.period_month}/{c.period_year}",
                 "type": "debit",
-                "amount": float(c.expected_rent),
-                "running_balance": running_balance,
+                "amount": _money(c.expected_rent),
+                "running_balance": _money(running_balance),
                 "period": f"{c.period_month}/{c.period_year}"
             })
 
         # Payment entries reduce the balance
         for p in credits:
-            running_balance -= float(p.amount)
+            running_balance -= p.amount
             ledger.append({
                 "date": p.payment_date.isoformat(),
                 "description": f"Rent Payment - {p.source.upper()} ({p.reference or 'N/A'})",
                 "type": "credit",
-                "amount": float(p.amount),
-                "running_balance": running_balance,
+                "amount": _money(p.amount),
+                "running_balance": _money(running_balance),
                 "period": f"{p.period_month}/{p.period_year}"
             })
 
         # Sort by date, then by type (debit/charge first on same day)
         ledger.sort(key=lambda x: (x["date"], 0 if x["type"] == "debit" else 1))
 
+        total_expected = sum((c.expected_rent for c in charges), Decimal("0"))
+        total_paid = sum((p.amount for p in credits), Decimal("0"))
         return Response({
             "tenant_name": tenant.full_name,
             "unit": tenant.unit.label if tenant.unit else "N/A",
             "building": tenant.unit.building.name if tenant.unit else "N/A",
-            "total_expected": sum(float(c.expected_rent) for c in charges),
-            "total_paid": sum(float(p.amount) for p in credits),
-            "current_balance": running_balance,
+            "total_expected": _money(total_expected),
+            "total_paid": _money(total_paid),
+            "current_balance": _money(running_balance),
             "entries": ledger
         })
 

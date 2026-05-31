@@ -7,6 +7,7 @@ import {
   Badge,
   Card,
   EmptyState,
+  ErrorState,
   Input,
   PageHeader,
   Skeleton,
@@ -48,7 +49,7 @@ export default function UnitsPage() {
   if (statusFilter) filters.status = statusFilter;
   if (buildingFilter) filters.building = buildingFilter;
 
-  const { data: units, isLoading } = useUnits(filters);
+  const { data: units, isLoading, isError, refetch } = useUnits(filters);
   const { data: summary } = useUnitStatusSummary(buildingFilter || undefined);
   const { data: buildings } = useBuildings();
 
@@ -192,6 +193,12 @@ export default function UnitsPage() {
             <Skeleton key={i} className="h-36" />
           ))}
         </div>
+      ) : isError ? (
+        <ErrorState
+          title="Units could not be loaded."
+          description="Your unit inventory did not come back. This is usually temporary."
+          onRetry={() => void refetch()}
+        />
       ) : !filtered.length ? (
         <EmptyState
           icon={<Home className="h-5 w-5" />}

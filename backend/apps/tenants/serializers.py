@@ -1,7 +1,14 @@
 """Tenant serializers — updated with deposit refund, notice, and edit fields."""
+from decimal import ROUND_HALF_UP, Decimal
+
 from rest_framework import serializers
 
 from .models import DocumentType, Tenant, TenantDocument
+
+
+def _money(value) -> str:
+    """Quantize a monetary value to 2 dp and return it as an exact string."""
+    return str(Decimal(str(value or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
 
 class TenantDocumentSerializer(serializers.ModelSerializer):
@@ -74,12 +81,12 @@ class TenantDetailSerializer(serializers.ModelSerializer):
     def get_total_paid(self, obj):
         from django.db.models import Sum
         result = obj.payments.aggregate(total=Sum("amount"))["total"]
-        return float(result or 0)
+        return _money(result)
 
     def get_total_arrears(self, obj):
         from django.db.models import Sum
         result = obj.arrears.filter(is_cleared=False).aggregate(total=Sum("balance"))["total"]
-        return float(result or 0)
+        return _money(result)
 
 
 class TenantCreateSerializer(serializers.ModelSerializer):

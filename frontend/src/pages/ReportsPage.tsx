@@ -7,7 +7,7 @@ import {
 
 import {
   Badge, Button, Card, CardHeader, CardTitle,
-  EmptyState, PageHeader, Skeleton,
+  EmptyState, ErrorState, PageHeader, Skeleton,
   Table, TBody, TD, TH, THead, TR,
 } from "@/components/ui";
 import { useBuildings } from "@/hooks/useBuildings";
@@ -113,7 +113,28 @@ function ExportBar({ title, headers, rows, filename }: {
   );
 }
 
-function ReportTable({ headers, rows }: { headers: string[]; rows: (string | number)[][] }) {
+function ReportTable({
+  headers,
+  rows,
+  isLoading,
+  isError,
+  onRetry,
+}: {
+  headers: string[];
+  rows: (string | number)[][];
+  isLoading?: boolean;
+  isError?: boolean;
+  onRetry?: () => void;
+}) {
+  if (isLoading) return <Skeleton className="h-48" />;
+  if (isError)
+    return (
+      <ErrorState
+        title="This report could not be loaded."
+        description="The figures did not come back. This is usually temporary."
+        onRetry={onRetry}
+      />
+    );
   if (rows.length === 0)
     return <EmptyState title="No data" description="Nothing to show for the current filters." />;
   return (
@@ -220,7 +241,7 @@ function MonthlyTab() {
   const now = new Date();
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [year, setYear] = useState(now.getFullYear());
-  const { data, isLoading } = useMonthlyCollection(month, year);
+  const { data, isLoading, isError, refetch } = useMonthlyCollection(month, year);
   const headers = ["Tenant", "Unit", "Amount", "Source", "Date", "Reference"];
   const rows = data?.payments.map((p: Record<string,unknown>) => [
     p.tenant, p.unit, `KES ${Number(p.amount).toLocaleString()}`, p.source, p.date, p.reference || "—",
@@ -237,7 +258,7 @@ function MonthlyTab() {
           {data && <ExportBar title={`Monthly Collection ${month}/${year}`} headers={headers} rows={rows} filename={`collection-${month}-${year}.csv`} />}
         </div>
       </CardHeader>
-      {isLoading ? <Skeleton className="h-48" /> : <ReportTable headers={headers} rows={rows} />}
+      <ReportTable headers={headers} rows={rows} isLoading={isLoading} isError={isError} onRetry={() => void refetch()} />
     </Card>
   );
 }
@@ -246,7 +267,7 @@ function RentBalancesTab() {
   const now = new Date();
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [year, setYear] = useState(now.getFullYear());
-  const { data, isLoading } = useRentBalances(month, year);
+  const { data, isLoading, isError, refetch } = useRentBalances(month, year);
   const headers = ["Tenant", "Unit", "Monthly Rent", "Amount Paid", "Balance", "Status"];
   const rows = data?.balances?.map((r: Record<string,unknown>) => [
     r.tenant, r.unit, `KES ${Number(r.monthly_rent).toLocaleString()}`,
@@ -264,7 +285,7 @@ function RentBalancesTab() {
           {data && <ExportBar title={`Rent Balances ${month}/${year}`} headers={headers} rows={rows} filename={`rent-balances-${month}-${year}.csv`} />}
         </div>
       </CardHeader>
-      {isLoading ? <Skeleton className="h-48" /> : <ReportTable headers={headers} rows={rows} />}
+      <ReportTable headers={headers} rows={rows} isLoading={isLoading} isError={isError} onRetry={() => void refetch()} />
     </Card>
   );
 }
@@ -273,7 +294,7 @@ function OverpaymentsTab() {
   const now = new Date();
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [year, setYear] = useState(now.getFullYear());
-  const { data, isLoading } = useRentOverpayments(month, year);
+  const { data, isLoading, isError, refetch } = useRentOverpayments(month, year);
   const headers = ["Tenant", "Unit", "Expected Rent", "Amount Paid", "Overpaid By"];
   const rows = data?.overpayments?.map((r: Record<string,unknown>) => [
     r.tenant, r.unit, `KES ${Number(r.expected).toLocaleString()}`,
@@ -291,13 +312,13 @@ function OverpaymentsTab() {
           {data && <ExportBar title="Rent Overpayments" headers={headers} rows={rows} filename="overpayments.csv" />}
         </div>
       </CardHeader>
-      {isLoading ? <Skeleton className="h-48" /> : <ReportTable headers={headers} rows={rows} />}
+      <ReportTable headers={headers} rows={rows} isLoading={isLoading} isError={isError} onRetry={() => void refetch()} />
     </Card>
   );
 }
 
 function AgingTab() {
-  const { data, isLoading } = useAgingArrears();
+  const { data, isLoading, isError, refetch } = useAgingArrears();
   const headers = ["Tenant", "Unit", "0–30 days", "31–60 days", "61–90 days", "90+ days", "Total Owed"];
   const rows = data?.aging?.map((r: Record<string,unknown>) => [
     r.tenant, r.unit,
@@ -316,13 +337,13 @@ function AgingTab() {
         </div>
         {data && <ExportBar title="Aging Rent Balances" headers={headers} rows={rows} filename="aging-arrears.csv" />}
       </CardHeader>
-      {isLoading ? <Skeleton className="h-48" /> : <ReportTable headers={headers} rows={rows} />}
+      <ReportTable headers={headers} rows={rows} isLoading={isLoading} isError={isError} onRetry={() => void refetch()} />
     </Card>
   );
 }
 
 function ExpiringTab() {
-  const { data, isLoading } = useExpiringLeases();
+  const { data, isLoading, isError, refetch } = useExpiringLeases();
   const headers = ["Tenant", "Unit", "Move-in Date", "Months Active", "Status"];
   const rows = data?.leases?.map((r: Record<string,unknown>) => [
     r.tenant, r.unit, r.move_in_date, r.months_active, r.status,
@@ -336,13 +357,13 @@ function ExpiringTab() {
         </div>
         {data && <ExportBar title="Expiring Leases" headers={headers} rows={rows} filename="expiring-leases.csv" />}
       </CardHeader>
-      {isLoading ? <Skeleton className="h-48" /> : <ReportTable headers={headers} rows={rows} />}
+      <ReportTable headers={headers} rows={rows} isLoading={isLoading} isError={isError} onRetry={() => void refetch()} />
     </Card>
   );
 }
 
 function VacantUnitsTab() {
-  const { data, isLoading } = useVacantUnits();
+  const { data, isLoading, isError, refetch } = useVacantUnits();
   const headers = ["Building", "Unit", "Floor", "Type", "Monthly Rent (KES)", "Status"];
   const rows = data?.units?.map((u: Record<string,unknown>) => [
     u.building, u.label, u.floor === 0 ? "Ground" : `Floor ${u.floor}`,
@@ -357,7 +378,7 @@ function VacantUnitsTab() {
         </div>
         {data && <ExportBar title="Vacant Units" headers={headers} rows={rows} filename="vacant-units.csv" />}
       </CardHeader>
-      {isLoading ? <Skeleton className="h-48" /> : <ReportTable headers={headers} rows={rows} />}
+      <ReportTable headers={headers} rows={rows} isLoading={isLoading} isError={isError} onRetry={() => void refetch()} />
     </Card>
   );
 }
@@ -365,7 +386,7 @@ function VacantUnitsTab() {
 function TenantStatementTab() {
   const [selectedTenant, setSelectedTenant] = useState<string>("");
   const { data: tenants } = useTenants();
-  const { data, isLoading } = useTenantStatement(selectedTenant || null);
+  const { data, isLoading, isError, refetch } = useTenantStatement(selectedTenant || null);
   const headers = ["Period", "Expected", "Paid", "Balance", "Status"];
   const rows = data?.rows?.map((r: Record<string,unknown>) => [
     r.period, `KES ${Number(r.expected).toLocaleString()}`,
@@ -385,6 +406,9 @@ function TenantStatementTab() {
         </div>
       </CardHeader>
       {selectedTenant && isLoading && <Skeleton className="h-48" />}
+      {selectedTenant && isError && (
+        <ErrorState title="This statement could not be loaded." onRetry={() => void refetch()} />
+      )}
       {data && (
         <div className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-3">
@@ -402,7 +426,7 @@ function TenantStatementTab() {
 function UnitStatementTab() {
   const [selectedUnit, setSelectedUnit] = useState<string>("");
   const { data: units } = useUnits();
-  const { data, isLoading } = useUnitStatement(selectedUnit || null);
+  const { data, isLoading, isError, refetch } = useUnitStatement(selectedUnit || null);
   const headers = ["Tenant", "Period", "Expected", "Paid", "Balance"];
   const rows = data?.rows?.map((r: Record<string,unknown>) => [
     r.tenant, r.period, `KES ${Number(r.expected).toLocaleString()}`,
@@ -421,6 +445,9 @@ function UnitStatementTab() {
         </div>
       </CardHeader>
       {selectedUnit && isLoading && <Skeleton className="h-48" />}
+      {selectedUnit && isError && (
+        <ErrorState title="This statement could not be loaded." onRetry={() => void refetch()} />
+      )}
       {data && <ReportTable headers={headers} rows={rows} />}
     </Card>
   );
@@ -430,7 +457,7 @@ function LandlordTab() {
   const now = new Date();
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [year, setYear] = useState(now.getFullYear());
-  const { data, isLoading } = useLandlordStatement(month, year);
+  const { data, isLoading, isError, refetch } = useLandlordStatement(month, year);
   const headers = ["Description", "Amount (KES)"];
   const rows = data?.rows?.map((r: Record<string,unknown>) => [r.description, `KES ${Number(r.amount).toLocaleString()}`]) ?? [];
   return (
@@ -445,7 +472,9 @@ function LandlordTab() {
           {data && <ExportBar title={`Landlord Statement ${month}/${year}`} headers={headers} rows={rows} filename={`landlord-${month}-${year}.csv`} />}
         </div>
       </CardHeader>
-      {isLoading ? <Skeleton className="h-48" /> : !data ? null : (
+      {isLoading ? <Skeleton className="h-48" /> : isError ? (
+        <ErrorState title="This statement could not be loaded." onRetry={() => void refetch()} />
+      ) : !data ? null : (
         <div className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-3">
             <SummaryCard label="Total Income" value={`KES ${Number(data.total_income || 0).toLocaleString()}`} tone="sage" />
@@ -461,7 +490,7 @@ function LandlordTab() {
 
 function AnnualTab() {
   const [year, setYear] = useState(new Date().getFullYear());
-  const { data, isLoading } = useAnnualIncome(year);
+  const { data, isLoading, isError, refetch } = useAnnualIncome(year);
   return (
     <Card variant="glass" padding="md">
       <CardHeader>
@@ -471,7 +500,9 @@ function AnnualTab() {
         </div>
         <input type="number" value={year} onChange={(e) => setYear(Number(e.target.value))} className={selectCls + " w-24"} />
       </CardHeader>
-      {isLoading ? <Skeleton className="h-64" /> : data ? (
+      {isLoading ? <Skeleton className="h-64" /> : isError ? (
+        <ErrorState title="Annual income could not be loaded." onRetry={() => void refetch()} />
+      ) : data ? (
         <div className="h-[320px]">
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={data.monthly.map((m: { month: number; total: number }) => ({
@@ -497,7 +528,7 @@ function AnnualTab() {
 }
 
 function ArrearsTab() {
-  const { data, isLoading } = useArrearsReport();
+  const { data, isLoading, isError, refetch } = useArrearsReport();
   const headers = ["Tenant", "Unit", "Period", "Expected", "Paid", "Balance"];
   const rows = data?.arrears.map((a: Record<string,unknown>) => [
     a.tenant, a.unit, a.period,
@@ -512,7 +543,7 @@ function ArrearsTab() {
         </div>
         {data && <ExportBar title="Outstanding Arrears" headers={headers} rows={rows} filename="arrears.csv" />}
       </CardHeader>
-      {isLoading ? <Skeleton className="h-48" /> : <ReportTable headers={headers} rows={rows} />}
+      <ReportTable headers={headers} rows={rows} isLoading={isLoading} isError={isError} onRetry={() => void refetch()} />
     </Card>
   );
 }
@@ -520,7 +551,7 @@ function ArrearsTab() {
 function TenantTab() {
   const [selectedTenant, setSelectedTenant] = useState<string>("");
   const { data: tenants } = useTenants();
-  const { data, isLoading } = useTenantHistory(selectedTenant || null);
+  const { data, isLoading, isError, refetch } = useTenantHistory(selectedTenant || null);
   return (
     <Card variant="glass" padding="md">
       <CardHeader>
@@ -531,6 +562,9 @@ function TenantTab() {
         </select>
       </CardHeader>
       {selectedTenant && isLoading && <Skeleton className="h-48" />}
+      {selectedTenant && isError && (
+        <ErrorState title="This history could not be loaded." onRetry={() => void refetch()} />
+      )}
       {data && (
         <div className="space-y-4">
           <div className="flex flex-wrap items-center gap-3">
@@ -568,14 +602,16 @@ function TenantTab() {
 }
 
 function OccupancyTab() {
-  const { data, isLoading } = useOccupancyReport();
+  const { data, isLoading, isError, refetch } = useOccupancyReport();
   return (
     <Card variant="glass" padding="md">
       <CardHeader>
         <CardTitle>Occupancy Overview</CardTitle>
         {data && <Badge tone="peri">{data.total_units} units total</Badge>}
       </CardHeader>
-      {isLoading ? <Skeleton className="h-48" /> : data ? (
+      {isLoading ? <Skeleton className="h-48" /> : isError ? (
+        <ErrorState title="Occupancy could not be loaded." onRetry={() => void refetch()} />
+      ) : data ? (
         <ReportTable
           headers={["Building", "Total", "Occupied", "Rate"]}
           rows={data.buildings.map((b: { name: string; total: number; occupied: number; rate: number }) => [b.name, b.total, b.occupied, `${b.rate}%`])}
@@ -586,7 +622,7 @@ function OccupancyTab() {
 }
 
 function MoveLogTab() {
-  const { data, isLoading } = useMoveLog();
+  const { data, isLoading, isError, refetch } = useMoveLog();
   const headers = ["Tenant", "Unit", "Move In", "Move Out", "Status"];
   const rows = data?.entries.map((e: { tenant: string; unit: string; move_in: string; move_out: string|null; status: string }) => [
     e.tenant, e.unit, e.move_in, e.move_out || "—", e.status,
@@ -597,7 +633,7 @@ function MoveLogTab() {
         <CardTitle>Move-in / Move-out log</CardTitle>
         {data && <ExportBar title="Move Log" headers={headers} rows={rows} filename="move-log.csv" />}
       </CardHeader>
-      {isLoading ? <Skeleton className="h-48" /> : <ReportTable headers={headers} rows={rows} />}
+      <ReportTable headers={headers} rows={rows} isLoading={isLoading} isError={isError} onRetry={() => void refetch()} />
     </Card>
   );
 }
@@ -612,6 +648,8 @@ function ProfitLossTab() {
   const annual = useProfitLossAnnual(year, building);
   const data = mode === "monthly" ? monthly.data : annual.data;
   const isLoading = mode === "monthly" ? monthly.isLoading : annual.isLoading;
+  const isError = mode === "monthly" ? monthly.isError : annual.isError;
+  const refetch = mode === "monthly" ? monthly.refetch : annual.refetch;
   const exportHeaders = mode === "annual"
     ? ["Month", "Income (KES)", "Expenses (KES)", "Net Profit (KES)"]
     : ["Category", "Amount (KES)"];
@@ -639,6 +677,9 @@ function ProfitLossTab() {
         </div>
       </CardHeader>
       {isLoading && <Skeleton className="h-48" />}
+      {!isLoading && isError && (
+        <ErrorState title="Profit & loss could not be loaded." onRetry={() => void refetch()} />
+      )}
       {!isLoading && data && mode === "monthly" && (
         <div className="space-y-5">
           <div className="grid gap-3 sm:grid-cols-3">
@@ -685,7 +726,7 @@ function TrialBalanceTab() {
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [year, setYear] = useState(now.getFullYear());
   const [building, setBuilding] = useState<number|null>(null);
-  const { data, isLoading } = useTrialBalance(month, year, building);
+  const { data, isLoading, isError, refetch } = useTrialBalance(month, year, building);
   const exportRows = [...(data?.accounts??[]).map((a: { account: string; debit: number; credit: number }) => [a.account, a.debit||"—", a.credit||"—"]),
     ["TOTAL", data?.total_debit??0, data?.total_credit??0]];
   return (
@@ -702,6 +743,9 @@ function TrialBalanceTab() {
         </div>
       </CardHeader>
       {isLoading && <Skeleton className="h-48" />}
+      {isError && !data && (
+        <ErrorState title="Trial balance could not be loaded." onRetry={() => void refetch()} />
+      )}
       {data && (
         <Table>
           <THead><TR><TH>Account</TH><TH className="text-right">Debit</TH><TH className="text-right">Credit</TH></TR></THead>
@@ -730,7 +774,7 @@ function ExpenseBreakdownTab() {
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [year, setYear] = useState(now.getFullYear());
   const [building, setBuilding] = useState<number|null>(null);
-  const { data, isLoading } = useExpenseBreakdown(month, year, building);
+  const { data, isLoading, isError, refetch } = useExpenseBreakdown(month, year, building);
   const exportHeaders = ["Category","Total (KES)","% of Expenses","Entries"];
   const exportRows = data?.categories.map((c: { category: string; total: number; percentage: number; count: number }) => [c.category, c.total, `${c.percentage}%`, c.count]) ?? [];
   return (
@@ -744,6 +788,9 @@ function ExpenseBreakdownTab() {
         </div>
       </CardHeader>
       {isLoading && <Skeleton className="h-48" />}
+      {isError && !data && (
+        <ErrorState title="Expense breakdown could not be loaded." onRetry={() => void refetch()} />
+      )}
       {data && (
         <div className="grid gap-6 lg:grid-cols-2">
           <div className="space-y-4">

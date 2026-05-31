@@ -296,6 +296,104 @@ class Transaction(models.Model):
 
 
 # ---------------------------------------------------------------------------
+# Co-op Bank IPN (Instant Payment Notification) event log
+# ---------------------------------------------------------------------------
+
+class CoopIpnStatus(models.TextChoices):
+    """Outcome of processing a single IPN event."""
+    RECORDED = "recorded", "Recorded"          # matched a tenant; Payment created
+    UNMATCHED = "unmatched", "Unmatched"        # credit we couldn't tie to a tenant
+    DUPLICATE = "duplicate", "Duplicate"        # TransactionId already seen
+    IGNORED = "ignored", "Ignored (non-credit)" # DEBIT/other event, not a reversal
+    REVERSAL_PENDING = "reversal_pending", "Reversal — awaiting authorization"
+    ERROR = "error", "Error"                    # could not parse / process
+
+
+class CoopIpnEvent(models.Model):
+    """
+    A single Instant Payment Notification received from Co-operative Bank.
+
+    Every inbound IPN POST is persisted here verbatim BEFORE any matching is
+    attempted. This gives us three things at once:
+
+      1. Idempotency — `transaction_id` (Co-op's `TransactionId`) is unique, so a
+         re-delivered event is detected and skipped.
+      2. An unmatched-payments review queue — credits we cannot tie to a tenant
+         land here with status=UNMATCHED for an admin to reconcile by hand.
+      3. A raw audit trail — the full payload is kept so reconciliation can be
+         replayed/refined later (and so a parser change can re-process history).
+
+    Records here are an append-only log; they are never mutated except to link
+    the resulting Payment and set the final status during initial processing.
+    """
+
+    transaction_id = models.CharField(
+        max_length=100,
+        unique=True,
+        help_text="Co-op `TransactionId` — the unique reference for this event.",
+    )
+    payment_ref = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="Co-op `PaymentRef` — the unique reference for the payment.",
+    )
+    account_number = models.CharField(
+        max_length=40,
+        blank=True,
+        help_text="`AcctNo` the credit landed in (the institution account).",
+    )
+    amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    event_type = models.CharField(
+        max_length=20,
+        blank=True,
+        help_text="`EventType` from the bank, e.g. CREDIT / DEBIT.",
+    )
+    channel = models.CharField(
+        max_length=10,
+        choices=PaymentSource.choices,
+        blank=True,
+        help_text="Inferred inflow channel (mpesa via Paybill, direct bank, …).",
+    )
+    narration = models.TextField(
+        blank=True,
+        help_text="Raw narration string the bill ref / payer details were parsed from.",
+    )
+    raw_payload = models.JSONField(
+        help_text="The full IPN payload exactly as received.",
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=CoopIpnStatus.choices,
+        default=CoopIpnStatus.ERROR,
+    )
+    detail = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text="Human-readable note on the outcome (why unmatched, error text, …).",
+    )
+    payment = models.ForeignKey(
+        Payment,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="coop_ipn_events",
+        help_text="The Payment created from this event, if any.",
+    )
+    received_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "payments_coop_ipn_event"
+        ordering = ["-received_at"]
+        indexes = [
+            models.Index(fields=["transaction_id"]),
+            models.Index(fields=["status", "-received_at"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"IPN {self.transaction_id} — KES {self.amount} ({self.status})"
+
+
+# ---------------------------------------------------------------------------
 # Notifications (unchanged)
 # ---------------------------------------------------------------------------
 

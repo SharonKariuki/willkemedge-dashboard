@@ -1,9 +1,10 @@
 import { LogOut } from "lucide-react";
-import { Outlet } from "react-router-dom";
+import { Outlet, useLocation } from "react-router-dom";
 
 import { useAuth } from "@/hooks/useAuth";
 import { displayName } from "@/lib/displayName";
 
+import ErrorBoundary from "./ErrorBoundary";
 import GlobalSearch from "./GlobalSearch";
 import MobileNav from "./MobileNav";
 import NotificationBell from "./NotificationBell";
@@ -12,6 +13,7 @@ import { Button } from "./ui";
 
 export default function AuthLayout() {
   const { user, logout } = useAuth();
+  const location = useLocation();
 
   const mappedHandle = displayName(user?.email?.split("@")[0] ?? "");
 
@@ -79,7 +81,11 @@ export default function AuthLayout() {
           {/* Main */}
           <main className="flex-1 px-2.5 pb-28 pt-3 sm:px-4 sm:pt-4 lg:px-6 lg:pb-8">
             <div className="mx-auto max-w-[1400px] animate-fade-up">
-              <Outlet />
+              {/* Keyed by path so a render error in one page is cleared on
+                  navigation and never blanks the whole shell. */}
+              <ErrorBoundary inline key={location.pathname}>
+                <Outlet />
+              </ErrorBoundary>
             </div>
           </main>
 

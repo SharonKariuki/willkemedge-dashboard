@@ -15,14 +15,14 @@ import {
 } from "lucide-react";
 
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { cloneElement, isValidElement, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import toast from "react-hot-toast";
 import { useSearchParams } from "react-router-dom";
 import { z } from "zod";
 
 import {
-  Badge, Button, Card, DatePicker, EmptyState, Input, Modal,
+  Badge, Button, Card, DatePicker, EmptyState, ErrorState, Input, Modal,
   PageHeader, Skeleton, Table, TBody, TD, TH, THead, TR,
 } from "@/components/ui";
 import {
@@ -32,6 +32,7 @@ import {
 } from "@/hooks/useTenants";
 import { useBuildings } from "@/hooks/useBuildings";
 import { useUnits } from "@/hooks/useUnits";
+import { getErrorMessage } from "@/lib/apiError";
 import { cn } from "@/lib/cn";
 import type { KycStatus, TenantDetail } from "@/lib/types";
 import { downloadPdf } from "@/lib/downloadPdf";
@@ -44,10 +45,18 @@ const inputCls =
 function Field({
   label, error, children, className,
 }: { label: string; error?: string; children: React.ReactNode; className?: string }) {
+  const id = useId();
+  // Associate the label with the control for assistive tech. The single child
+  // control receives the generated id (unless it already has one).
+  const control = isValidElement(children)
+    ? cloneElement(children as React.ReactElement<{ id?: string }>, {
+        id: (children as React.ReactElement<{ id?: string }>).props.id ?? id,
+      })
+    : children;
   return (
     <div className={className}>
-      <label className="mb-1 block text-[11px] font-medium uppercase tracking-[0.14em] text-ink-500">{label}</label>
-      {children}
+      <label htmlFor={id} className="mb-1 block text-[11px] font-medium uppercase tracking-[0.14em] text-ink-500">{label}</label>
+      {control}
       {error && <p className="mt-1 text-[11px] text-status-unpaid">{error}</p>}
     </div>
   );
@@ -237,6 +246,44 @@ const createSchema = z.object({
 });
 type CreateFormValues = z.infer<typeof createSchema>;
 
+// ─── Edit / Notice / Move-out schemas ────────────────────────────────────────
+const editSchema = z.object({
+  first_name: z.string().min(1, "Required"),
+  last_name: z.string().min(1, "Required"),
+  kra_pin: z.string().regex(/^[AP]\d{9}[A-Z]$/, "Format: A007523148T").or(z.literal("")).optional(),
+  phone: z.string().min(1, "Required"),
+  email: z.string().email("Enter a valid email").or(z.literal("")).optional(),
+  care_of: z.string().optional(),
+  monthly_rent: z.string().min(1, "Required"),
+  deposit_paid: z.string().optional(),
+  due_day: z.coerce.number().int().min(1).max(31).optional(),
+  deposit_refund_percentage: z.coerce
+    .number({ invalid_type_error: "Enter a number between 0 and 100" })
+    .min(0, "Cannot be below 0")
+    .max(100, "Cannot exceed 100"),
+  emergency_contact: z.string().optional(),
+  emergency_phone: z.string().optional(),
+  notes: z.string().optional(),
+});
+type EditFormValues = z.infer<typeof editSchema>;
+
+const noticeSchema = z.object({
+  notice_date: z.string().min(1, "Required"),
+  intended_move_out_date: z.string().min(1, "Required"),
+  notes: z.string().optional(),
+});
+type NoticeFormValues = z.infer<typeof noticeSchema>;
+
+const moveOutSchema = z.object({
+  move_out_date: z.string().min(1, "Required"),
+  deposit_refund_percentage: z.coerce
+    .number({ invalid_type_error: "Enter a number between 0 and 100" })
+    .min(0, "Cannot be below 0")
+    .max(100, "Cannot exceed 100"),
+  notes: z.string().optional(),
+});
+type MoveOutFormValues = z.infer<typeof moveOutSchema>;
+
 function CreateTenantForm({ onClose }: { onClose: () => void }) {
   const { data: vacantUnits } = useUnits({ status: "vacant" });
   const createTenant = useCreateTenant();
@@ -249,7 +296,7 @@ function CreateTenantForm({ onClose }: { onClose: () => void }) {
       await createTenant.mutateAsync(values as unknown as Record<string, unknown>);
       toast.success("Tenant registered");
       onClose();
-    } catch { toast.error("Failed to register tenant"); }
+    } catch (e) { toast.error(getErrorMessage(e, "Failed to register tenant")); }
   };
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
@@ -312,18 +359,20 @@ function CreateTenantForm({ onClose }: { onClose: () => void }) {
 
 // ─── Tenant Detail Modal ─────────────────────────────────────────────────────
 function TenantDetailModal({ tenantId, onClose }: { tenantId: number; onClose: () => void }) {
-  const { data: tenant, isLoading } = useTenant(tenantId);
+  const { data: tenant, isLoading, isError, refetch } = useTenant(tenantId);
   const updateTenant = useUpdateTenant(tenantId);
   const moveOutNotice = useMoveOutNotice(tenantId);
   const moveOut = useMoveOutTenant(tenantId);
   const [mode, setMode] = useState<"view" | "edit" | "notice" | "moveout">("view");
 
-  const editForm = useForm();
-  const noticeForm = useForm({
+  const editForm = useForm<EditFormValues>({ resolver: zodResolver(editSchema) });
+  const noticeForm = useForm<NoticeFormValues>({
+    resolver: zodResolver(noticeSchema),
     defaultValues: { notice_date: new Date().toISOString().slice(0, 10), intended_move_out_date: "", notes: "" },
   });
-  const moveOutForm = useForm({
-    defaultValues: { move_out_date: new Date().toISOString().slice(0, 10), deposit_refund_percentage: "100", notes: "" },
+  const moveOutForm = useForm<MoveOutFormValues>({
+    resolver: zodResolver(moveOutSchema),
+    defaultValues: { move_out_date: new Date().toISOString().slice(0, 10), deposit_refund_percentage: 100, notes: "" },
   });
 
   const handleDownloadStatement = async () => {
@@ -341,10 +390,10 @@ function TenantDetailModal({ tenantId, onClose }: { tenantId: number; onClose: (
         first_name: tenant.first_name, last_name: tenant.last_name,
         kra_pin: tenant.kra_pin ?? "",
         phone: tenant.phone, email: tenant.email ?? "",
-        care_of: (tenant as unknown as { care_of?: string }).care_of ?? "",
+        care_of: tenant.care_of ?? "",
         monthly_rent: String(tenant.monthly_rent),
         deposit_paid: String(tenant.deposit_paid),
-        deposit_refund_percentage: String(tenant.deposit_refund_percentage ?? "100"),
+        deposit_refund_percentage: tenant.deposit_refund_percentage ?? 100,
         emergency_contact: tenant.emergency_contact ?? "",
         emergency_phone: tenant.emergency_phone ?? "",
         due_day: tenant.due_day ?? 5,
@@ -382,6 +431,13 @@ function TenantDetailModal({ tenantId, onClose }: { tenantId: number; onClose: (
     >
         <div className="space-y-5">
           {isLoading && <div className="space-y-3">{Array.from({length:4}).map((_,i) => <div key={i} className="h-8 rounded bg-ink-100 animate-pulse" />)}</div>}
+          {isError && !tenant && (
+            <ErrorState
+              title="This tenant could not be loaded."
+              description="The record did not come back. This is usually temporary."
+              onRetry={() => void refetch()}
+            />
+          )}
           {tenant && mode === "view" && (
             <>
               <div className="flex items-center gap-4">
@@ -424,12 +480,12 @@ function TenantDetailModal({ tenantId, onClose }: { tenantId: number; onClose: (
                 <p className="text-[11px] font-medium uppercase tracking-wider text-ink-500 mb-3">Payment Analytics</p>
                 <div className="grid grid-cols-2 gap-3">
                   <div className="rounded-md bg-white p-3 text-center dark:bg-ink-800">
-                    <p className="font-display text-xl font-semibold text-sage-700">KES {((tenant as unknown as Record<string,unknown>).total_paid as number ?? 0).toLocaleString()}</p>
+                    <p className="font-display text-xl font-semibold text-sage-700">KES {(tenant.total_paid ?? 0).toLocaleString()}</p>
                     <p className="text-[11px] text-ink-500">Total paid</p>
                   </div>
                   <div className="rounded-md bg-white p-3 text-center dark:bg-ink-800">
-                    <p className={`font-display text-xl font-semibold ${((tenant as unknown as Record<string,unknown>).total_arrears as number ?? 0) > 0 ? "text-status-unpaid" : "text-sage-700"}`}>
-                      KES {((tenant as unknown as Record<string,unknown>).total_arrears as number ?? 0).toLocaleString()}
+                    <p className={`font-display text-xl font-semibold ${(tenant.total_arrears ?? 0) > 0 ? "text-status-unpaid" : "text-sage-700"}`}>
+                      KES {(tenant.total_arrears ?? 0).toLocaleString()}
                     </p>
                     <p className="text-[11px] text-ink-500">Arrears</p>
                   </div>
@@ -441,20 +497,20 @@ function TenantDetailModal({ tenantId, onClose }: { tenantId: number; onClose: (
           {tenant && mode === "edit" && (
             <form onSubmit={editForm.handleSubmit(async (v) => {
               try { await updateTenant.mutateAsync(v as unknown as Record<string, unknown>); toast.success("Updated"); setMode("view"); }
-              catch { toast.error("Failed to update"); }
+              catch (e) { toast.error(getErrorMessage(e, "Failed to update tenant")); }
             })} className="space-y-4">
               <p className="font-medium text-ink-900">Edit Tenant Details</p>
               <div className="grid gap-3 sm:grid-cols-2">
-                <Field label="First name"><input {...editForm.register("first_name")} className={inputCls} /></Field>
-                <Field label="Last name"><input {...editForm.register("last_name")} className={inputCls} /></Field>
-                <Field label="KRA PIN"><input {...editForm.register("kra_pin")} className={inputCls} placeholder="A007523148T" /></Field>
-                <Field label="Phone"><input {...editForm.register("phone")} className={inputCls} /></Field>
-                <Field label="Email"><input {...editForm.register("email")} className={inputCls} /></Field>
-                <Field label="Monthly rent (KES)"><input {...editForm.register("monthly_rent")} className={inputCls} /></Field>
+                <Field label="First name" error={editForm.formState.errors.first_name?.message}><input {...editForm.register("first_name")} className={inputCls} /></Field>
+                <Field label="Last name" error={editForm.formState.errors.last_name?.message}><input {...editForm.register("last_name")} className={inputCls} /></Field>
+                <Field label="KRA PIN" error={editForm.formState.errors.kra_pin?.message}><input {...editForm.register("kra_pin")} className={inputCls} placeholder="A007523148T" /></Field>
+                <Field label="Phone" error={editForm.formState.errors.phone?.message}><input {...editForm.register("phone")} className={inputCls} /></Field>
+                <Field label="Email" error={editForm.formState.errors.email?.message}><input {...editForm.register("email")} className={inputCls} /></Field>
+                <Field label="Monthly rent (KES)" error={editForm.formState.errors.monthly_rent?.message}><input {...editForm.register("monthly_rent")} className={inputCls} /></Field>
                 <Field label="Deposit paid (KES)"><input {...editForm.register("deposit_paid")} className={inputCls} /></Field>
-                <Field label="Rent Due Day (1-31)"><input type="number" min={1} max={31} {...editForm.register("due_day")} className={inputCls} /></Field>
+                <Field label="Rent Due Day (1-31)" error={editForm.formState.errors.due_day?.message}><input type="number" min={1} max={31} {...editForm.register("due_day")} className={inputCls} /></Field>
 
-                <Field label="Deposit refund % (for move-out)">
+                <Field label="Deposit refund % (for move-out)" error={editForm.formState.errors.deposit_refund_percentage?.message}>
                   <input type="number" min={0} max={100} {...editForm.register("deposit_refund_percentage")} className={inputCls} />
                 </Field>
                 <Field label="Emergency contact"><input {...editForm.register("emergency_contact")} className={inputCls} /></Field>
@@ -471,13 +527,13 @@ function TenantDetailModal({ tenantId, onClose }: { tenantId: number; onClose: (
           )}
           {tenant && mode === "notice" && (
             <form onSubmit={noticeForm.handleSubmit(async (v) => {
-              try { await moveOutNotice.mutateAsync(v as { notice_date: string; intended_move_out_date: string; notes?: string }); toast.success("Notice recorded"); setMode("view"); }
-              catch { toast.error("Failed"); }
+              try { await moveOutNotice.mutateAsync({ notice_date: v.notice_date, intended_move_out_date: v.intended_move_out_date, notes: v.notes }); toast.success("Notice recorded"); setMode("view"); }
+              catch (e) { toast.error(getErrorMessage(e, "Failed to record notice")); }
             })} className="space-y-4">
               <p className="font-medium text-ink-900">Record Move-out Notice</p>
               <div className="grid gap-3 sm:grid-cols-2">
-                <DatePicker label="Notice date *" {...noticeForm.register("notice_date")} />
-                <DatePicker label="Intended move-out date *" {...noticeForm.register("intended_move_out_date")} />
+                <DatePicker label="Notice date *" {...noticeForm.register("notice_date")} error={noticeForm.formState.errors.notice_date?.message} />
+                <DatePicker label="Intended move-out date *" {...noticeForm.register("intended_move_out_date")} error={noticeForm.formState.errors.intended_move_out_date?.message} />
               </div>
               <Field label="Notes"><textarea {...noticeForm.register("notes")} rows={2} className={inputCls} /></Field>
               <div className="flex justify-end gap-2">
@@ -489,21 +545,21 @@ function TenantDetailModal({ tenantId, onClose }: { tenantId: number; onClose: (
           {tenant && mode === "moveout" && (
             <form onSubmit={moveOutForm.handleSubmit(async (v) => {
               try {
-                await moveOut.mutateAsync({ move_out_date: v.move_out_date, notes: v.notes, deposit_refund_percentage: Number(v.deposit_refund_percentage) });
+                await moveOut.mutateAsync({ move_out_date: v.move_out_date, notes: v.notes, deposit_refund_percentage: v.deposit_refund_percentage });
                 toast.success("Tenant moved out"); onClose();
-              } catch { toast.error("Failed to process move-out"); }
+              } catch (e) { toast.error(getErrorMessage(e, "Failed to process move-out")); }
             })} className="space-y-4">
               <div className="rounded-md bg-status-unpaid/8 p-3 text-sm text-status-unpaid flex items-center gap-2">
                 <AlertTriangle className="h-4 w-4 shrink-0" />
                 This will move the tenant out and free up the unit.
               </div>
-              <DatePicker label="Move-out date *" {...moveOutForm.register("move_out_date")} />
-              <Field label="Deposit refund %">
+              <DatePicker label="Move-out date *" {...moveOutForm.register("move_out_date")} error={moveOutForm.formState.errors.move_out_date?.message} />
+              <Field label="Deposit refund %" error={moveOutForm.formState.errors.deposit_refund_percentage?.message}>
                 <input type="number" min={0} max={100} step={1} {...moveOutForm.register("deposit_refund_percentage")} className={inputCls} />
-                <p className="mt-1 text-[11px] text-ink-500">
-                  Deposit paid: KES {Number(tenant.deposit_paid).toLocaleString()}. Set to 0% if all forfeited due to damage.
-                </p>
               </Field>
+              <p className="-mt-2 text-[11px] text-ink-500">
+                Deposit paid: KES {Number(tenant.deposit_paid).toLocaleString()}. Set to 0% if all forfeited due to damage.
+              </p>
               <Field label="Notes"><textarea {...moveOutForm.register("notes")} rows={2} className={inputCls} /></Field>
               <div className="flex justify-end gap-2">
                 <Button type="button" variant="ghost" onClick={() => setMode("view")}>Cancel</Button>
@@ -534,7 +590,7 @@ export default function TenantsPage() {
   if (buildingFilter) filters.building = buildingFilter;
   if (search) filters.search = search;
 
-  const { data: tenants, isLoading } = useTenants(filters);
+  const { data: tenants, isLoading, isError, refetch } = useTenants(filters);
   const { data: buildings } = useBuildings();
 
   // Build building filter tabs from actual buildings
@@ -588,9 +644,10 @@ export default function TenantsPage() {
         <div className="flex flex-col gap-3">
           <Input leftIcon={<Search className="h-4 w-4" />} placeholder="Search by name, ID, phone…" value={search} onChange={(e) => setSearch(e.target.value)} />
           {/* Building tabs */}
-          <div className="flex flex-wrap gap-1.5">
+          <div className="flex flex-wrap gap-1.5" role="group" aria-label="Filter by building">
             {buildingTabs.map((b) => (
               <button key={String(b.id)} onClick={() => setBuildingFilter(b.id as "" | number)}
+                aria-pressed={buildingFilter === b.id}
                 className={cn("rounded-full px-3 py-1.5 text-xs font-medium transition-all",
                   buildingFilter === b.id ? "bg-ink-900 text-canvas shadow-float" : "glass text-ink-700")}>
                 {b.name}
@@ -598,9 +655,10 @@ export default function TenantsPage() {
             ))}
           </div>
           {/* Status tabs */}
-          <div className="flex flex-wrap gap-1.5">
+          <div className="flex flex-wrap gap-1.5" role="group" aria-label="Filter by status">
             {STATUSES.map((s) => (
               <button key={s.value} onClick={() => setStatusFilter(s.value)}
+                aria-pressed={statusFilter === s.value}
                 className={cn("rounded-full px-3 py-1.5 text-xs font-medium transition-all",
                   statusFilter === s.value ? "bg-ochre-500 text-ink-900 shadow-float" : "glass text-ink-700")}>
                 {s.label}
@@ -608,9 +666,10 @@ export default function TenantsPage() {
             ))}
           </div>
           {/* KYC tabs */}
-          <div className="flex flex-wrap gap-1.5">
+          <div className="flex flex-wrap gap-1.5" role="group" aria-label="Filter by KYC status">
             {KYC_FILTERS.map((s) => (
               <button key={s.value} onClick={() => setKycFilter(s.value)}
+                aria-pressed={kycFilter === s.value}
                 className={cn("flex items-center gap-1 rounded-full px-3 py-1.5 text-xs font-medium transition-all",
                   kycFilter === s.value ? "bg-ink-900 text-canvas shadow-float" : "glass text-ink-700")}>
                 {s.value === "pending" && <ShieldCheck className="h-3 w-3" />}
@@ -625,6 +684,12 @@ export default function TenantsPage() {
 
         {isLoading ? (
           <div className="space-y-2">{Array.from({length:5}).map((_,i) => <Skeleton key={i} className="h-14" />)}</div>
+        ) : isError ? (
+          <ErrorState
+            title="Tenants could not be loaded."
+            description="The tenant list did not come back. This is usually temporary."
+            onRetry={() => void refetch()}
+          />
         ) : !tenants?.length ? (
           <EmptyState icon={<UserPlus className="h-5 w-5" />} title="No tenants found" description="Try a different filter or register your first tenant." />
         ) : (
@@ -647,7 +712,20 @@ export default function TenantsPage() {
                 </THead>
                 <TBody>
                   {tenants.map((t) => (
-                    <TR key={t.id} className="cursor-pointer hover:bg-ink-50/60 dark:hover:bg-ink-800/30" onClick={() => setSelectedTenantId(t.id)}>
+                    <TR
+                      key={t.id}
+                      className="cursor-pointer hover:bg-ink-50/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ochre-500/40 dark:hover:bg-ink-800/30"
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`View ${t.full_name}`}
+                      onClick={() => setSelectedTenantId(t.id)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          setSelectedTenantId(t.id);
+                        }
+                      }}
+                    >
                       <TD>
                         <div className="flex items-center gap-3">
                           <img src={avatarFor(t.full_name)} alt="" aria-hidden className="h-9 w-9 rounded-full" />
@@ -676,7 +754,22 @@ export default function TenantsPage() {
             {/* Mobile cards */}
             <div className="grid gap-3 md:hidden">
               {tenants.map((t) => (
-                <Card key={t.id} variant="glass" padding="sm" className="cursor-pointer" onClick={() => setSelectedTenantId(t.id)}>
+                <Card
+                  key={t.id}
+                  variant="glass"
+                  padding="sm"
+                  className="cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ochre-500/40"
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`View ${t.full_name}`}
+                  onClick={() => setSelectedTenantId(t.id)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setSelectedTenantId(t.id);
+                    }
+                  }}
+                >
                   <div className="flex items-start gap-3">
                     <img src={avatarFor(t.full_name)} alt="" aria-hidden className="h-10 w-10 rounded-full" />
                     <div className="min-w-0 flex-1">

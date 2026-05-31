@@ -26,7 +26,14 @@ export const authStorage = {
   },
   getUser(): StoredUser | null {
     const raw = localStorage.getItem(USER_KEY);
-    return raw ? (JSON.parse(raw) as StoredUser) : null;
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw) as StoredUser;
+    } catch {
+      // Corrupt/partial value — drop it rather than crash the app on load.
+      localStorage.removeItem(USER_KEY);
+      return null;
+    }
   },
   setSession(access: string, refresh: string, user: StoredUser) {
     localStorage.setItem(ACCESS_KEY, access);

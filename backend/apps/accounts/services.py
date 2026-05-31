@@ -48,3 +48,20 @@ def is_locked_out(email: str) -> bool:
         attempted_at__gte=cutoff,
     ).count()
     return failed_count >= LOCKOUT_THRESHOLD
+
+
+def clear_failed_attempts(email: str) -> int:
+    """Reset the rolling failed-attempt window for an email after a success.
+
+    A user who fails a few times and then authenticates correctly should not
+    remain one slip away from a lockout. We mark the in-window failed attempts
+    as resolved by deleting them (the successful LoginAttempt row remains as
+    the audit record). Returns the number of failed rows cleared.
+    """
+    cutoff = timezone.now() - LOCKOUT_WINDOW
+    deleted, _ = LoginAttempt.objects.filter(
+        email=email.lower().strip(),
+        successful=False,
+        attempted_at__gte=cutoff,
+    ).delete()
+    return deleted

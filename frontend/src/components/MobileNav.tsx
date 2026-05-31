@@ -96,7 +96,9 @@ export default function MobileNav() {
       {/* Overflow drawer */}
       {open && (
         <>
-          <div
+          <button
+            type="button"
+            aria-label="Close menu"
             className="fixed inset-0 z-50 bg-ink-900/30 backdrop-blur-sm lg:hidden"
             onClick={() => setOpen(false)}
           />

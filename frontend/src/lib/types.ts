@@ -96,6 +96,7 @@ export interface TenantListItem {
   unit: number;
   unit_label: string;
   building_name: string;
+  building_id: number;
   monthly_rent: string;
   deposit_paid: string;
   status: TenantStatus;
@@ -111,6 +112,8 @@ export interface TenantDetail extends TenantListItem {
   id_number: string;
   kra_pin: string;
   email: string;
+  /** Name printed on the rent statement, e.g. a guarantor or company. */
+  care_of: string;
   emergency_contact: string;
   emergency_phone: string;
   deposit_paid: string;
@@ -121,6 +124,9 @@ export interface TenantDetail extends TenantListItem {
   intended_move_out_date: string | null;
   move_out_notes: string;
   notes: string;
+  /** Payment analytics — serialized as numbers (float) by the backend. */
+  total_paid: number;
+  total_arrears: number;
   // KYC
   kyc_complete: boolean;
   kyc_missing_items: string[];

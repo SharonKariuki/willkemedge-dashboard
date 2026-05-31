@@ -89,6 +89,33 @@ class AuthFlowTests(APITestCase):
         assert response.status_code == status.HTTP_429_TOO_MANY_REQUESTS
         assert "locked" in response.json()["detail"].lower()
 
+    def test_successful_login_resets_failed_attempt_window(self):
+        # A few failed attempts (below threshold)...
+        for _ in range(LOCKOUT_THRESHOLD - 1):
+            self.client.post(
+                self.login_url,
+                {"email": "william@gmail.com", "password": "wrong"},
+                format="json",
+            )
+        assert LoginAttempt.objects.filter(
+            email="william@gmail.com", successful=False
+        ).count() == LOCKOUT_THRESHOLD - 1
+
+        # ...then a success clears the in-window failures.
+        ok = self.client.post(
+            self.login_url,
+            {"email": "william@gmail.com", "password": self.password},
+            format="json",
+        )
+        assert ok.status_code == status.HTTP_200_OK
+        assert LoginAttempt.objects.filter(
+            email="william@gmail.com", successful=False
+        ).count() == 0
+        # The successful audit row survives.
+        assert LoginAttempt.objects.filter(
+            email="william@gmail.com", successful=True
+        ).count() == 1
+
     def test_refresh_endpoint_issues_new_access_token(self):
         login_resp = self.client.post(
             self.login_url,

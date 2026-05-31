@@ -122,6 +122,74 @@ class PaymentProcessingTests(APITestCase):
         assert arrears.balance == Decimal("0")
         assert arrears.amount_paid == Decimal("15000")
 
+    # --- Waiver preservation (M1) --------------------------------------
+
+    def test_waiver_not_reversed_by_later_payment(self):
+        """A partial-period waiver must survive a subsequent payment."""
+        month, year = self._now()
+        # Tenant pays 4000 of 10000 → 6000 outstanding.
+        process_payment(
+            tenant=self.tenant,
+            amount=Decimal("4000"),
+            payment_date=timezone.now().date(),
+            period_month=month,
+            period_year=year,
+        )
+        arrears = Arrears.objects.get(tenant=self.tenant, period_month=month, period_year=year)
+        assert arrears.balance == Decimal("6000")
+
+        # Admin waives the remaining 6000 (mirrors the waive endpoint).
+        arrears.waived_amount = arrears.balance
+        arrears.balance = Decimal("0")
+        arrears.is_cleared = True
+        arrears.waive_notes = "Goodwill waiver"
+        arrears.save()
+
+        # A later payment for the same period must NOT reverse the waiver.
+        process_payment(
+            tenant=self.tenant,
+            amount=Decimal("1000"),
+            payment_date=timezone.now().date(),
+            period_month=month,
+            period_year=year,
+        )
+        arrears.refresh_from_db()
+        # paid = 5000, waived = 6000, expected = 10000 → fully covered.
+        assert arrears.waived_amount == Decimal("6000")
+        assert arrears.waive_notes == "Goodwill waiver"
+        assert arrears.is_cleared
+        assert arrears.balance == Decimal("0")
+
+    def test_partial_waiver_balance_accounts_for_payment(self):
+        """Balance after a payment should net out paid + waived against rent."""
+        month, year = self._now()
+        process_payment(
+            tenant=self.tenant,
+            amount=Decimal("2000"),
+            payment_date=timezone.now().date(),
+            period_month=month,
+            period_year=year,
+        )
+        arrears = Arrears.objects.get(tenant=self.tenant, period_month=month, period_year=year)
+        # Waive 3000 only (partial); 10000 - 2000 - 3000 = 5000 still owed.
+        arrears.waived_amount = Decimal("3000")
+        arrears.balance = Decimal("5000")
+        arrears.is_cleared = False
+        arrears.save()
+
+        # Record another 1000 → paid 3000, waived 3000 → balance 4000.
+        process_payment(
+            tenant=self.tenant,
+            amount=Decimal("1000"),
+            payment_date=timezone.now().date(),
+            period_month=month,
+            period_year=year,
+        )
+        arrears.refresh_from_db()
+        assert arrears.waived_amount == Decimal("3000")
+        assert arrears.balance == Decimal("4000")
+        assert not arrears.is_cleared
+
     # --- API-level tests -----------------------------------------------
 
     def test_create_payment_via_api(self):

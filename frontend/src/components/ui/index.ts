@@ -6,6 +6,7 @@ export { Input } from "./Input";
 export { Stat } from "./Stat";
 export { Skeleton } from "./Skeleton";
 export { EmptyState } from "./EmptyState";
+export { ErrorState } from "./ErrorState";
 export { Table, THead, TBody, TR, TH, TD } from "./Table";
 export { PageHeader } from "./PageHeader";
 export { DatePicker } from "./DatePicker";

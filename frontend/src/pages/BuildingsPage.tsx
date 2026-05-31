@@ -11,7 +11,7 @@ import {
   Trash2,
   Wrench,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { cloneElement, isValidElement, useEffect, useId, useState } from "react";
 import { useFieldArray, useForm } from "react-hook-form";
 import toast from "react-hot-toast";
 import { useSearchParams } from "react-router-dom";
@@ -24,6 +24,7 @@ import {
   Card,
   DatePicker,
   EmptyState,
+  ErrorState,
   Input,
   Modal,
   PageHeader,
@@ -37,6 +38,7 @@ import {
   useDeleteBuilding,
   useUpdateBuilding,
 } from "@/hooks/useBuildings";
+import { getErrorMessage } from "@/lib/apiError";
 import { cn } from "@/lib/cn";
 import { propertyImage } from "@/lib/images";
 import type { Building, Unit, UnitType } from "@/lib/types";
@@ -57,7 +59,10 @@ const unitRowSchema = z.object({
   label: z.string().min(1, "Label required"),
   floor: z.coerce.number().int().min(0),
   unit_type: z.string().min(1),
-  classification: z.string().min(1).default("RESIDENTIAL"),
+  // No .default() here: it makes the schema's input and output types diverge,
+  // which broke the zodResolver typing (previously suppressed with `as any`).
+  // The form always supplies a value via defaultUnit().
+  classification: z.string().min(1),
   monthly_rent: z.coerce.number().min(1, "Rent required"),
   notes: z.string().optional(),
 });
@@ -89,12 +94,18 @@ function Field({
   children: React.ReactNode;
   className?: string;
 }) {
+  const id = useId();
+  const control = isValidElement(children)
+    ? cloneElement(children as React.ReactElement<{ id?: string }>, {
+        id: (children as React.ReactElement<{ id?: string }>).props.id ?? id,
+      })
+    : children;
   return (
     <div className={className}>
-      <label className="mb-1 block text-[11px] font-medium uppercase tracking-[0.14em] text-gray-600">
+      <label htmlFor={id} className="mb-1 block text-[11px] font-medium uppercase tracking-[0.14em] text-gray-600">
         {label}
       </label>
-      {children}
+      {control}
       {error && <p className="mt-1 text-[11px] text-red-600">{error}</p>}
     </div>
   );
@@ -229,8 +240,8 @@ function StepUnits({
     control,
     watch,
     formState: { errors },
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  } = useForm<UnitsFormValues>({ resolver: zodResolver(unitsSchema) as any,
+  } = useForm<UnitsFormValues>({
+    resolver: zodResolver(unitsSchema),
     defaultValues: { units: Array.from({ length: count }, (_, i) => defaultUnit(i)) },
   });
   const { fields, append, remove } = useFieldArray({ control, name: "units" });
@@ -462,8 +473,8 @@ function CreateBuildingWizard({ onClose }: { onClose: () => void }) {
       setCreatedId(created.id);
       setBuildingData(values);
       setStep(2);
-    } catch {
-      toast.error("Failed to create building. Name must be unique.");
+    } catch (e) {
+      toast.error(getErrorMessage(e, "Failed to create building. The name must be unique."));
     }
   };
 
@@ -487,8 +498,8 @@ function CreateBuildingWizard({ onClose }: { onClose: () => void }) {
       );
       toast.success(`Building created with ${unitsData.length} unit${unitsData.length !== 1 ? "s" : ""}`);
       onClose();
-    } catch {
-      toast.error("Units failed to save. Building was created — add units from edit view.");
+    } catch (e) {
+      toast.error(getErrorMessage(e, "Units failed to save. The building was created — add units from the edit view."));
     }
   };
 
@@ -808,8 +819,8 @@ function EditBuildingForm({ building, onDone }: { building: Building; onDone: ()
       await updateBuilding.mutateAsync(values);
       toast.success("Building updated");
       onDone();
-    } catch {
-      toast.error("Failed to update building");
+    } catch (e) {
+      toast.error(getErrorMessage(e, "Failed to update building"));
     }
   };
   return (
@@ -1045,7 +1056,7 @@ function BuildingCard({ building }: { building: Building & { units?: Unit[] } })
 
 // ─── Main ───────────────────────────────────────────────────────────────────
 export default function BuildingsPage() {
-  const { data: buildings, isLoading } = useBuildings();
+  const { data: buildings, isLoading, isError, refetch } = useBuildings();
   const [searchParams] = useSearchParams();
   const [showWizard, setShowWizard] = useState(false);
   const [search, setSearch] = useState(searchParams.get("q") ?? "");
@@ -1091,6 +1102,14 @@ export default function BuildingsPage() {
               <Skeleton key={i} className="h-80" />
             ))}
           </div>
+        ) : isError ? (
+          <Card variant="glass" padding="none" className="py-4">
+            <ErrorState
+              title="Buildings could not be loaded."
+              description="Your properties did not come back. This is usually temporary."
+              onRetry={() => void refetch()}
+            />
+          </Card>
         ) : !filtered.length ? (
           <Card variant="glass" padding="none" className="py-4">
             <EmptyState

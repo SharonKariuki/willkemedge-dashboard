@@ -128,7 +128,7 @@ REST_FRAMEWORK = {
     "DEFAULT_THROTTLE_RATES": {
         "anon": "20/minute",
         "user": "120/minute",
-        "mpesa_webhook": "60/minute",
+        "coop_ipn": "120/minute",
     },
     "DEFAULT_RENDERER_CLASSES": (
         "rest_framework.renderers.JSONRenderer",
@@ -179,17 +179,11 @@ CELERY_TIMEZONE = "Africa/Nairobi"
 CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
 
 # ---------------------------------------------------------------------------
-# M-Pesa Daraja
+# Payment reference parsing
 # ---------------------------------------------------------------------------
-MPESA_CONSUMER_KEY = config("MPESA_CONSUMER_KEY", default="")
-MPESA_CONSUMER_SECRET = config("MPESA_CONSUMER_SECRET", default="")
-MPESA_SHORTCODE = config("MPESA_SHORTCODE", default="")
-MPESA_ENV = config("MPESA_ENV", default="sandbox")
-MPESA_CONFIRM_URL = config("MPESA_CONFIRM_URL", default="")
-MPESA_VALIDATE_URL = config("MPESA_VALIDATE_URL", default="")
 # Paybill account-number prefix: tenants pay "<prefix>#<house number>"
-# (e.g. "90290#A12"). The C2B webhook strips this prefix to recover the bare
-# house number, which must equal a Unit.label. Override via env if it changes.
+# (e.g. "90290#A12"). The IPN narration parser strips this prefix to recover the
+# bare house number, which must equal a Unit.label. Override via env if it changes.
 MPESA_ACCOUNT_PREFIX = config("MPESA_ACCOUNT_PREFIX", default="90290")
 
 # ---------------------------------------------------------------------------
@@ -214,7 +208,38 @@ DEFAULT_FROM_EMAIL = config("DEFAULT_FROM_EMAIL", default="Wilkem Ventures <wilk
 FRONTEND_URL = config("FRONTEND_URL", default="http://localhost:5173")
 
 # ---------------------------------------------------------------------------
+# Content-Security-Policy
+# ---------------------------------------------------------------------------
+# Extra origins (beyond 'self') allowed for connect-src (XHR/fetch/WebSocket).
+# In dev we include the local API; in production set CSP_CONNECT_SRC to the
+# real API origin(s) — do NOT leave localhost in here.
+CSP_CONNECT_SRC = config(
+    "CSP_CONNECT_SRC",
+    default="" if not DEBUG else "http://localhost:8000",
+    cast=Csv(),
+)
+
+# ---------------------------------------------------------------------------
 # Bank webhook
 # ---------------------------------------------------------------------------
-BANK_WEBHOOK_SECRET = config("BANK_WEBHOOK_SECRET", default="")
-BANK_API_KEY = config("BANK_API_KEY", default="")
+# ---------------------------------------------------------------------------
+# Co-operative Bank IPN (Instant Payment Notification)
+# ---------------------------------------------------------------------------
+# Bearer token Co-op presents on each IPN POST (Authorization: Bearer <token>).
+# Generate a strong random value and share it with the bank; keep it secret.
+COOP_IPN_TOKEN = config("COOP_IPN_TOKEN", default="")
+# The institution account (behind Paybill 400222) credits are expected on.
+# Credits to any other AcctNo are ignored, not booked as rent.
+COOP_ACCOUNT_NUMBER = config("COOP_ACCOUNT_NUMBER", default="")
+# Optional defence-in-depth: comma-separated source IPs Co-op posts from.
+# Empty = allow all (until Co-op shares their range).
+COOP_IPN_ALLOWED_IPS = config("COOP_IPN_ALLOWED_IPS", default="", cast=Csv())
+# Dev-only escape hatch: skip bearer auth when DEBUG and this is explicitly set.
+ALLOW_INSECURE_COOP_IPN = config("ALLOW_INSECURE_COOP_IPN", default=False, cast=bool)
+# Admin alerted (SMS + email) when an IPN credit can't be auto-matched/errors.
+ADMIN_ALERT_PHONE = config("ADMIN_ALERT_PHONE", default="")
+ADMIN_ALERT_EMAIL = config("ADMIN_ALERT_EMAIL", default="")
+# Authorising director (Dr. Osoro) — alerted to authorize bank reversals.
+# Falls back to ADMIN_ALERT_* if unset.
+DIRECTOR_ALERT_PHONE = config("DIRECTOR_ALERT_PHONE", default="")
+DIRECTOR_ALERT_EMAIL = config("DIRECTOR_ALERT_EMAIL", default="")

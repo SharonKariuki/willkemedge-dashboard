@@ -4,6 +4,8 @@ Tenant lifecycle operations.
 move_in_tenant:  Assign tenant to unit → unit status → OCCUPIED_UNPAID.
 move_out_tenant: Record move-out date → unit status → VACANT → tenant archived.
 """
+import os
+import re
 from datetime import date
 
 from django.db import transaction
@@ -19,6 +21,9 @@ ALLOWED_FILE_TYPES = {
     "image/png",
     "image/webp",
 }
+# Extension allowlist — defence in depth alongside the content-type check,
+# since the browser-supplied MIME type cannot be trusted.
+ALLOWED_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png", ".webp"}
 MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MB
 
 
@@ -26,17 +31,47 @@ class FileValidationError(Exception):
     pass
 
 
-def validate_upload(file) -> None:
-    """Validate uploaded file type and size."""
+def sanitize_filename(filename: str) -> str:
+    """Strip path components and unsafe characters from an uploaded filename.
+
+    Rejects nothing on its own — always returns a safe basename. Path
+    separators and traversal sequences are removed so the value can never
+    escape its intended directory or be interpreted as a path.
+    """
+    # Take the basename only — defeats "../../etc/passwd" and "C:\foo\bar".
+    name = os.path.basename(str(filename or "").replace("\\", "/"))
+    # Collapse anything that isn't a safe filename character.
+    name = re.sub(r"[^A-Za-z0-9._-]", "_", name)
+    # Strip leading dots/dashes that could hide the name or form options.
+    name = name.lstrip(".-")
+    return name or "upload"
+
+
+def validate_upload(file) -> str:
+    """Validate uploaded file type, extension, and size.
+
+    Returns the sanitized filename so callers can store it safely.
+    Raises FileValidationError on any violation.
+    """
     if file.content_type not in ALLOWED_FILE_TYPES:
         raise FileValidationError(
             f"File type '{file.content_type}' not allowed. "
             f"Accepted: PDF, JPEG, PNG, WebP."
         )
+
+    safe_name = sanitize_filename(file.name)
+    ext = os.path.splitext(safe_name)[1].lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        raise FileValidationError(
+            f"File extension '{ext or '(none)'}' not allowed. "
+            f"Accepted: PDF, JPEG, PNG, WebP."
+        )
+
     if file.size > MAX_FILE_SIZE:
         raise FileValidationError(
             f"File too large ({file.size / 1024 / 1024:.1f} MB). Max: 5 MB."
         )
+    return safe_name
 
 
 @transaction.atomic
