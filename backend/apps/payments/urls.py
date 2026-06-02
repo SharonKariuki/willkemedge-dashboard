@@ -4,6 +4,7 @@ from rest_framework.routers import DefaultRouter
 
 from .coop_ipn import CoopIpnView
 from .notification_views import NotificationViewSet
+from .reconciliation_views import DailyReconciliationTriggerView
 from .views import ArrearsViewSet, PaymentViewSet, TransactionViewSet
 
 router = DefaultRouter()
@@ -17,4 +18,5 @@ app_name = "payments"
 urlpatterns = [
     path("", include(router.urls)),
     path("payments/coop/ipn/", CoopIpnView.as_view(), name="coop-ipn"),
+    path("payments/coop/reconcile-daily/", DailyReconciliationTriggerView.as_view(), name="coop-reconcile-daily"),
 ]

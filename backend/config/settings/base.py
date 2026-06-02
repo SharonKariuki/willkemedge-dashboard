@@ -246,3 +246,7 @@ DIRECTOR_ALERT_EMAIL = config("DIRECTOR_ALERT_EMAIL", default="")
 # Login email of the director — only this user may click "Authorize reversal"
 # in admin. Falls back to superuser-only when blank.
 DIRECTOR_EMAIL = config("DIRECTOR_EMAIL", default="")
+# Shared secret that authorises HTTP-triggered runs of the daily reconciliation
+# summary (used by free external schedulers like cron-job.org so we don't need
+# Render's paid Cron Job).
+RECONCILIATION_TRIGGER_TOKEN = config("RECONCILIATION_TRIGGER_TOKEN", default="")
