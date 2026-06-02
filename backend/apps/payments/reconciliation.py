@@ -67,38 +67,84 @@ def build_daily_reconciliation_summary(target: dt.date | None = None) -> dict[st
     }
 
 
-def _label(status: str) -> str:
-    return dict(CoopIpnStatus.choices).get(status, status)
+# Plain-English labels so a non-technical reader (Dr. Osoro) understands what
+# happened to each payment without knowing internal status names. Keep these
+# friendly and concrete; avoid "IPN", "event", "credit", etc.
+_FRIENDLY = {
+    CoopIpnStatus.RECORDED: "Matched to a tenant and recorded",
+    CoopIpnStatus.UNMATCHED: "Could not be auto-matched (needs review)",
+    CoopIpnStatus.DUPLICATE: "Duplicate of an earlier payment (already handled)",
+    CoopIpnStatus.IGNORED: "Ignored (bank fees / non-rent)",
+    CoopIpnStatus.REVERSAL_PENDING: "Bank reversal — needs your authorization",
+    CoopIpnStatus.REVERSAL_APPLIED: "Bank reversal applied (with your authorization)",
+    CoopIpnStatus.ERROR: "Could not be processed (needs technical review)",
+}
+
+
+def _friendly(status: str) -> str:
+    return _FRIENDLY.get(status, status.replace("_", " ").capitalize())
+
+
+def _pl(n: int, word: str) -> str:
+    """'1 payment' / '5 payments'."""
+    return f"{n} {word}" if n == 1 else f"{n} {word}s"
 
 
 def render_summary_text(summary: dict[str, Any]) -> str:
-    """Plain-text body suitable for email + SMS (short form)."""
-    lines = [
-        f"Wilkem Edge — Co-op IPN reconciliation for {summary['date']}",
-        "",
-        f"Events:  {summary['total_count']}",
-        f"Total:   KES {summary['total_amount']:,.2f}",
-        f"Needs attention: {summary['needs_attention']}",
-        "",
+    """Plain-language email body. Paragraphs are separated by `\\n\\n` so the
+    HTML wrapper renders each as its own block."""
+    date = summary["date"]
+    total_count = summary["total_count"]
+    total_amount = summary["total_amount"]
+    needs = summary["needs_attention"]
+
+    if total_count == 0:
+        return (
+            "Good morning,\n\n"
+            f"No rent payments came in to Paybill 400222 on {date}.\n\n"
+            "— Wilkem Edge"
+        )
+
+    paragraphs = [
+        "Good morning,",
+        f"Here is the summary of rent payments received for Paybill 400222 on {date}.",
+        f"Total payments received: {total_count}",
+        f"Total amount received: KES {total_amount:,.2f}",
         "Breakdown:",
     ]
-    if not summary["by_status"]:
-        lines.append("  (no IPN events received on this day)")
+    for status in sorted(summary["by_status"].keys()):
+        row = summary["by_status"][status]
+        paragraphs.append(
+            f"• {_friendly(status)} — {_pl(row['count'], 'payment')}, "
+            f"KES {row['total']:,.2f}"
+        )
+
+    if needs:
+        verb = "needs" if needs == 1 else "need"
+        paragraphs.append(
+            f"⚠ {_pl(needs, 'item')} {verb} your attention. "
+            "Please log in to the dashboard to review them — either assign "
+            "the payment to the correct tenant, or authorize the bank reversal."
+        )
     else:
-        for status, row in sorted(summary["by_status"].items()):
-            lines.append(
-                f"  {_label(status):<35} {row['count']:>4}   KES {row['total']:>12,.2f}"
-            )
-    if summary["needs_attention"]:
-        lines.append("")
-        lines.append("Open the dashboard (Admin → Co-op IPN events) and reconcile.")
-    return "\n".join(lines)
+        paragraphs.append("Everything is reconciled — no action needed.")
+
+    paragraphs.append("— Wilkem Edge")
+    return "\n\n".join(paragraphs)
 
 
 def render_summary_sms(summary: dict[str, Any]) -> str:
-    needs = summary["needs_attention"]
-    suffix = f" — {needs} need attention" if needs else " — all clear"
-    return (
-        f"Wilkem IPN {summary['date']}: {summary['total_count']} events, "
-        f"KES {summary['total_amount']:,.0f}{suffix}."
+    """Single-line SMS — short enough to fit in one segment."""
+    date = summary["date"]
+    if summary["total_count"] == 0:
+        return f"Wilkem Edge {date}: no rent payments received."
+    base = (
+        f"Wilkem Edge {date}: "
+        f"{_pl(summary['total_count'], 'payment')}, "
+        f"KES {summary['total_amount']:,.0f}."
     )
+    needs = summary["needs_attention"]
+    if needs:
+        verb = "needs" if needs == 1 else "need"
+        return f"{base} {needs} {verb} your attention — log in to review."
+    return f"{base} All clear, no action needed."

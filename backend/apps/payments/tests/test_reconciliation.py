@@ -64,9 +64,31 @@ def test_summary_aggregates_by_status_and_total():
 def test_summary_text_handles_empty_day():
     summary = build_daily_reconciliation_summary()  # no events
     body = render_summary_text(summary)
-    assert "Events:  0" in body
-    assert "no IPN events received" in body
-    assert "KES 0.00" in body
+    assert "No rent payments came in" in body
+    assert "Wilkem Edge" in body
+
+
+@pytest.mark.django_db
+def test_summary_text_uses_plain_language_no_jargon():
+    yesterday = (timezone.now() - dt.timedelta(days=1)).replace(hour=12)
+    e1 = CoopIpnEvent.objects.create(
+        transaction_id="TX1", amount=Decimal("20000"),
+        status=CoopIpnStatus.RECORDED, raw_payload={},
+    )
+    e2 = CoopIpnEvent.objects.create(
+        transaction_id="TX2", amount=Decimal("500"),
+        status=CoopIpnStatus.UNMATCHED, raw_payload={},
+    )
+    CoopIpnEvent.objects.filter(pk__in=[e1.pk, e2.pk]).update(received_at=yesterday)
+    body = render_summary_text(build_daily_reconciliation_summary())
+    # friendly labels, not internal status names
+    assert "Matched to a tenant and recorded" in body
+    assert "Could not be auto-matched" in body
+    assert "needs your attention" in body
+    # no internal jargon leaks through
+    assert "RECORDED" not in body
+    assert "UNMATCHED" not in body
+    assert "IPN" not in body
 
 
 @pytest.mark.django_db
@@ -78,7 +100,19 @@ def test_summary_sms_flags_needs_attention():
     )
     CoopIpnEvent.objects.filter(pk=ev.pk).update(received_at=yesterday)
     sms = render_summary_sms(build_daily_reconciliation_summary())
-    assert "1 need attention" in sms
+    assert "needs your attention" in sms
+
+
+@pytest.mark.django_db
+def test_summary_sms_all_clear_when_nothing_pending():
+    yesterday = (timezone.now() - dt.timedelta(days=1)).replace(hour=12)
+    ev = CoopIpnEvent.objects.create(
+        transaction_id="TXOK", amount=Decimal("20000"),
+        status=CoopIpnStatus.RECORDED, raw_payload={},
+    )
+    CoopIpnEvent.objects.filter(pk=ev.pk).update(received_at=yesterday)
+    sms = render_summary_sms(build_daily_reconciliation_summary())
+    assert "All clear" in sms
 
 
 # ── HTTP trigger ───────────────────────────────────────────────────────────

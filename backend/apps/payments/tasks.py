@@ -200,7 +200,7 @@ def send_daily_reconciliation(self, target_iso: str | None = None) -> None:
         logger.warning("send_daily_reconciliation: no recipients configured — skipping")
         return
 
-    subject = f"Wilkem Edge — IPN reconciliation {summary['date']}"
+    subject = f"Wilkem Edge — rent collections summary, {summary['date']}"
     html = custom_email_html(subject, body)
 
     try:
