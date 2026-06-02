@@ -16,7 +16,18 @@ import axios, {
 
 import { authStorage } from "./authStorage";
 
-const baseURL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000/api";
+const configuredBaseURL = import.meta.env.VITE_API_BASE_URL;
+
+if (!configuredBaseURL && import.meta.env.PROD) {
+  // A production build with no API URL would silently call localhost and fail
+  // for every user. Make the misconfiguration impossible to miss.
+  throw new Error(
+    "VITE_API_BASE_URL is not set. Production builds must define the API base URL " +
+      "(set it in the deployment environment before building).",
+  );
+}
+
+const baseURL = configuredBaseURL ?? "http://localhost:8000/api";
 
 export const api: AxiosInstance = axios.create({
   baseURL,
@@ -43,7 +54,8 @@ async function refreshAccessToken(): Promise<string | null> {
   try {
     const { data } = await axios.post<{ access: string }>(
       `${baseURL}/auth/refresh/`,
-      { refresh }
+      { refresh },
+      { timeout: 10_000 }
     );
     authStorage.setAccess(data.access);
     return data.access;

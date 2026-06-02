@@ -22,13 +22,14 @@ logger = logging.getLogger(__name__)
 # Task 5.8 / 5.9 — payment confirmation (SMS + email)
 # ---------------------------------------------------------------------------
 
-@shared_task(bind=True, max_retries=3, default_retry_delay=60)
-def send_payment_confirmation(self, payment_id: int) -> None:
+def _notify_tenant_payment(tenant, amount, reference: str, payment_date) -> None:
+    """Send the tenant an SMS + (if they have email) a rent-statement email.
+
+    Shared by send_payment_confirmation (per-Payment) and send_deposit_receipt
+    (per-deposit total, so a FIFO-split credit produces ONE receipt for the full
+    amount rather than one per period chunk). Raises on failure so the caller
+    can retry.
     """
-    Fire SMS to tenant phone and email to tenant email (if set)
-    after a payment is recorded.
-    """
-    from .models import Payment
     from .notifications import (
         payment_sms_message,
         payment_statement_email_html,
@@ -38,6 +39,32 @@ def send_payment_confirmation(self, payment_id: int) -> None:
     from .pdf_service import render_to_pdf
     from .statement_service import build_statement
 
+    unit_label = f"{tenant.unit.building.name} – {tenant.unit.label}"
+
+    msg = payment_sms_message(tenant.full_name, amount, unit_label, reference)
+    send_sms(tenant.phone, msg)
+
+    if tenant.email:
+        statement = build_statement(tenant, statement_date=payment_date, as_of=payment_date)
+        html = payment_statement_email_html(tenant.full_name, amount, reference, statement)
+        attachments = []
+        pdf = render_to_pdf("payments/statement_pdf.html", statement)
+        if pdf:
+            safe_name = tenant.full_name.replace(" ", "_")
+            attachments.append((f"Rent_Statement_{safe_name}.pdf", pdf, "application/pdf"))
+        send_email(
+            tenant.email,
+            f"Rent Statement – {tenant.unit.building.name} {tenant.unit.label}",
+            html,
+            attachments=attachments,
+        )
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=60)
+def send_payment_confirmation(self, payment_id: int) -> None:
+    """Fire SMS + email to the tenant after a single payment is recorded."""
+    from .models import Payment
+
     try:
         payment = Payment.objects.select_related(
             "tenant", "tenant__unit", "tenant__unit__building"
@@ -46,35 +73,138 @@ def send_payment_confirmation(self, payment_id: int) -> None:
         logger.error("send_payment_confirmation: Payment %s not found", payment_id)
         return
 
-    tenant = payment.tenant
-    unit_label = f"{tenant.unit.building.name} – {tenant.unit.label}"
     ref = payment.reference or str(payment.id)
-
     try:
-        # SMS
-        msg = payment_sms_message(tenant.full_name, payment.amount, unit_label, ref)
-        send_sms(tenant.phone, msg)
-
-        # Email + rent statement PDF (optional — only if tenant has an email)
-        if tenant.email:
-            statement = build_statement(
-                tenant, statement_date=payment.payment_date, as_of=payment.payment_date
-            )
-            html = payment_statement_email_html(tenant.full_name, payment.amount, ref, statement)
-            attachments = []
-            pdf = render_to_pdf("payments/statement_pdf.html", statement)
-            if pdf:
-                safe_name = tenant.full_name.replace(" ", "_")
-                attachments.append((f"Rent_Statement_{safe_name}.pdf", pdf, "application/pdf"))
-            send_email(
-                tenant.email,
-                f"Rent Statement – {tenant.unit.building.name} {tenant.unit.label}",
-                html,
-                attachments=attachments,
-            )
+        _notify_tenant_payment(payment.tenant, payment.amount, ref, payment.payment_date)
     except Exception as exc:
         logger.warning("send_payment_confirmation retry %s: %s", self.request.retries, exc)
         raise self.retry(exc=exc, countdown=60 * (2 ** self.request.retries)) from exc
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=60)
+def send_deposit_receipt(self, tenant_id: int, amount: str, reference: str, payment_date: str) -> None:
+    """One tenant receipt for a full deposit (used by the IPN path, where a
+    credit may be FIFO-split across several periods). `amount` is the total
+    received; `payment_date` is an ISO date string."""
+    import datetime as _dt
+    from decimal import Decimal
+
+    from apps.tenants.models import Tenant
+
+    try:
+        tenant = Tenant.objects.select_related("unit", "unit__building").get(pk=tenant_id)
+    except Tenant.DoesNotExist:
+        logger.error("send_deposit_receipt: Tenant %s not found", tenant_id)
+        return
+
+    try:
+        pay_date = _dt.date.fromisoformat(payment_date[:10])
+    except (ValueError, TypeError):
+        pay_date = timezone.now().date()
+
+    try:
+        _notify_tenant_payment(tenant, Decimal(str(amount)), reference, pay_date)
+    except Exception as exc:
+        logger.warning("send_deposit_receipt retry %s: %s", self.request.retries, exc)
+        raise self.retry(exc=exc, countdown=60 * (2 ** self.request.retries)) from exc
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=120)
+def send_unmatched_credit_alert(self, event_id: int) -> None:
+    """Alert the admin (SMS + email) when an IPN credit can't be auto-assigned
+    and needs manual reconciliation (review item M1)."""
+    from django.conf import settings
+
+    from .models import CoopIpnEvent
+    from .notifications import custom_email_html, send_email, send_sms
+
+    try:
+        event = CoopIpnEvent.objects.get(pk=event_id)
+    except CoopIpnEvent.DoesNotExist:
+        logger.error("send_unmatched_credit_alert: event %s not found", event_id)
+        return
+
+    phone = getattr(settings, "ADMIN_ALERT_PHONE", "")
+    email = getattr(settings, "ADMIN_ALERT_EMAIL", "")
+    if not phone and not email:
+        logger.warning("send_unmatched_credit_alert: no ADMIN_ALERT_PHONE/EMAIL set — alert skipped")
+        return
+
+    sms_text = (
+        f"Wilkem Edge: unmatched payment KES {event.amount} (ref {event.transaction_id}). "
+        f"Reason: {event.detail}. Please reconcile in the dashboard."
+    )
+    email_body = (
+        "A bank credit could not be automatically assigned to a tenant and needs review.\n\n"
+        f"Amount: KES {event.amount}\n"
+        f"Transaction ID: {event.transaction_id}\n"
+        f"Payment Ref: {event.payment_ref}\n"
+        f"Account: {event.account_number}\n"
+        f"Reason: {event.detail}\n\n"
+        f"Narration: {event.narration}\n\n"
+        "Open the dashboard (Admin → Co-op IPN events, filter Unmatched) to assign it."
+    )
+    try:
+        if phone:
+            send_sms(phone, sms_text)
+        if email:
+            send_email(email, "Action needed: unmatched bank credit", custom_email_html(
+                "Unmatched bank credit", email_body))
+    except Exception as exc:
+        logger.warning("send_unmatched_credit_alert retry %s: %s", self.request.retries, exc)
+        raise self.retry(exc=exc, countdown=120 * (2 ** self.request.retries)) from exc
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=120)
+def send_reversal_authorization_alert(self, event_id: int) -> None:
+    """Alert the authorising director (Dr. Osoro) that the bank has notified a
+    reversal, which must be authorized before any tenant payment is undone.
+
+    Recipients: DIRECTOR_ALERT_PHONE / DIRECTOR_ALERT_EMAIL, falling back to the
+    ADMIN_ALERT_* values so the alert always reaches someone."""
+    from django.conf import settings
+
+    from .models import CoopIpnEvent
+    from .notifications import custom_email_html, send_email, send_sms
+
+    try:
+        event = CoopIpnEvent.objects.get(pk=event_id)
+    except CoopIpnEvent.DoesNotExist:
+        logger.error("send_reversal_authorization_alert: event %s not found", event_id)
+        return
+
+    phone = getattr(settings, "DIRECTOR_ALERT_PHONE", "") or getattr(settings, "ADMIN_ALERT_PHONE", "")
+    email = getattr(settings, "DIRECTOR_ALERT_EMAIL", "") or getattr(settings, "ADMIN_ALERT_EMAIL", "")
+    if not phone and not email:
+        logger.warning("send_reversal_authorization_alert: no director/admin contact set — alert skipped")
+        return
+
+    sms_text = (
+        f"Wilkem Edge: bank REVERSAL of KES {event.amount} (ref {event.transaction_id}) "
+        f"requires your authorization. No tenant payment has been undone. "
+        f"Please review in the dashboard."
+    )
+    email_body = (
+        "The bank has notified a REVERSAL on the collection account. It has NOT been "
+        "applied — a tenant's recorded payment will only be undone after you authorize it.\n\n"
+        f"Amount: KES {event.amount}\n"
+        f"Transaction ID: {event.transaction_id}\n"
+        f"Payment Ref: {event.payment_ref}\n"
+        f"Account: {event.account_number}\n"
+        f"Detail: {event.detail}\n\n"
+        f"Narration: {event.narration}\n\n"
+        "To authorize: open the dashboard (Admin → Co-op IPN events, filter "
+        "'Reversal — awaiting authorization') and confirm the reversal."
+    )
+    try:
+        if phone:
+            send_sms(phone, sms_text)
+        if email:
+            send_email(email, "AUTHORIZATION NEEDED: bank reversal", custom_email_html(
+                "Bank reversal — authorization required", email_body))
+    except Exception as exc:
+        logger.warning("send_reversal_authorization_alert retry %s: %s", self.request.retries, exc)
+        raise self.retry(exc=exc, countdown=120 * (2 ** self.request.retries)) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -84,27 +214,31 @@ def send_payment_confirmation(self, payment_id: int) -> None:
 @shared_task(bind=True, max_retries=2)
 def poll_bank_statement(self) -> None:
     """
-    Hourly fallback for banks that don't support webhooks.
-    Fetches recent transactions from the bank API and processes new ones.
+    Backfill safety net for the Co-op IPN feed (review item M4).
 
-    Implementation is bank-specific. The stub below logs a warning so the
-    admin knows to wire up the real bank API client when credentials are
-    available.
+    IPN has no replay once Co-op's delivery retries are exhausted, so if the
+    endpoint is down past their window those credits are lost. This task is the
+    intended fallback: poll Co-op Connect `/Enquiry/AccountTransactions/1.0.0`
+    and reconcile any credit not already captured as a CoopIpnEvent.
+
+    Stub for now — needs Co-op Connect OAuth credentials (separate enrolment
+    from IPN). Skips quietly until those are configured.
     """
     from django.conf import settings
 
-    bank_api_key = getattr(settings, "BANK_API_KEY", "")
-    if not bank_api_key:
-        logger.debug("poll_bank_statement: BANK_API_KEY not set — skipping poll")
+    consumer_key = getattr(settings, "COOP_CONNECT_CONSUMER_KEY", "")
+    if not consumer_key:
+        logger.debug("poll_bank_statement: Co-op Connect not configured — skipping backfill")
         return
 
-    # TODO: implement bank-specific API call here.
+    # TODO (Phase 3): implement Co-op Connect AccountTransactions backfill.
     # Pattern:
-    #   1. Fetch transactions since last_poll_ts (store in Django cache or DB)
-    #   2. For each: check Payment.objects.filter(reference=tx_ref).exists()
-    #   3. If new: call process_payment(..., source=PaymentSource.BANK)
-    #   4. Update last_poll_ts
-    logger.info("poll_bank_statement: stub executed — wire up real bank client here")
+    #   1. OAuth client_credentials → bearer token
+    #   2. Fetch transactions since last_poll_ts (store in cache/DB)
+    #   3. For each credit: skip if CoopIpnEvent.objects.filter(transaction_id=ref).exists()
+    #   4. Else reconcile via the same path as CoopIpnView
+    #   5. Update last_poll_ts
+    logger.info("poll_bank_statement: stub executed — wire up Co-op Connect client here")
 
 
 # ---------------------------------------------------------------------------

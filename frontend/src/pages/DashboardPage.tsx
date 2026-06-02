@@ -22,6 +22,7 @@ import {
   Badge,
   Button,
   EmptyState,
+  ErrorState,
   Skeleton,
 } from "@/components/ui";
 import { useAuth } from "@/hooks/useAuth";
@@ -86,13 +87,33 @@ function headlineFor(data: DashboardData): string {
 }
 
 export default function DashboardPage() {
-  const { data, isLoading } = useDashboard();
+  const { data, isLoading, isError, refetch } = useDashboard();
   const { user } = useAuth();
 
   const firstName = user?.first_name?.trim() || displayName(user?.email?.split("@")[0]) || "there";
   const today = new Date();
   const dateLine = format(today, "EEEE, d MMMM").toUpperCase();
   const greeting = `${greetingFor(today.getHours())}, ${firstName}.`;
+
+  if (isError && !data) {
+    return (
+      <div className="space-y-10">
+        <header className="space-y-2">
+          <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-ink-500">
+            {dateLine}
+          </p>
+          <h1 className="font-display text-4xl font-semibold leading-tight text-ink-900 sm:text-5xl">
+            {greeting}
+          </h1>
+        </header>
+        <ErrorState
+          title="The dashboard could not be loaded."
+          description="Your portfolio summary did not come back. This is usually temporary."
+          onRetry={() => void refetch()}
+        />
+      </div>
+    );
+  }
 
   if (isLoading || !data) {
     return (

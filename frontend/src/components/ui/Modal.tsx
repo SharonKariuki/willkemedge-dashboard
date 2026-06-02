@@ -3,6 +3,15 @@ import { useEffect, useRef, type ReactNode } from "react";
 
 import { cn } from "@/lib/cn";
 
+const FOCUSABLE_SELECTOR = [
+  "a[href]",
+  "button:not([disabled])",
+  "textarea:not([disabled])",
+  "input:not([disabled])",
+  "select:not([disabled])",
+  '[tabindex]:not([tabindex="-1"])',
+].join(",");
+
 interface ModalProps {
   open: boolean;
   onClose: () => void;
@@ -46,21 +55,54 @@ export function Modal({
   ariaLabel,
 }: ModalProps) {
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
 
+  // Lock scroll, move focus into the dialog, and restore focus to the
+  // triggering element when the dialog closes.
   useEffect(() => {
     if (!open) return;
+    const previouslyFocused = document.activeElement as HTMLElement | null;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     closeButtonRef.current?.focus();
     return () => {
       document.body.style.overflow = previousOverflow;
+      previouslyFocused?.focus?.();
     };
   }, [open]);
 
+  // Escape to close + focus trap (Tab / Shift+Tab cycles within the dialog).
   useEffect(() => {
-    if (!open || !closeOnEscape) return;
+    if (!open) return;
     const handler = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape" && closeOnEscape) {
+        onClose();
+        return;
+      }
+      if (event.key !== "Tab") return;
+
+      const dialog = dialogRef.current;
+      if (!dialog) return;
+      const focusable = Array.from(
+        dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
+      ).filter((el) => !el.hasAttribute("disabled") && el.getAttribute("aria-hidden") !== "true");
+      if (focusable.length === 0) {
+        event.preventDefault();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement as HTMLElement | null;
+
+      if (event.shiftKey) {
+        if (active === first || !dialog.contains(active)) {
+          event.preventDefault();
+          last.focus();
+        }
+      } else if (active === last || !dialog.contains(active)) {
+        event.preventDefault();
+        first.focus();
+      }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
@@ -83,6 +125,7 @@ export function Modal({
         aria-hidden
       />
       <div
+        ref={dialogRef}
         className={cn(
           "relative flex w-full max-h-[90vh] flex-col overflow-hidden rounded-xl bg-canvas shadow-float ring-1 ring-ink-100 animate-fade-up dark:bg-ink-900 dark:ring-ink-700",
           SIZE_CLASSES[size],

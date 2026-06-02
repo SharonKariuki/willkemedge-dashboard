@@ -8,9 +8,10 @@ from rest_framework_simplejwt.views import TokenRefreshView
 from .serializers import (
     LoginSerializer,
     LogoutSerializer,
+    PasswordResetConfirmSerializer,
     UserSerializer,
 )
-from .services import is_locked_out, record_login_attempt
+from .services import clear_failed_attempts, is_locked_out, record_login_attempt
 
 
 class HealthView(APIView):
@@ -41,6 +42,9 @@ class LoginView(APIView):
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
         record_login_attempt(email=email, request=request, successful=True)
+        # Successful auth resets the rolling failed-attempt window so a user
+        # who fumbled their password isn't left near the lockout threshold.
+        clear_failed_attempts(email)
         return Response(serializer.validated_data, status=status.HTTP_200_OK)
 
 
@@ -75,7 +79,7 @@ class PasswordResetRequestView(APIView):
     POST /api/auth/password-reset/
     Body: {"email": "william@gmail.com"}
 
-    Generates a PasswordResetToken, emails the link via SendGrid.
+    Generates a PasswordResetToken, emails the link via Gmail SMTP.
     Always returns 200 regardless of whether the email exists
     (prevents user enumeration).
     """
@@ -116,14 +120,12 @@ class PasswordResetConfirmView(APIView):
 
         from .models import PasswordResetToken
 
-        token_str = (request.data.get("token") or "").strip()
-        new_password = request.data.get("new_password", "")
-
-        if not token_str or not new_password:
-            return Response(
-                {"detail": "token and new_password are required."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        # Validate shape + password strength via the serializer.
+        serializer = PasswordResetConfirmSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        token_str = serializer.validated_data["token"].strip()
+        new_password = serializer.validated_data["new_password"]
 
         try:
             token_obj = PasswordResetToken.objects.select_related("user").get(

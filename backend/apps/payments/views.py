@@ -11,7 +11,6 @@ from rest_framework.response import Response
 from apps.tenants.models import Tenant
 
 from .models import Arrears, Payment, PaymentSource, Transaction
-from .mpesa import daraja
 from .pdf_service import render_to_pdf
 from .receipt_service import generate_receipt
 from .serializers import (
@@ -32,13 +31,6 @@ class MockPaymentSerializer(serializers.Serializer):
     source = serializers.ChoiceField(
         choices=[PaymentSource.MPESA, PaymentSource.BANK, PaymentSource.CASH]
     )
-
-
-class STKPushSerializer(serializers.Serializer):
-    tenant = serializers.IntegerField(min_value=1)
-    amount = serializers.IntegerField(min_value=1)
-    description = serializers.CharField(max_length=20, required=False, default="Rent Payment")
-
 
 
 def _mock_reference(source: str) -> str:
@@ -161,29 +153,6 @@ class PaymentViewSet(viewsets.ModelViewSet):
         data = get_collection_progress(month, year)
         serializer = CollectionProgressSerializer(data)
         return Response(serializer.data)
-
-    @action(detail=False, methods=["post"], url_path="stk-push")
-    def stk_push(self, request):
-        """POST /api/payments/stk-push/"""
-        serializer = STKPushSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        data = serializer.validated_data
-
-        try:
-            tenant = Tenant.objects.get(pk=data["tenant"])
-            if not tenant.phone:
-                return Response({"detail": "Tenant has no phone number."}, status=400)
-
-            result = daraja.stk_push(
-                phone=tenant.phone,
-                amount=int(data["amount"]),
-                reference=f"RENT{tenant.id}",
-                description=data.get("description", "Rent Payment")
-            )
-            return Response(result)
-        except Exception as e:
-            return Response({"detail": str(e)}, status=500)
-
 
 
 class ArrearsViewSet(viewsets.ReadOnlyModelViewSet):

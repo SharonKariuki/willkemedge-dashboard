@@ -33,6 +33,10 @@ else:
 
 CORS_ALLOWED_ORIGINS = config("CORS_ALLOWED_ORIGINS", default="", cast=Csv())
 
+# CSP connect-src for production: never include localhost. Defaults to empty
+# (connect-src 'self' only) unless an explicit origin list is configured.
+CSP_CONNECT_SRC = config("CSP_CONNECT_SRC", default="", cast=Csv())
+
 # Security headers
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 SECURE_SSL_REDIRECT = True

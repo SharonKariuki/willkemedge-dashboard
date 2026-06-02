@@ -1,7 +1,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Banknote, Building2, CreditCard, FileText, Mail, Plus, Smartphone, Sparkles, UserPlus, Wallet, X } from "lucide-react";
 
-import { useState } from "react";
+import { cloneElement, isValidElement, useId, useState } from "react";
 import { useForm } from "react-hook-form";
 import toast from "react-hot-toast";
 import { Link } from "react-router-dom";
@@ -14,6 +14,7 @@ import {
   Card,
   DatePicker,
   EmptyState,
+  ErrorState,
   PageHeader,
   Skeleton,
   Table,
@@ -31,6 +32,7 @@ import {
   useResendReceipt,
 } from "@/hooks/usePayments";
 import { useTenants } from "@/hooks/useTenants";
+import { getErrorMessage } from "@/lib/apiError";
 import { cn } from "@/lib/cn";
 import { downloadPdf } from "@/lib/downloadPdf";
 import { avatarFor } from "@/lib/images";
@@ -51,6 +53,12 @@ const PAYMENT_TYPES = [
 ] as const;
 
 const now = new Date();
+
+// A mock payment amount must parse to a positive number.
+const mockAmountSchema = z
+  .string()
+  .min(1, "Enter an amount")
+  .refine((v) => Number(v) > 0, "Amount must be a positive number");
 
 const schema = z.object({
   tenant: z.coerce.number().min(1, "Select a tenant"),
@@ -98,12 +106,18 @@ function Field({
   error?: string;
   children: React.ReactNode;
 }) {
+  const id = useId();
+  const control = isValidElement(children)
+    ? cloneElement(children as React.ReactElement<{ id?: string }>, {
+        id: (children as React.ReactElement<{ id?: string }>).props.id ?? id,
+      })
+    : children;
   return (
     <div>
-      <label className="mb-1 block text-[11px] font-medium uppercase tracking-[0.14em] text-ink-500">
+      <label htmlFor={id} className="mb-1 block text-[11px] font-medium uppercase tracking-[0.14em] text-ink-500">
         {label}
       </label>
-      {children}
+      {control}
       {error && <p className="mt-1 text-[11px] text-status-unpaid">{error}</p>}
     </div>
   );
@@ -130,6 +144,7 @@ function MockPaymentPanel({
   const [tenantId, setTenantId] = useState<number>(tenants[0]?.id ?? 0);
   const [amount, setAmount] = useState<string>("");
   const [source, setSource] = useState<"mpesa" | "bank" | "cash">("mpesa");
+  const [amountError, setAmountError] = useState<string | undefined>();
 
   const selectedTenant = tenants.find((t) => t.id === Number(tenantId));
   const effectiveAmount = amount || selectedTenant?.monthly_rent || "";
@@ -139,12 +154,15 @@ function MockPaymentPanel({
       toast.error("Select a tenant");
       return;
     }
-    const numericAmount = Number(effectiveAmount);
-    if (!numericAmount || numericAmount <= 0) {
-      toast.error("Enter a valid amount");
+    const parsed = mockAmountSchema.safeParse(effectiveAmount);
+    if (!parsed.success) {
+      const message = parsed.error.issues[0]?.message ?? "Enter a valid amount";
+      setAmountError(message);
+      toast.error(message);
       return;
     }
-    await onSubmit({ tenant: tenantId, amount: String(numericAmount), source });
+    setAmountError(undefined);
+    await onSubmit({ tenant: tenantId, amount: String(Number(parsed.data)), source });
   };
 
   const SOURCE_OPTIONS: { value: "mpesa" | "bank" | "cash"; label: string; icon: React.ComponentType<{ className?: string }>; desc: string }[] = [
@@ -215,10 +233,13 @@ function MockPaymentPanel({
             ))}
           </select>
         </Field>
-        <Field label={`Amount (KES)${selectedTenant ? ` — rent KES ${Number(selectedTenant.monthly_rent).toLocaleString()}` : ""}`}>
+        <Field label={`Amount (KES)${selectedTenant ? ` — rent KES ${Number(selectedTenant.monthly_rent).toLocaleString()}` : ""}`} error={amountError}>
           <input
+            type="number"
+            min="0"
+            inputMode="decimal"
             value={amount}
-            onChange={(e) => setAmount(e.target.value)}
+            onChange={(e) => { setAmount(e.target.value); if (amountError) setAmountError(undefined); }}
             placeholder={selectedTenant?.monthly_rent ?? "e.g. 15000"}
             className={inputCls}
           />
@@ -252,8 +273,8 @@ export default function PaymentsPage() {
     try {
       await resendReceipt.mutateAsync(paymentId);
       toast.success("Receipt resent");
-    } catch {
-      toast.error("Failed to resend receipt");
+    } catch (e) {
+      toast.error(getErrorMessage(e, "Failed to resend receipt"));
     }
   };
 
@@ -261,7 +282,7 @@ export default function PaymentsPage() {
 
   if (sourceFilter) filters.source = sourceFilter;
 
-  const { data: payments, isLoading } = usePayments(filters);
+  const { data: payments, isLoading, isError, refetch } = usePayments(filters);
   const { data: progress } = useCollectionProgress();
   const { data: tenants, isLoading: tenantsLoading } = useTenants({ status: "active" });
   const createPayment = useCreatePayment();
@@ -295,8 +316,8 @@ export default function PaymentsPage() {
       toast.success("Payment recorded");
       reset();
       setShowForm(false);
-    } catch {
-      toast.error("Failed to record payment");
+    } catch (e) {
+      toast.error(getErrorMessage(e, "Failed to record payment"));
     }
   };
 
@@ -342,8 +363,8 @@ export default function PaymentsPage() {
               await mockPayment.mutateAsync(payload);
               toast.success(`Mock ${payload.source.toUpperCase()} payment recorded`);
               setShowMock(false);
-            } catch {
-              toast.error("Failed to simulate payment");
+            } catch (e) {
+              toast.error(getErrorMessage(e, "Failed to simulate payment"));
             }
           }}
         />
@@ -481,13 +502,14 @@ export default function PaymentsPage() {
       )}
 
       {/* Filter chips */}
-      <div className="flex flex-wrap gap-1.5">
+      <div className="flex flex-wrap gap-1.5" role="group" aria-label="Filter by payment source">
         {SOURCES.map((s) => {
           const active = sourceFilter === s.value;
           return (
             <button
               key={s.value || "all"}
               onClick={() => setSourceFilter(s.value)}
+              aria-pressed={active}
               className={cn(
                 "rounded-full px-3 py-1.5 text-xs font-medium transition-all",
                 active
@@ -508,6 +530,14 @@ export default function PaymentsPage() {
             <Skeleton key={i} className="h-14" />
           ))}
         </div>
+      ) : isError ? (
+        <Card variant="glass" padding="none" className="py-4">
+          <ErrorState
+            title="Payments could not be loaded."
+            description="The payment history did not come back. This is usually temporary."
+            onRetry={() => void refetch()}
+          />
+        </Card>
       ) : !payments?.length ? (
         <Card variant="glass" padding="none" className="py-4">
           <EmptyState

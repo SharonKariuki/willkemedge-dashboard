@@ -17,6 +17,7 @@ import {
   Button,
   Card,
   EmptyState,
+  ErrorState,
   PageHeader,
   Skeleton,
   Table,
@@ -34,6 +35,7 @@ import {
   type SendNotificationPayload,
 } from "@/hooks/useNotifications";
 import { useTenants } from "@/hooks/useTenants";
+import { getErrorMessage } from "@/lib/apiError";
 import { cn } from "@/lib/cn";
 
 // ─── Friendly placeholder definitions ────────────────────────────────────────
@@ -128,7 +130,7 @@ function SmartInsertDropdown({ onInsert }: { onInsert: (value: string) => void }
 export default function NotificationsPage() {
   const { data: templates, isLoading: templatesLoading } = useNotificationTemplates();
   const { data: tenants, isLoading: tenantsLoading } = useTenants({ status: "active" });
-  const { data: history, isLoading: historyLoading } = useNotifications();
+  const { data: history, isLoading: historyLoading, isError: historyError, refetch: refetchHistory } = useNotifications();
   const sendNotification = useSendNotification();
   const bodyRef = useRef<HTMLTextAreaElement>(null);
 
@@ -217,8 +219,8 @@ export default function NotificationsPage() {
         toast(`Sent ${result.sent} · ${result.failed} failed`, { icon: "⚠️" });
       }
       setSelectedTenantIds([]);
-    } catch {
-      toast.error("Failed to send notifications");
+    } catch (e) {
+      toast.error(getErrorMessage(e, "Failed to send notifications"));
     }
   };
 
@@ -478,6 +480,12 @@ export default function NotificationsPage() {
           <div className="space-y-2">
             {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-12" />)}
           </div>
+        ) : historyError ? (
+          <ErrorState
+            title="Recent sends could not be loaded."
+            description="The notification history did not come back. This is usually temporary."
+            onRetry={() => void refetchHistory()}
+          />
         ) : !history?.length ? (
           <EmptyState
             icon={<Bell className="h-5 w-5" />}

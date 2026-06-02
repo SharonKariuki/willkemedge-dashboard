@@ -1,13 +1,13 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { PlusCircle, Tag, Trash2 } from "lucide-react";
 
-import { useState } from "react";
+import { cloneElement, isValidElement, useId, useState } from "react";
 import { useForm } from "react-hook-form";
 import toast from "react-hot-toast";
 import { z } from "zod";
 
 import {
-  Badge, Button, Card, DatePicker, EmptyState,
+  Badge, Button, Card, DatePicker, EmptyState, ErrorState,
   PageHeader, Skeleton, Table, TBody, TD, TH, THead, TR,
 } from "@/components/ui";
 import { useBuildings } from "@/hooks/useBuildings";
@@ -15,6 +15,7 @@ import {
   useCreateExpense, useCreateExpenseCategory,
   useDeleteExpense, useExpenseCategories, useExpenses,
 } from "@/hooks/useExpenses";
+import { getErrorMessage } from "@/lib/apiError";
 import { cn } from "@/lib/cn";
 import { AccountingSuite } from "@/pages/AccountingPage";
 
@@ -45,12 +46,18 @@ const inputCls =
 function Field({ label, error, children, className }: {
   label: string; error?: string; children: React.ReactNode; className?: string;
 }) {
+  const id = useId();
+  const control = isValidElement(children)
+    ? cloneElement(children as React.ReactElement<{ id?: string }>, {
+        id: (children as React.ReactElement<{ id?: string }>).props.id ?? id,
+      })
+    : children;
   return (
     <div className={className}>
-      <label className="mb-1 block text-[11px] font-medium uppercase tracking-[0.14em] text-ink-500">
+      <label htmlFor={id} className="mb-1 block text-[11px] font-medium uppercase tracking-[0.14em] text-ink-500">
         {label}
       </label>
-      {children}
+      {control}
       {error && <p className="mt-1 text-[11px] text-status-unpaid">{error}</p>}
     </div>
   );
@@ -75,7 +82,7 @@ export default function ExpensesPage() {
   const buildingParam: number | "none" | null =
     filterBuilding === "" ? null : filterBuilding === "none" ? "none" : Number(filterBuilding);
 
-  const { data: expenses, isLoading } = useExpenses(filterMonth, filterYear, buildingParam);
+  const { data: expenses, isLoading, isError, refetch } = useExpenses(filterMonth, filterYear, buildingParam);
   const { data: categories } = useExpenseCategories();
   const { data: buildings } = useBuildings();
   const createExpense = useCreateExpense();
@@ -112,7 +119,7 @@ export default function ExpensesPage() {
           });
           setShowForm(false);
         },
-        onError: () => toast.error("Failed to save expense"),
+        onError: (e) => toast.error(getErrorMessage(e, "Failed to save expense")),
       },
     );
   };
@@ -126,7 +133,7 @@ export default function ExpensesPage() {
           catForm.reset();
           setShowCategoryForm(false);
         },
-        onError: () => toast.error("Failed to save category. It may already exist."),
+        onError: (e) => toast.error(getErrorMessage(e, "Failed to save category. It may already exist.")),
       },
     );
   };
@@ -330,6 +337,14 @@ export default function ExpensesPage() {
         <div className="space-y-2">
           {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-14" />)}
         </div>
+      ) : isError ? (
+        <Card variant="glass" padding="none" className="py-4">
+          <ErrorState
+            title="Expenses could not be loaded."
+            description="This period's expenses did not come back. This is usually temporary."
+            onRetry={() => void refetch()}
+          />
+        </Card>
       ) : !expenses?.length ? (
         <Card variant="glass" padding="none" className="py-4">
           <EmptyState icon={<PlusCircle className="h-5 w-5" />} title="No expenses recorded"

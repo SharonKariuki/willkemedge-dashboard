@@ -48,6 +48,12 @@ jobs:
           DJANGO_DEBUG: "True"
         run: python manage.py check
 
+      - name: Check for missing migrations
+        env:
+          DJANGO_SECRET_KEY: ci-secret-key
+          DJANGO_DEBUG: "True"
+        run: python manage.py makemigrations --check --dry-run
+
       - name: Run tests
         env:
           DJANGO_SECRET_KEY: ci-secret-key

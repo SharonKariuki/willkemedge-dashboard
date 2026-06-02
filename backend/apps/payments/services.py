@@ -97,6 +97,67 @@ def process_payment(
     return payment
 
 
+@transaction.atomic
+def allocate_payment_fifo(
+    *,
+    tenant,
+    amount: Decimal,
+    payment_date,
+    source: str = "cash",
+    reference: str = "",
+    notes: str = "",
+) -> list[Payment]:
+    """
+    Apply an incoming credit to the tenant's outstanding balances oldest-first.
+
+    Arrears-first rule: the money clears the oldest unpaid period before newer
+    ones. One Payment (+Transaction) is created per period the money touches —
+    so each period's arrears clear correctly — and any remainder after all known
+    arrears is booked to the current period (an overpayment / credit).
+
+    `payment_date` is the date the money was received (the bank's posting date)
+    and is the same on every chunk; only the period each chunk *clears* differs.
+
+    Returns the Payment records created, oldest period first. If the tenant has
+    no outstanding arrears, this behaves exactly like a single process_payment
+    against the current period.
+
+    NB: chunks are sized against Arrears.balance (snapshotted when the queryset
+    is read), and per-chunk tax handling is whatever process_payment applies.
+    """
+    remaining = Decimal(str(amount))
+    created: list[Payment] = []
+
+    outstanding = list(
+        Arrears.objects.filter(tenant=tenant, balance__gt=0)
+        .order_by("period_year", "period_month")
+    )
+    for ar in outstanding:
+        if remaining <= 0:
+            break
+        chunk = min(remaining, ar.balance)
+        created.append(
+            process_payment(
+                tenant=tenant, amount=chunk, payment_date=payment_date,
+                period_month=ar.period_month, period_year=ar.period_year,
+                source=source, reference=reference, notes=notes,
+            )
+        )
+        remaining -= chunk
+
+    if remaining > 0:
+        # Leftover beyond known arrears applies to the period the payment is for,
+        # i.e. the posting-date month (NOT the server clock — see review C2).
+        created.append(
+            process_payment(
+                tenant=tenant, amount=remaining, payment_date=payment_date,
+                period_month=payment_date.month, period_year=payment_date.year,
+                source=source, reference=reference, notes=notes,
+            )
+        )
+    return created
+
+
 def _update_arrears(tenant, period_month: int, period_year: int) -> Arrears:
     """
     Create or update the arrears record for this tenant+period,
@@ -110,8 +171,25 @@ def _update_arrears(tenant, period_month: int, period_year: int) -> Arrears:
         period_year=period_year,
     ).aggregate(total=models.Sum("amount"))["total"] or Decimal("0")
 
-    balance = max(expected_rent - total_paid, Decimal("0"))
-    is_cleared = total_paid >= expected_rent
+    # Preserve any prior waiver: a waived amount permanently offsets the
+    # obligation, so it must be folded into the balance/cleared computation.
+    # Without this, a payment recorded after a waiver would recompute
+    # balance = expected_rent - total_paid and silently reverse the waiver.
+    existing = (
+        Arrears.objects.filter(
+            tenant=tenant,
+            period_month=period_month,
+            period_year=period_year,
+        )
+        .values("waived_amount", "waive_notes")
+        .first()
+    )
+    waived_amount = (existing or {}).get("waived_amount") or Decimal("0")
+    waive_notes = (existing or {}).get("waive_notes") or ""
+
+    covered = total_paid + waived_amount
+    balance = max(expected_rent - covered, Decimal("0"))
+    is_cleared = covered >= expected_rent
 
     arrears, _ = Arrears.objects.update_or_create(
         tenant=tenant,
@@ -122,6 +200,8 @@ def _update_arrears(tenant, period_month: int, period_year: int) -> Arrears:
             "amount_paid": total_paid,
             "balance": balance,
             "is_cleared": is_cleared,
+            "waived_amount": waived_amount,
+            "waive_notes": waive_notes,
         },
     )
 

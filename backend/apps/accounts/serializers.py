@@ -73,11 +73,15 @@ class PasswordResetRequestSerializer(serializers.Serializer):
 
 
 class PasswordResetConfirmSerializer(serializers.Serializer):
-    """Accepts a token + new password and completes the reset."""
-    token    = serializers.CharField()
-    password = serializers.CharField(write_only=True, min_length=12, trim_whitespace=False)
+    """Accepts a token + new password and completes the reset.
 
-    def validate_password(self, value):
+    Field name matches the view/API contract (`new_password`). Password
+    strength is enforced via Django's configured validators.
+    """
+    token = serializers.CharField()
+    new_password = serializers.CharField(write_only=True, min_length=12, trim_whitespace=False)
+
+    def validate_new_password(self, value):
         from django.contrib.auth.password_validation import validate_password
         validate_password(value)
         return value

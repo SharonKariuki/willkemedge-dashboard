@@ -176,6 +176,72 @@ class TenantLifecycleTests(APITestCase):
         assert resp.status_code == 200
         assert len(resp.json()) == 1
 
+    def test_upload_sanitizes_traversal_filename(self):
+        create_resp = self.client.post("/api/tenants/", self._tenant_payload(), format="json")
+        tid = create_resp.json()["id"]
+
+        evil = SimpleUploadedFile(
+            "../../etc/passwd.pdf", b"%PDF-1.4 fake", content_type="application/pdf"
+        )
+        resp = self.client.post(
+            f"/api/tenants/{tid}/documents/",
+            {"file": evil, "doc_type": "other"},
+            format="multipart",
+        )
+        assert resp.status_code == status.HTTP_201_CREATED
+        name = resp.json()["original_name"]
+        # No path components survive.
+        assert "/" not in name and "\\" not in name and ".." not in name
+        assert name == "passwd.pdf"
+
+    def test_upload_rejects_disallowed_extension(self):
+        create_resp = self.client.post("/api/tenants/", self._tenant_payload(), format="json")
+        tid = create_resp.json()["id"]
+
+        # Disguised content-type would pass the MIME check but the extension
+        # allowlist must still reject it.
+        sneaky = SimpleUploadedFile(
+            "shell.sh", b"%PDF-1.4 fake", content_type="application/pdf"
+        )
+        resp = self.client.post(
+            f"/api/tenants/{tid}/documents/",
+            {"file": sneaky, "doc_type": "other"},
+            format="multipart",
+        )
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_authenticated_document_download(self):
+        create_resp = self.client.post("/api/tenants/", self._tenant_payload(), format="json")
+        tid = create_resp.json()["id"]
+        pdf = SimpleUploadedFile("lease.pdf", b"%PDF-1.4 fake", content_type="application/pdf")
+        up = self.client.post(
+            f"/api/tenants/{tid}/documents/",
+            {"file": pdf, "doc_type": "lease"},
+            format="multipart",
+        )
+        doc_id = up.json()["id"]
+
+        resp = self.client.get(f"/api/tenants/{tid}/documents/{doc_id}/download/")
+        assert resp.status_code == 200
+        assert resp["Content-Disposition"].startswith("attachment")
+        content = b"".join(resp.streaming_content)
+        assert content == b"%PDF-1.4 fake"
+
+    def test_document_download_requires_auth(self):
+        create_resp = self.client.post("/api/tenants/", self._tenant_payload(), format="json")
+        tid = create_resp.json()["id"]
+        pdf = SimpleUploadedFile("lease.pdf", b"%PDF-1.4 fake", content_type="application/pdf")
+        up = self.client.post(
+            f"/api/tenants/{tid}/documents/",
+            {"file": pdf, "doc_type": "lease"},
+            format="multipart",
+        )
+        doc_id = up.json()["id"]
+
+        anon = APIClient()
+        resp = anon.get(f"/api/tenants/{tid}/documents/{doc_id}/download/")
+        assert resp.status_code == 401
+
     # --- Auth -----------------------------------------------------------
 
     def test_unauthenticated_denied(self):

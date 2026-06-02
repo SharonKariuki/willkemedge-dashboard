@@ -42,8 +42,11 @@ export default function App() {
         <Route path="/notifications" element={<NotificationsPage />} />
         <Route path="/reports" element={<ReportsPage />} />
         <Route path="/settings" element={<SettingsPage />} />
-        <Route path="*" element={<NotFoundPage />} />
       </Route>
+
+      {/* Public catch-all: a logged-out user hitting a bad URL should see
+          NotFound, not get bounced to /login by ProtectedRoute. */}
+      <Route path="*" element={<NotFoundPage />} />
     </Routes>
   );
 }

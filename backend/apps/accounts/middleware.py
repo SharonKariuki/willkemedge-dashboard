@@ -14,6 +14,12 @@ class SecurityHeadersMiddleware:
     def __call__(self, request):
         response = self.get_response(request)
 
+        # connect-src is parameterized from settings so production never ships
+        # a hardcoded localhost origin. Defaults to 'self' plus whatever
+        # CSP_CONNECT_SRC provides (empty in prod unless configured).
+        extra_connect = " ".join(getattr(settings, "CSP_CONNECT_SRC", []) or [])
+        connect_src = ("'self' " + extra_connect).strip()
+
         # Content-Security-Policy — report-only in dev for convenience.
         csp = (
             "default-src 'self'; "
@@ -21,7 +27,7 @@ class SecurityHeadersMiddleware:
             "style-src 'self' 'unsafe-inline'; "
             "img-src 'self' data:; "
             "font-src 'self'; "
-            "connect-src 'self' http://localhost:8000; "
+            f"connect-src {connect_src}; "
             "frame-ancestors 'none'"
         )
         if settings.DEBUG:

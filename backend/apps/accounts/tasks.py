@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=30)
 def send_password_reset_email(self, user_id: int, token: str) -> None:
-    """Send password reset link to the user's email via SendGrid."""
+    """Send password reset link to the user's email via Gmail SMTP."""
     from django.conf import settings
     from django.contrib.auth import get_user_model
 
