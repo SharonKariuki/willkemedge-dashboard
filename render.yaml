@@ -46,22 +46,20 @@ services:
         sync: false
       - key: FRONTEND_URL
         sync: false
-      # M-Pesa
-      - key: MPESA_ENV
-        value: sandbox
-      - key: MPESA_CONSUMER_KEY
+      # Co-op Bank IPN
+      - key: COOP_IPN_TOKEN
         sync: false
-      - key: MPESA_CONSUMER_SECRET
+      - key: COOP_ACCOUNT_NUMBER
+        value: "01136069098300"
+      - key: COOP_IPN_ALLOWED_IPS
         sync: false
-      - key: MPESA_SHORTCODE
+      - key: ADMIN_ALERT_PHONE
         sync: false
-      - key: MPESA_PASSKEY
+      - key: ADMIN_ALERT_EMAIL
         sync: false
-      - key: MPESA_CONFIRM_URL
+      - key: DIRECTOR_ALERT_PHONE
         sync: false
-      - key: MPESA_VALIDATE_URL
-        sync: false
-      - key: MPESA_STK_CALLBACK_URL
+      - key: DIRECTOR_ALERT_EMAIL
         sync: false
       - key: MPESA_ACCOUNT_PREFIX
         value: "90290"
@@ -86,9 +84,6 @@ services:
       - key: EMAIL_HOST_PASSWORD
         sync: false
       - key: DEFAULT_FROM_EMAIL
-        sync: false
-      # Bank webhook
-      - key: BANK_WEBHOOK_SECRET
         sync: false
 
   # ---------------------------------------------------------------------------
