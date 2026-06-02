@@ -155,6 +155,64 @@ def send_unmatched_credit_alert(self, event_id: int) -> None:
         raise self.retry(exc=exc, countdown=120 * (2 ** self.request.retries)) from exc
 
 
+@shared_task(bind=True, max_retries=2, default_retry_delay=300)
+def send_daily_reconciliation(self, target_iso: str | None = None) -> None:
+    """One-page summary of yesterday's IPN events emailed (and SMSed) to the
+    admin + director. Wire up nightly via Render Cron Job or Celery Beat.
+
+    `target_iso` (YYYY-MM-DD) lets the caller backfill a specific day; default
+    is yesterday in the project timezone."""
+    import datetime as _dt
+
+    from django.conf import settings
+
+    from .notifications import custom_email_html, send_email, send_sms
+    from .reconciliation import (
+        build_daily_reconciliation_summary,
+        render_summary_sms,
+        render_summary_text,
+    )
+
+    target = None
+    if target_iso:
+        try:
+            target = _dt.date.fromisoformat(target_iso)
+        except ValueError:
+            logger.warning("send_daily_reconciliation: bad target_iso=%r — using yesterday", target_iso)
+
+    summary = build_daily_reconciliation_summary(target)
+    body = render_summary_text(summary)
+    sms = render_summary_sms(summary)
+
+    emails = {
+        e for e in (
+            getattr(settings, "ADMIN_ALERT_EMAIL", ""),
+            getattr(settings, "DIRECTOR_ALERT_EMAIL", ""),
+        ) if e
+    }
+    phones = {
+        p for p in (
+            getattr(settings, "ADMIN_ALERT_PHONE", ""),
+            getattr(settings, "DIRECTOR_ALERT_PHONE", ""),
+        ) if p
+    }
+    if not emails and not phones:
+        logger.warning("send_daily_reconciliation: no recipients configured — skipping")
+        return
+
+    subject = f"Wilkem Edge — IPN reconciliation {summary['date']}"
+    html = custom_email_html(subject, body)
+
+    try:
+        for email in emails:
+            send_email(email, subject, html)
+        for phone in phones:
+            send_sms(phone, sms)
+    except Exception as exc:
+        logger.warning("send_daily_reconciliation retry %s: %s", self.request.retries, exc)
+        raise self.retry(exc=exc, countdown=300 * (2 ** self.request.retries)) from exc
+
+
 @shared_task(bind=True, max_retries=3, default_retry_delay=120)
 def send_reversal_authorization_alert(self, event_id: int) -> None:
     """Alert the authorising director (Dr. Osoro) that the bank has notified a

@@ -108,7 +108,7 @@ class TestCoopIpnProcessing:
         assert event.payment is not None
         # one receipt for the full deposit
         mock_receipt.assert_called_once()
-        assert mock_receipt.call_args.args[1] == "20000"  # total amount
+        assert mock_receipt.call_args.args[1] == "20000.00"  # total amount, quantized
 
     @patch("apps.payments.coop_ipn.send_deposit_receipt.delay")
     @patch("apps.payments.coop_ipn.send_unmatched_credit_alert.delay")
@@ -153,7 +153,7 @@ class TestCoopIpnProcessing:
         assert Arrears.objects.get(tenant=tenant, period_month=3, period_year=2026).is_cleared
         # still a single receipt for the full 50,000
         mock_receipt.assert_called_once()
-        assert mock_receipt.call_args.args[1] == "50000"
+        assert mock_receipt.call_args.args[1] == "50000.00"
 
     def test_credit_to_other_account_ignored(self, api_client, tenant, settings):
         # AcctNo guard (review C3): a credit to a different account is not booked.
@@ -175,6 +175,27 @@ class TestCoopIpnProcessing:
         event = CoopIpnEvent.objects.get(transaction_id="CB_NO_TYPE")
         assert event.status == CoopIpnStatus.IGNORED
         assert Payment.objects.count() == 0
+
+    def test_non_kes_currency_ignored(self, api_client, tenant):
+        payload = _credit(trans_id="CB_FX_1", bill_ref="A12")
+        payload["Currency"] = "USD"
+        resp = _post(api_client, payload)
+        assert resp.status_code == 200
+        event = CoopIpnEvent.objects.get(transaction_id="CB_FX_1")
+        assert event.status == CoopIpnStatus.IGNORED
+        assert "Non-KES" in event.detail
+        assert Payment.objects.count() == 0
+
+    @patch("apps.payments.coop_ipn.send_deposit_receipt.delay")
+    def test_amount_is_quantized_to_2dp(self, mock_receipt, api_client, tenant):
+        # Bank could send odd precision (e.g. interest fragment); we must round
+        # to 2dp before booking — otherwise DecimalField(decimal_places=2) raises.
+        payload = _credit(trans_id="CB_DP_1", bill_ref="A12", amount="1234.567")
+        resp = _post(api_client, payload)
+        assert resp.status_code == 200
+        event = CoopIpnEvent.objects.get(transaction_id="CB_DP_1")
+        assert event.status == CoopIpnStatus.RECORDED
+        assert event.amount == Decimal("1234.57")
 
     @patch("apps.payments.coop_ipn.send_deposit_receipt.delay")
     def test_idempotent_on_duplicate_transaction_id(self, mock_receipt, api_client, tenant):

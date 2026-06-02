@@ -243,3 +243,6 @@ ADMIN_ALERT_EMAIL = config("ADMIN_ALERT_EMAIL", default="")
 # Falls back to ADMIN_ALERT_* if unset.
 DIRECTOR_ALERT_PHONE = config("DIRECTOR_ALERT_PHONE", default="")
 DIRECTOR_ALERT_EMAIL = config("DIRECTOR_ALERT_EMAIL", default="")
+# Login email of the director — only this user may click "Authorize reversal"
+# in admin. Falls back to superuser-only when blank.
+DIRECTOR_EMAIL = config("DIRECTOR_EMAIL", default="")

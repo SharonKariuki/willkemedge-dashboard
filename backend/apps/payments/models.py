@@ -306,6 +306,7 @@ class CoopIpnStatus(models.TextChoices):
     DUPLICATE = "duplicate", "Duplicate"        # TransactionId already seen
     IGNORED = "ignored", "Ignored (non-credit)" # DEBIT/other event, not a reversal
     REVERSAL_PENDING = "reversal_pending", "Reversal — awaiting authorization"
+    REVERSAL_APPLIED = "reversal_applied", "Reversal applied"
     ERROR = "error", "Error"                    # could not parse / process
 
 
@@ -380,6 +381,17 @@ class CoopIpnEvent(models.Model):
         help_text="The Payment created from this event, if any.",
     )
     received_at = models.DateTimeField(auto_now_add=True)
+    # Maker-checker on REVERSAL_PENDING → REVERSAL_APPLIED. Set when (and only
+    # when) the authorising director clicks "Authorize reversal" in admin.
+    authorized_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+        help_text="Director who authorised this reversal (REVERSAL_PENDING → APPLIED).",
+    )
+    authorized_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = "payments_coop_ipn_event"

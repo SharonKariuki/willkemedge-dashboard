@@ -16,6 +16,7 @@ from django.db import transaction as db_transaction
 from django.http import HttpResponseRedirect
 from django.template.response import TemplateResponse
 from django.urls import path, reverse
+from django.utils import timezone
 from django.utils.html import format_html
 
 from .models import (
@@ -179,8 +180,31 @@ class CoopIpnEventAdmin(admin.ModelAdmin):
 
     @admin.action(description="✅  Authorize selected reversal(s) — voids linked payment(s)")
     def authorize_reversal_action(self, request, queryset):
-        pending = queryset.filter(status=CoopIpnStatus.REVERSAL_PENDING)
-        if not pending.exists():
+        # Maker-checker: only the authorising director may authorize a reversal.
+        # If DIRECTOR_EMAIL is set, gate on it; otherwise fall back to superuser.
+        from django.conf import settings as dj_settings
+        director_email = (getattr(dj_settings, "DIRECTOR_EMAIL", "") or "").strip().lower()
+        user_email = (request.user.email or "").strip().lower()
+        if director_email:
+            if user_email != director_email:
+                self.message_user(
+                    request,
+                    "Only the authorising director may authorize bank reversals.",
+                    level=messages.ERROR,
+                )
+                return
+        elif not request.user.is_superuser:
+            self.message_user(
+                request,
+                "Only a superuser (or the configured director) may authorize reversals.",
+                level=messages.ERROR,
+            )
+            return
+
+        pending_ids = list(
+            queryset.filter(status=CoopIpnStatus.REVERSAL_PENDING).values_list("pk", flat=True)
+        )
+        if not pending_ids:
             self.message_user(
                 request,
                 "No events with status 'Reversal — awaiting authorization' in selection.",
@@ -190,31 +214,40 @@ class CoopIpnEventAdmin(admin.ModelAdmin):
 
         voided = 0
         skipped = 0
-        for event in pending:
+        for event_id in pending_ids:
             try:
                 with db_transaction.atomic():
+                    # Lock the row and re-check status under the lock so a
+                    # concurrent click can't double-void.
+                    event = (
+                        CoopIpnEvent.objects.select_for_update()
+                        .get(pk=event_id)
+                    )
+                    if event.status != CoopIpnStatus.REVERSAL_PENDING:
+                        skipped += 1
+                        continue
                     if event.payment_id:
                         _void_payment(
                             event.payment,
                             notes=f"Authorized reversal by {request.user}; "
                                   f"IPN event #{event.pk} ({event.transaction_id})",
                         )
-                        voided += 1
-                    # Recalculate arrears for the affected period
-                    if event.payment_id:
                         p = event.payment
                         from .services import _update_arrears
                         _update_arrears(p.tenant, p.period_month, p.period_year)
-                    event.status = CoopIpnStatus.RECORDED
-                    event.detail = (
-                        f"{event.detail}; reversal authorized by {request.user}"
-                    )
-                    event.save(update_fields=["status", "detail"])
+                        voided += 1
+                    event.status = CoopIpnStatus.REVERSAL_APPLIED
+                    event.detail = f"{event.detail}; authorized by {request.user}"
+                    event.authorized_by = request.user
+                    event.authorized_at = timezone.now()
+                    event.save(update_fields=[
+                        "status", "detail", "authorized_by", "authorized_at",
+                    ])
             except Exception as exc:  # noqa: BLE001
                 skipped += 1
                 self.message_user(
                     request,
-                    f"Error processing event #{event.pk}: {exc}",
+                    f"Error processing event #{event_id}: {exc}",
                     level=messages.ERROR,
                 )
 

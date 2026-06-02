@@ -35,7 +35,7 @@ kept, so the parser can be refined and history re-processed without data loss.
 import datetime as dt
 import hmac
 import logging
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 from django.conf import settings
 from django.db import IntegrityError
@@ -229,9 +229,13 @@ class CoopIpnView(APIView):
         expected_acct = str(getattr(settings, "COOP_ACCOUNT_NUMBER", "") or "").strip()
 
         try:
-            amount = Decimal(str(payload.get("Amount", "0")))
+            amount = Decimal(str(payload.get("Amount", "0"))).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
         except (InvalidOperation, TypeError):
             amount = Decimal("0")
+
+        currency = str(payload.get("Currency", "") or "").strip().upper()
 
         receipt_args = None  # (tenant_id, amount_str, reference, posting_date_iso)
 
@@ -253,6 +257,9 @@ class CoopIpnView(APIView):
                 if expected_acct and acct != expected_acct:
                     event.status = CoopIpnStatus.IGNORED
                     event.detail = "Credit to non-target account"
+                elif currency and currency != "KES":
+                    event.status = CoopIpnStatus.IGNORED
+                    event.detail = f"Non-KES currency ({currency})"
                 elif event_type != "CREDIT":
                     is_reversal, original = _reversal_check(event_type, narration, payload)
                     if is_reversal:
