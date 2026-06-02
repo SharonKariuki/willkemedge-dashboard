@@ -27,7 +27,6 @@ from .models import (
     UtilityCharge,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -261,7 +260,6 @@ class CoopIpnEventAdmin(admin.ModelAdmin):
 
     def assign_tenant_view(self, request, event_id):
         """Intermediate admin page to pick a tenant for an unmatched IPN credit."""
-        from django.utils import timezone
 
         from .services import allocate_payment_fifo
         from .tasks import send_deposit_receipt
@@ -283,8 +281,8 @@ class CoopIpnEventAdmin(admin.ModelAdmin):
                 tenant = form.cleaned_data["tenant"]
                 try:
                     with db_transaction.atomic():
-                        from .coop_ipn import _posting_date, _parse_narration
-                        import datetime as dt
+
+                        from .coop_ipn import _parse_narration, _posting_date
 
                         pay_date = _posting_date(event.raw_payload or {})
                         channel = _parse_narration(event.narration).get(

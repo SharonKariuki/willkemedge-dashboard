@@ -70,7 +70,7 @@ def _post(client, payload, token=TOKEN):
 def _credit(trans_id="CB0089060_1", amount="20000", narration=None, bill_ref="A12"):
     # Narration mirrors the spec's M-Pesa sample layout.
     if narration is None:
-        narration = f"TIP6V5IRAE~254707919065~01120000568900~MPESAC2B_400200~MELVIN WANJIKU"
+        narration = "TIP6V5IRAE~254707919065~01120000568900~MPESAC2B_400200~MELVIN WANJIKU"
     return {
         "AcctNo": "01136069098300",
         "Amount": amount,
