@@ -136,16 +136,26 @@ def _posting_date(payload: dict) -> dt.date:
 def _parse_narration(narration: str) -> dict:
     """Extract payer details + channel from the tilde-delimited narration.
 
-    Spec M-Pesa sample:
-        TIP6V5IRAE~254707919065~01120000568900~MPESAC2B_400200~MELVIN WANJIKU
-        (code)    ~(payer phone)~(account)     ~(channel marker)~(payer name)
+    Real M-Pesa C2B format observed from Co-op IPN on Paybill 400222:
+        UF7HG6UZBO~90290#A12~254726012481~MPESAC2B_400222~HUSSEIN HAMISI
+        (code)    ~(bill ref)~(payer phone)~(channel + paybill)~(payer name)
+
+    Earlier spec sample had positions 1 and 2 swapped (phone first, then
+    account). Both layouts work: we scan positions 1 and 2 for whichever one
+    looks like a Kenyan MSISDN (12 digits starting with 254) and take that as
+    the payer phone. Bill ref candidates are surfaced via `tokens` and tried
+    by `_resolve_tenant` in narration order.
+
     Missing pieces come back empty; the caller decides how to match.
     """
     parts = [p.strip() for p in (narration or "").split("~")]
     channel = PaymentSource.MPESA if "MPESAC2B" in (narration or "").upper() else PaymentSource.BANK
     payer_phone = ""
-    if channel == PaymentSource.MPESA and len(parts) >= 2 and parts[1].isdigit():
-        payer_phone = parts[1]
+    if channel == PaymentSource.MPESA:
+        for candidate in parts[1:3]:  # check both position 1 and position 2
+            if candidate.isdigit() and candidate.startswith("254") and len(candidate) == 12:
+                payer_phone = candidate
+                break
     return {"channel": channel, "payer_phone": payer_phone, "tokens": [p for p in parts if p]}
 
 

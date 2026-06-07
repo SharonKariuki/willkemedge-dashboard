@@ -126,6 +126,41 @@ class TestCoopIpnProcessing:
         mock_alert.assert_called_once()
 
     @patch("apps.payments.coop_ipn.send_deposit_receipt.delay")
+    @patch("apps.payments.coop_ipn.send_unmatched_credit_alert.delay")
+    def test_real_world_narration_format_extracts_phone_from_position_2(
+        self, mock_alert, mock_receipt, api_client, tenant
+    ):
+        # Real production format observed from Co-op IPN: position 1 = bill ref,
+        # position 2 = payer phone (positions 1 and 2 are SWAPPED vs the spec sample).
+        # When the payer's bill ref is incomplete (e.g. "90290#" with no house number),
+        # phone fallback should still kick in.
+        narration = "UF7HG6UZBO~90290#~254707919065~MPESAC2B_400222~HUSSEIN HAMISI"
+        resp = _post(api_client, _credit(trans_id="CB_REAL_1", narration=narration, bill_ref="90290#"))
+        assert resp.status_code == 200
+        event = CoopIpnEvent.objects.get(transaction_id="CB_REAL_1")
+        # Bill ref "90290#" normalises to empty → no bill-ref match.
+        # Phone at position 2 (254707919065) matches the fixture tenant.
+        # Phone-only → low confidence → UNMATCHED queued for review (H2).
+        assert event.status == CoopIpnStatus.UNMATCHED
+        assert "Low-confidence" in event.detail
+        assert Payment.objects.count() == 0
+        mock_alert.assert_called_once()
+
+    @patch("apps.payments.coop_ipn.send_deposit_receipt.delay")
+    def test_real_world_narration_matches_when_billref_is_complete(
+        self, mock_receipt, api_client, tenant
+    ):
+        # Same real-world layout but the payer typed a complete bill ref
+        # ("90290#A12") — should match the tenant on unit A12 and be RECORDED.
+        narration = "UF7HG6UZBO~90290#A12~254707919065~MPESAC2B_400222~HUSSEIN HAMISI"
+        resp = _post(api_client, _credit(trans_id="CB_REAL_2", narration=narration, bill_ref="90290#A12"))
+        assert resp.status_code == 200
+        event = CoopIpnEvent.objects.get(transaction_id="CB_REAL_2")
+        assert event.status == CoopIpnStatus.RECORDED
+        assert Payment.objects.count() == 1
+        mock_receipt.assert_called_once()
+
+    @patch("apps.payments.coop_ipn.send_deposit_receipt.delay")
     def test_credit_booked_to_posting_date_period(self, mock_receipt, api_client, tenant):
         # PostingDate in a prior month must drive the payment period (review C2).
         payload = _credit(bill_ref="A12")
