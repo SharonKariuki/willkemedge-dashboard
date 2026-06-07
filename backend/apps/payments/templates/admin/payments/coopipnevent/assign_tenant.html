@@ -1,0 +1,71 @@
+{% extends "admin/base_site.html" %}
+{% load static %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block breadcrumbs %}
+  <div class="breadcrumbs">
+    <a href="{% url 'admin:index' %}">Home</a>
+    &rsaquo; <a href="{% url 'admin:app_list' app_label=opts.app_label %}">{{ opts.app_config.verbose_name }}</a>
+    &rsaquo; <a href="{% url 'admin:payments_coopipnevent_changelist' %}">{{ opts.verbose_name_plural|capfirst }}</a>
+    &rsaquo; <a href="{% url 'admin:payments_coopipnevent_change' event.pk %}">IPN {{ event.transaction_id }}</a>
+    &rsaquo; Assign to tenant
+  </div>
+{% endblock %}
+
+{% block content %}
+<div id="content-main">
+
+  <h1>Assign unmatched bank credit</h1>
+
+  <fieldset class="module aligned">
+    <h2>Credit details</h2>
+    <div class="form-row">
+      <div><label>Amount:</label> <strong>KES {{ event.amount }}</strong></div>
+    </div>
+    <div class="form-row">
+      <div><label>Transaction ID:</label> {{ event.transaction_id }}</div>
+    </div>
+    <div class="form-row">
+      <div><label>Payment Ref:</label> {{ event.payment_ref|default:"—" }}</div>
+    </div>
+    <div class="form-row">
+      <div><label>Channel:</label> {{ event.get_channel_display }}</div>
+    </div>
+    <div class="form-row">
+      <div><label>Received at:</label> {{ event.received_at }}</div>
+    </div>
+    <div class="form-row">
+      <div><label>Narration:</label></div>
+      <pre style="white-space:pre-wrap;background:#f5f5f5;padding:8px;border-radius:4px">{{ event.narration }}</pre>
+    </div>
+  </fieldset>
+
+  <form method="post">
+    {% csrf_token %}
+
+    <fieldset class="module aligned">
+      <h2>Assign to</h2>
+      {% if form.non_field_errors %}
+        <p class="errornote">{{ form.non_field_errors }}</p>
+      {% endif %}
+      {% for field in form %}
+        <div class="form-row {% if field.errors %}errors{% endif %}">
+          {{ field.errors }}
+          <div>
+            {{ field.label_tag }}
+            {{ field }}
+            {% if field.help_text %}<p class="help">{{ field.help_text }}</p>{% endif %}
+          </div>
+        </div>
+      {% endfor %}
+    </fieldset>
+
+    <div class="submit-row">
+      <input type="submit" value="Assign and record payment" class="default" />
+      <a href="{% url 'admin:payments_coopipnevent_changelist' %}" class="button cancel-link">Cancel</a>
+    </div>
+  </form>
+
+</div>
+{% endblock %}
