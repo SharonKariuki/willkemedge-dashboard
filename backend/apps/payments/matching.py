@@ -35,14 +35,27 @@ def normalize_bill_ref(bill_ref: str) -> str:
 
 
 def match_tenant(bill_ref: str) -> Tenant | None:
-    """Match a (normalised) BillRefNumber to the active tenant on that unit."""
+    """Match a (normalised) BillRefNumber to the active tenant on that unit.
+
+    Returns None when:
+      - the normalised ref is empty
+      - no Unit has that label
+      - more than one Unit shares that label across buildings (ambiguous —
+        we refuse to silently guess which one; the event lands in the
+        UNMATCHED queue for admin review). Today's seed data has no
+        collisions, but a future building could introduce one.
+    """
     house_number = normalize_bill_ref(bill_ref)
     if not house_number:
         return None
-    unit = Unit.objects.filter(label__iexact=house_number).first()
-    if not unit:
+    units = list(Unit.objects.filter(label__iexact=house_number)[:2])
+    if not units:
         return None
-    return Tenant.objects.filter(unit=unit, status=TenantStatus.ACTIVE).first()
+    if len(units) > 1:
+        # Ambiguous — multiple buildings share this label. Caller will
+        # treat the event as UNMATCHED so an admin can disambiguate.
+        return None
+    return Tenant.objects.filter(unit=units[0], status=TenantStatus.ACTIVE).first()
 
 
 def normalize_msisdn(phone: str | int) -> str:

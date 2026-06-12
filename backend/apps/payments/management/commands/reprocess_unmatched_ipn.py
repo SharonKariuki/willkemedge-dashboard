@@ -36,6 +36,18 @@ class Command(BaseCommand):
             action="store_true",
             help="Show what would be matched without changing any records.",
         )
+        parser.add_argument(
+            "--auto-confirm",
+            action="store_true",
+            help=(
+                "Also auto-record events where ONLY the payer phone matched "
+                "an active tenant. USE WITH CARE — bypasses the manual "
+                "confirmation step on phone-only matches. Wrong matches "
+                "(e.g. a relative paying from another tenant's phone) can "
+                "still be reversed via the admin reversal flow, but you "
+                "trade the per-event safety check for speed."
+            ),
+        )
 
     def handle(self, *args, **opts):
         from apps.payments.coop_ipn import (
@@ -49,13 +61,19 @@ class Command(BaseCommand):
         from apps.payments.tasks import send_deposit_receipt
 
         dry = opts["dry_run"]
+        auto = opts["auto_confirm"]
         events = CoopIpnEvent.objects.filter(status=CoopIpnStatus.UNMATCHED).order_by("received_at")
         total = events.count()
+        suffix = ""
+        if auto:
+            suffix += " — auto-confirming phone matches"
+        if dry:
+            suffix += " — dry run"
         self.stdout.write(self.style.MIGRATE_HEADING(
-            f"Reprocessing {total} unmatched event(s)" + (" — dry run" if dry else "")
+            f"Reprocessing {total} unmatched event(s){suffix}"
         ))
 
-        recorded = low_conf = still_unmatched = errored = 0
+        recorded = auto_recorded = low_conf = still_unmatched = errored = 0
 
         for event in events:
             payload = event.raw_payload or {}
@@ -76,8 +94,11 @@ class Command(BaseCommand):
                 )
                 continue
 
-            if not confident:
-                # Phone-only / name-only → refresh detail, keep UNMATCHED for admin confirm.
+            # When --auto-confirm is set, treat phone matches as confident.
+            effective_confident = confident or auto
+
+            if not effective_confident:
+                # Phone-only → refresh detail, keep UNMATCHED for admin confirm.
                 new_detail = f"Low-confidence match: {tenant} ({matched_by}) — verify in admin"
                 self.stdout.write(self.style.WARNING(
                     f"  #{event.pk} {event.transaction_id} KES {event.amount} → "
@@ -89,39 +110,51 @@ class Command(BaseCommand):
                 low_conf += 1
                 continue
 
-            # Confident bill-ref match → allocate + record.
-            self.stdout.write(self.style.SUCCESS(
+            # Will be recorded.
+            tag = "AUTO-RECORD" if (not confident and auto) else "RECORD"
+            style = self.style.NOTICE if tag == "AUTO-RECORD" else self.style.SUCCESS
+            self.stdout.write(style(
                 f"  #{event.pk} {event.transaction_id} KES {event.amount} → "
-                f"RECORD: {tenant} ({matched_by})"
+                f"{tag}: {tenant} ({matched_by})"
             ))
             if dry:
-                recorded += 1
+                if not confident:
+                    auto_recorded += 1
+                else:
+                    recorded += 1
                 continue
 
             try:
                 with db_transaction.atomic():
                     pay_date = _posting_date(payload)
+                    is_auto = (not confident) and auto
+                    notes = (
+                        f"Reprocessed from unmatched queue; matched by {matched_by} "
+                        f"({'auto-confirmed phone' if is_auto else 'bill_ref'}); "
+                        f"ref {event.payment_ref}"
+                    )
                     payments = allocate_payment_fifo(
                         tenant=tenant,
                         amount=event.amount,
                         payment_date=pay_date,
                         source=parsed["channel"],
                         reference=event.transaction_id,
-                        notes=(
-                            f"Reprocessed from unmatched queue; matched by {matched_by}; "
-                            f"ref {event.payment_ref}"
-                        ),
+                        notes=notes,
                     )
                     event.status = CoopIpnStatus.RECORDED
                     split = f" across {len(payments)} periods" if len(payments) > 1 else ""
-                    event.detail = f"Reprocessed — matched by {matched_by}{split}"[:255]
+                    prefix = "Auto-confirmed" if is_auto else "Reprocessed"
+                    event.detail = f"{prefix} — matched by {matched_by}{split}"[:255]
                     event.payment = payments[0]
                     event.save(update_fields=["status", "detail", "payment"])
                 _safe_enqueue(
                     send_deposit_receipt,
                     tenant.id, str(event.amount), event.transaction_id, pay_date.isoformat(),
                 )
-                recorded += 1
+                if is_auto:
+                    auto_recorded += 1
+                else:
+                    recorded += 1
             except IntegrityError as exc:
                 self.stdout.write(self.style.ERROR(
                     f"    DB error on #{event.pk}: {exc}"
@@ -134,8 +167,14 @@ class Command(BaseCommand):
                 errored += 1
 
         self.stdout.write("")
+        parts = [
+            f"{recorded} recorded (bill-ref match)",
+        ]
+        if auto:
+            parts.append(f"{auto_recorded} auto-recorded (phone match)")
+        parts.append(f"{low_conf} low-confidence (need admin click)")
+        parts.append(f"{still_unmatched} still unmatched")
+        parts.append(f"{errored} errored")
         self.stdout.write(self.style.SUCCESS(
-            f"Summary ({'dry-run' if dry else 'committed'}): "
-            f"{recorded} recorded, {low_conf} low-confidence (need admin click), "
-            f"{still_unmatched} still unmatched, {errored} errored."
+            f"Summary ({'dry-run' if dry else 'committed'}): " + ", ".join(parts) + "."
         ))

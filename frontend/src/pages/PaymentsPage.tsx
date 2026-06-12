@@ -1,5 +1,5 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Banknote, Building2, CreditCard, FileText, Mail, Plus, Smartphone, Sparkles, UserPlus, Wallet, X } from "lucide-react";
+import { Banknote, Building2, CreditCard, FileText, Mail, Plus, Smartphone, UserPlus, Wallet, X } from "lucide-react";
 
 import { cloneElement, isValidElement, useId, useState } from "react";
 import { useForm } from "react-hook-form";
@@ -27,7 +27,6 @@ import {
 import {
   useCollectionProgress,
   useCreatePayment,
-  useMockPayment,
   usePayments,
   useResendReceipt,
 } from "@/hooks/usePayments";
@@ -53,12 +52,6 @@ const PAYMENT_TYPES = [
 ] as const;
 
 const now = new Date();
-
-// A mock payment amount must parse to a positive number.
-const mockAmountSchema = z
-  .string()
-  .min(1, "Enter an amount")
-  .refine((v) => Number(v) > 0, "Amount must be a positive number");
 
 const schema = z.object({
   tenant: z.coerce.number().min(1, "Select a tenant"),
@@ -123,142 +116,9 @@ function Field({
   );
 }
 
-interface MockTenant {
-  id: number;
-  full_name: string;
-  unit_label: string;
-  monthly_rent: string;
-}
-
-function MockPaymentPanel({
-  tenants,
-  tenantsLoading,
-  isPending,
-  onSubmit,
-}: {
-  tenants: MockTenant[];
-  tenantsLoading: boolean;
-  isPending: boolean;
-  onSubmit: (payload: { tenant: number; amount: string; source: "mpesa" | "bank" | "cash" }) => Promise<void>;
-}) {
-  const [tenantId, setTenantId] = useState<number>(tenants[0]?.id ?? 0);
-  const [amount, setAmount] = useState<string>("");
-  const [source, setSource] = useState<"mpesa" | "bank" | "cash">("mpesa");
-  const [amountError, setAmountError] = useState<string | undefined>();
-
-  const selectedTenant = tenants.find((t) => t.id === Number(tenantId));
-  const effectiveAmount = amount || selectedTenant?.monthly_rent || "";
-
-  const submit = async () => {
-    if (!tenantId) {
-      toast.error("Select a tenant");
-      return;
-    }
-    const parsed = mockAmountSchema.safeParse(effectiveAmount);
-    if (!parsed.success) {
-      const message = parsed.error.issues[0]?.message ?? "Enter a valid amount";
-      setAmountError(message);
-      toast.error(message);
-      return;
-    }
-    setAmountError(undefined);
-    await onSubmit({ tenant: tenantId, amount: String(Number(parsed.data)), source });
-  };
-
-  const SOURCE_OPTIONS: { value: "mpesa" | "bank" | "cash"; label: string; icon: React.ComponentType<{ className?: string }>; desc: string }[] = [
-    { value: "mpesa", label: "M-Pesa", icon: Smartphone, desc: "Generates a TransID like MP1234ABCD" },
-    { value: "bank", label: "Bank", icon: Building2, desc: "Generates a bank reference BK1234ABCD" },
-    { value: "cash", label: "Cash", icon: Banknote, desc: "Cash paid at the office" },
-  ];
-
-  return (
-    <Card variant="glass" padding="md" className="animate-fade-up">
-      <div className="mb-4 flex items-start justify-between gap-3">
-        <div>
-          <p className="font-display text-lg font-semibold text-ink-900">Simulate a payment</p>
-          <p className="text-xs text-ink-500">
-            Generates a realistic mock payment from M-Pesa, a bank transfer, or cash — including
-            reference number and full arrears/unit-status processing.
-          </p>
-        </div>
-        <Badge tone="ochre">
-          <Sparkles className="h-3 w-3" />
-          Demo
-        </Badge>
-      </div>
-
-      <div className="mb-4 grid gap-2 sm:grid-cols-3">
-        {SOURCE_OPTIONS.map((opt) => {
-          const Icon = opt.icon;
-          const active = source === opt.value;
-          return (
-            <button
-              key={opt.value}
-              type="button"
-              onClick={() => setSource(opt.value)}
-              className={cn(
-                "rounded-md p-3 text-left transition-all",
-                active
-                  ? "bg-ink-900 text-canvas shadow-float dark:bg-ink-100 dark:text-canvas"
-                  : "glass text-ink-700 hover:shadow-float"
-              )}
-            >
-              <div className="flex items-center gap-2">
-                <Icon className="h-4 w-4" />
-                <span className="font-medium">{opt.label}</span>
-              </div>
-              <p className={cn("mt-1 text-[11px]", active ? "text-canvas/70" : "text-ink-500")}>
-                {opt.desc}
-              </p>
-            </button>
-          );
-        })}
-      </div>
-
-      <div className="grid gap-3 sm:grid-cols-3">
-        <Field label="Tenant *">
-          <select
-            value={tenantId || 0}
-            onChange={(e) => setTenantId(Number(e.target.value))}
-            className={inputCls}
-            disabled={tenantsLoading}
-          >
-            <option value={0}>
-              {tenantsLoading ? "Loading…" : "Select tenant…"}
-            </option>
-            {tenants.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.full_name} ({t.unit_label})
-              </option>
-            ))}
-          </select>
-        </Field>
-        <Field label={`Amount (KES)${selectedTenant ? ` — rent KES ${Number(selectedTenant.monthly_rent).toLocaleString()}` : ""}`} error={amountError}>
-          <input
-            type="number"
-            min="0"
-            inputMode="decimal"
-            value={amount}
-            onChange={(e) => { setAmount(e.target.value); if (amountError) setAmountError(undefined); }}
-            placeholder={selectedTenant?.monthly_rent ?? "e.g. 15000"}
-            className={inputCls}
-          />
-        </Field>
-        <div className="flex items-end">
-          <Button onClick={submit} loading={isPending} className="w-full">
-            <CreditCard className="h-4 w-4" />
-            Simulate {source.toUpperCase()}
-          </Button>
-        </div>
-      </div>
-    </Card>
-  );
-}
-
 export default function PaymentsPage() {
   const [sourceFilter, setSourceFilter] = useState("");
   const [showForm, setShowForm] = useState(false);
-  const [showMock, setShowMock] = useState(false);
 
   const handleDownloadReceipt = async (txnId: number) => {
     try {
@@ -286,7 +146,6 @@ export default function PaymentsPage() {
   const { data: progress } = useCollectionProgress();
   const { data: tenants, isLoading: tenantsLoading } = useTenants({ status: "active" });
   const createPayment = useCreatePayment();
-  const mockPayment = useMockPayment();
 
   const hasTenants = (tenants?.length ?? 0) > 0;
 
@@ -330,21 +189,8 @@ export default function PaymentsPage() {
         actions={
           <div className="flex flex-wrap gap-2">
             <Button
-              variant="outline"
-              onClick={() => {
-                setShowMock((v) => !v);
-                if (!showMock) setShowForm(false);
-              }}
-            >
-              {showMock ? <X className="h-4 w-4" /> : <Sparkles className="h-4 w-4" />}
-              {showMock ? "Cancel" : "Simulate Payment"}
-            </Button>
-            <Button
               variant="gold"
-              onClick={() => {
-                setShowForm((v) => !v);
-                if (!showForm) setShowMock(false);
-              }}
+              onClick={() => setShowForm((v) => !v)}
             >
               {showForm ? <X className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
               {showForm ? "Cancel" : "Record Payment"}
@@ -352,23 +198,6 @@ export default function PaymentsPage() {
           </div>
         }
       />
-
-      {showMock && (
-        <MockPaymentPanel
-          tenants={tenants ?? []}
-          tenantsLoading={tenantsLoading}
-          isPending={mockPayment.isPending}
-          onSubmit={async (payload) => {
-            try {
-              await mockPayment.mutateAsync(payload);
-              toast.success(`Mock ${payload.source.toUpperCase()} payment recorded`);
-              setShowMock(false);
-            } catch (e) {
-              toast.error(getErrorMessage(e, "Failed to simulate payment"));
-            }
-          }}
-        />
-      )}
 
       {/* Collection progress */}
       {progress ? (
