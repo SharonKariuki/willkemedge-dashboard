@@ -104,6 +104,18 @@ class Expense(models.Model):
         help_text="Year the expense applies to.",
     )
     notes = models.TextField(blank=True)
+
+    class PaymentMethod(models.TextChoices):
+        BANK = "bank", "Bank / MPESA"
+        PETTY_CASH = "petty_cash", "Petty Cash"
+
+    payment_method = models.CharField(
+        max_length=10,
+        choices=PaymentMethod.choices,
+        default=PaymentMethod.BANK,
+        help_text="How this expense was paid — determines whether 1020 (bank) or 1010 (petty cash) is credited.",
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
