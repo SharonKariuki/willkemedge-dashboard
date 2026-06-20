@@ -99,7 +99,7 @@ class Command(BaseCommand):
         try:
             as_of = dt.date.fromisoformat(opts["as_of"])
         except ValueError:
-            raise CommandError(f"--as-of must be YYYY-MM-DD, got {opts['as_of']!r}")
+            raise CommandError(f"--as-of must be YYYY-MM-DD, got {opts['as_of']!r}") from None
 
         rows = self._read_csv(opts["csv_path"])
         self.stdout.write(f"Parsed {len(rows)} unit row(s) from {opts['csv_path']}.")
@@ -224,7 +224,7 @@ class Command(BaseCommand):
                     self.stdout.write(self.style.WARNING("\n--dry-run: rolling back, nothing written."))
                     transaction.set_rollback(True)
         except Exception as exc:
-            raise CommandError(f"Load failed (rolled back): {exc}")
+            raise CommandError(f"Load failed (rolled back): {exc}") from exc
 
         if not opts["dry_run"]:
             self.stdout.write(self.style.SUCCESS("\nLoad committed."))
@@ -240,7 +240,7 @@ class Command(BaseCommand):
                     raise CommandError(f"CSV missing columns: {', '.join(sorted(missing))}")
                 return [r for r in reader if any((v or "").strip() for v in r.values())]
         except FileNotFoundError:
-            raise CommandError(f"CSV not found: {path}")
+            raise CommandError(f"CSV not found: {path}") from None
 
     def _reset(self, Building, Unit, Tenant, Arrears, Payment, force):
         payment_count = Payment.objects.count()

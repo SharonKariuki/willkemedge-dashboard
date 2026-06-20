@@ -118,7 +118,6 @@ class Command(BaseCommand):
             self._report_trial_balance()
 
     def _report_trial_balance(self):
-        from django.db.models import Sum
 
         from apps.ledger.models import JournalLine
 

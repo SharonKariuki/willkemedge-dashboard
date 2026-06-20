@@ -45,7 +45,7 @@ def _get_account(code: str) -> Account:
     try:
         return Account.objects.get(code=code, is_header=False)
     except Account.DoesNotExist:
-        raise ValueError(f"GL account {code!r} not found in Chart of Accounts.")
+        raise ValueError(f"GL account {code!r} not found in Chart of Accounts.") from None
 
 
 def _as_date(value) -> datetime.date:
