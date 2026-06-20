@@ -75,6 +75,61 @@ def match_tenant(bill_ref: str) -> Tenant | None:
     return Tenant.objects.filter(unit=unit, status=TenantStatus.ACTIVE).first()
 
 
+# Tokens that are common in tenant fields but carry no identity (titles,
+# suffixes, business connectors). We strip them before name comparisons so
+# they don't inflate the match score.
+_NAME_STOPWORDS = {
+    "CO", "MR", "MRS", "MS", "DR", "PROF", "REV",
+    "LTD", "LIMITED", "COMPANY", "ENTERPRISES", "CONSULT", "CONSULTANCY",
+    "AND", "THE",
+}
+_NAME_NON_ALNUM_RE = re.compile(r"[^A-Z0-9]+")
+
+
+def _name_tokens(text: str) -> set[str]:
+    """Uppercase, strip punctuation/diacritics, drop short or generic words."""
+    cleaned = _NAME_NON_ALNUM_RE.sub(" ", (text or "").upper())
+    return {w for w in cleaned.split() if len(w) >= 2 and w not in _NAME_STOPWORDS}
+
+
+def tenant_by_name(sender_name: str) -> Tenant | None:
+    """Find the active tenant whose name overlaps with the payer's name.
+
+    Token-based: lowercases / strips punctuation, requires at least TWO
+    shared meaningful tokens between the sender and the tenant's
+    first_name + last_name + care_of. The highest-scoring tenant wins;
+    ties return None so an admin disambiguates.
+
+    Useful for bank transfers (no payer phone in PESALINK narration) and
+    for M-Pesa payments where the payer's phone isn't in the system but
+    their name matches a tenant on the rent roll.
+
+    Conservative on purpose — the IPN handler treats this as a
+    low-confidence match (same H2 safety as the phone fallback).
+    """
+    sender = _name_tokens(sender_name)
+    if len(sender) < 2:
+        return None
+
+    candidates: list[tuple[int, Tenant]] = []
+    for tenant in Tenant.objects.filter(status=TenantStatus.ACTIVE).only(
+        "id", "first_name", "last_name", "care_of"
+    ):
+        haystack = f"{tenant.first_name or ''} {tenant.last_name or ''} {tenant.care_of or ''}"
+        common = sender & _name_tokens(haystack)
+        if len(common) >= 2:
+            candidates.append((len(common), tenant))
+
+    if not candidates:
+        return None
+    candidates.sort(key=lambda c: -c[0])
+    # Clear winner only — tied scores would mean two equally good candidates,
+    # which is exactly the ambiguity we refuse to silently guess on.
+    if len(candidates) == 1 or candidates[0][0] > candidates[1][0]:
+        return candidates[0][1]
+    return None
+
+
 def normalize_msisdn(phone: str | int) -> str:
     """Reduce any Kenyan phone format to bare digits starting with 254."""
     digits = "".join(c for c in str(phone) if c.isdigit())

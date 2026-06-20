@@ -47,7 +47,7 @@ from rest_framework.response import Response
 from rest_framework.throttling import SimpleRateThrottle
 from rest_framework.views import APIView
 
-from .matching import match_tenant, tenant_by_phone
+from .matching import match_tenant, tenant_by_name, tenant_by_phone
 from .models import CoopIpnEvent, CoopIpnStatus, PaymentSource
 from .services import allocate_payment_fifo
 from .tasks import (
@@ -149,21 +149,42 @@ def _parse_narration(narration: str) -> dict:
     Missing pieces come back empty; the caller decides how to match.
     """
     parts = [p.strip() for p in (narration or "").split("~")]
-    channel = PaymentSource.MPESA if "MPESAC2B" in (narration or "").upper() else PaymentSource.BANK
+    upper = (narration or "").upper()
     payer_phone = ""
-    if channel == PaymentSource.MPESA:
-        for candidate in parts[1:3]:  # check both position 1 and position 2
+    payer_name = ""
+    if "MPESAC2B" in upper:
+        channel = PaymentSource.MPESA
+        # phone at position 1 or 2 (whichever looks like a Kenyan MSISDN)
+        for candidate in parts[1:3]:
             if candidate.isdigit() and candidate.startswith("254") and len(candidate) == 12:
                 payer_phone = candidate
                 break
-    return {"channel": channel, "payer_phone": payer_phone, "tokens": [p for p in parts if p]}
+        # M-Pesa C2B narration: payer name is the last segment.
+        if len(parts) >= 5:
+            payer_name = parts[4]
+    elif "PESALINK" in upper:
+        channel = PaymentSource.BANK
+        # PESALINK narration: sender name at position 2.
+        if len(parts) >= 3:
+            payer_name = parts[2]
+    else:
+        channel = PaymentSource.BANK
+    return {
+        "channel": channel,
+        "payer_phone": payer_phone,
+        "payer_name": payer_name,
+        "tokens": [p for p in parts if p],
+    }
 
 
 def _resolve_tenant(payload: dict, parsed: dict):
     """Best-effort tenant match. Returns (tenant_or_None, matched_by, confident).
 
-    Order: explicit bill-ref tokens (high confidence), then payer phone
-    (low confidence — a payer may transfer for a different unit; review H2)."""
+    Tiers, tried in order:
+      1. Bill-ref tokens (high confidence — exact unit label or alias)
+      2. Payer phone (low confidence — may be a relative)
+      3. Payer name (low confidence — names can collide, typos happen)
+    """
     candidates = list(parsed["tokens"])
     for key in ("BillRefNumber", "bill_ref", "CustMemoLine1", "CustMemoLine2", "CustMemoLine3"):
         val = payload.get(key)
@@ -177,6 +198,10 @@ def _resolve_tenant(payload: dict, parsed: dict):
         tenant = tenant_by_phone(parsed["payer_phone"])
         if tenant:
             return tenant, "phone", False
+    if parsed.get("payer_name"):
+        tenant = tenant_by_name(parsed["payer_name"])
+        if tenant:
+            return tenant, f"name:{parsed['payer_name']}", False
     return None, "", False
 
 
