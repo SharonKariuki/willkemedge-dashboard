@@ -14,13 +14,17 @@ collide with the existing portfolio:
 
     python manage.py check_unit_label_collisions
 """
+import sys
 from collections import defaultdict
 
 from django.core.management.base import BaseCommand
 
 
 class Command(BaseCommand):
-    help = "Report any Unit labels that collide across buildings."
+    help = (
+        "Report any Unit labels that collide across buildings. "
+        "Exits non-zero on collision so it can gate a deploy / building onboarding."
+    )
 
     def handle(self, *args, **options):
         from apps.buildings.models import Unit
@@ -51,6 +55,9 @@ class Command(BaseCommand):
 
         self.stdout.write(self.style.WARNING(
             "Bill refs matching any of these labels CANNOT auto-assign. "
-            "Rename one side (e.g. add a building prefix like 'MAT-G01') "
+            "Rename one side (e.g. prefix with the building code like 'DON1A') "
             "and re-run."
         ))
+        # Non-zero exit so this can gate a deploy / the relabel migration, which
+        # would otherwise fail when adding the global unique-label constraint.
+        sys.exit(1)

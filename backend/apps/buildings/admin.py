@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Building, Unit
+from .models import Building, Unit, UnitAlias
 
 
 class UnitInline(admin.TabularInline):
@@ -10,12 +10,19 @@ class UnitInline(admin.TabularInline):
     readonly_fields = ("status",)
 
 
+class UnitAliasInline(admin.TabularInline):
+    model = UnitAlias
+    extra = 0
+    fields = ("label", "note", "created_at")
+    readonly_fields = ("created_at",)
+
+
 @admin.register(Building)
 class BuildingAdmin(admin.ModelAdmin):
     list_display = ("name", "address", "total_floors", "paybill_number", "created_at")
     search_fields = ("name",)
     fieldsets = (
-        (None, {"fields": ("name", "address", "total_floors", "notes")}),
+        (None, {"fields": ("name", "code", "address", "total_floors", "notes")}),
         ("Statement header", {
             "fields": ("legal_name", "postal_address", "contact_phone", "contact_email"),
         }),
@@ -35,3 +42,10 @@ class UnitAdmin(admin.ModelAdmin):
     list_filter = ("status", "unit_type", "building")
     search_fields = ("label", "building__name")
     readonly_fields = ("status",)
+    inlines = [UnitAliasInline]
+
+
+@admin.register(UnitAlias)
+class UnitAliasAdmin(admin.ModelAdmin):
+    list_display = ("label", "unit", "note", "created_at")
+    search_fields = ("label", "unit__label", "unit__building__name")

@@ -26,17 +26,18 @@ Income (credit-normal):
 Expenses (debit-normal):
   5xxx / 6xxx  — from expense.category.account
 """
+import datetime
 from decimal import Decimal
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.utils.dateparse import parse_date
 
 from apps.buildings.models import UnitClassification
 from apps.expenses.models import Account
 from apps.payments.models import PaymentType
 
 from .models import JournalEntry, JournalLine
-
 
 # ── helpers ────────────────────────────────────────────────────────────────
 
@@ -45,6 +46,26 @@ def _get_account(code: str) -> Account:
         return Account.objects.get(code=code, is_header=False)
     except Account.DoesNotExist:
         raise ValueError(f"GL account {code!r} not found in Chart of Accounts.")
+
+
+def _as_date(value) -> datetime.date:
+    """
+    Coerce a source row's date into a ``datetime.date``.
+
+    Newly-created Payment/Expense instances still hold whatever was assigned to
+    the date field — often an ISO string (e.g. ``process_payment`` and the IPN
+    importer pass ``"2026-04-05"``). Django only casts to ``date`` on reload, so
+    the post_save signal sees the raw string. Normalise here so period
+    derivation never blows up.
+    """
+    if isinstance(value, datetime.datetime):
+        return value.date()
+    if isinstance(value, datetime.date):
+        return value
+    parsed = parse_date(str(value))
+    if parsed is None:
+        raise ValueError(f"Unparseable journal entry date: {value!r}")
+    return parsed
 
 
 def _build_entry(
@@ -63,6 +84,7 @@ def _build_entry(
     Raises ValidationError if lines don't balance.
     Uses update_or_create on the unique constraint so calling twice is safe.
     """
+    date = _as_date(date)
     total_debit = sum(Decimal(str(d)) for _, d, _, _ in lines)
     total_credit = sum(Decimal(str(c)) for _, _, c, _ in lines)
     if total_debit != total_credit:
@@ -370,6 +392,71 @@ def post_deposit_refund(payment) -> JournalEntry:
         kind="normal",
         lines=lines,
     )
+
+
+# ── Opening balances (data migration) ────────────────────────────────────────
+
+def post_opening_balances(tenant, *, net_balance, deposit, date, equity_code="3300"):
+    """Post a tenant's OPENING position when migrating their books into the ledger.
+
+    Used by the initial property-data load — NOT for ongoing activity.
+
+    Security deposit already held  → DR 1030 / CR 2100  (balance-sheet only).
+    Net arrears the tenant owes    → DR 1040 / CR <equity>  (opening equity,
+                                     NOT current rental income — otherwise the
+                                     cutover month's P&L is overstated by every
+                                     brought-forward balance).
+    Net credit (tenant overpaid)   → DR <equity> / CR 1040.
+
+    Idempotent via the (source_type, source_id, kind) unique constraint:
+    re-running for the same tenant updates rather than duplicates.
+    Returns the list of JournalEntry objects created.
+    """
+    building = getattr(tenant.unit, "building", None) if tenant.unit_id else None
+    deposit = Decimal(str(deposit or 0))
+    net = Decimal(str(net_balance or 0))
+    entries = []
+
+    if deposit > 0:
+        entries.append(_build_entry(
+            date=date,
+            memo=f"Opening security deposit held — {tenant}"[:255],
+            building=building,
+            source_type="opening_deposit",
+            source_id=tenant.pk,
+            lines=[
+                ("1030", deposit, Decimal("0"), "Deposit bank (opening balance)"),
+                ("2100", Decimal("0"), deposit, f"Deposit held — {tenant}"),
+            ],
+        ))
+
+    if net > 0:
+        entries.append(_build_entry(
+            date=date,
+            memo=f"Opening arrears — {tenant}"[:255],
+            building=building,
+            source_type="opening_ar",
+            source_id=tenant.pk,
+            lines=[
+                ("1040", net, Decimal("0"), f"Opening receivable — {tenant}"),
+                (equity_code, Decimal("0"), net, "Opening balance equity"),
+            ],
+        ))
+    elif net < 0:
+        credit = -net
+        entries.append(_build_entry(
+            date=date,
+            memo=f"Opening credit (overpaid) — {tenant}"[:255],
+            building=building,
+            source_type="opening_ar",
+            source_id=tenant.pk,
+            lines=[
+                (equity_code, credit, Decimal("0"), "Opening balance equity"),
+                ("1040", Decimal("0"), credit, f"Opening credit — {tenant}"),
+            ],
+        ))
+
+    return entries
 
 
 # ── utility ─────────────────────────────────────────────────────────────────
