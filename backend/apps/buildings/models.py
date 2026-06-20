@@ -4,6 +4,7 @@ MaintenanceRequest model for tracking repairs per unit.
 """
 from django.core.exceptions import ValidationError
 from django.db import models
+from django.db.models.functions import Upper
 
 
 class UnitStatus(models.TextChoices):
@@ -22,6 +23,13 @@ class UnitClassification(models.TextChoices):
 
 class Building(models.Model):
     name = models.CharField(max_length=120, unique=True)
+    code = models.CharField(
+        max_length=10, unique=True, null=True, blank=True,
+        help_text=(
+            "Short property code used as the prefix for this building's unit "
+            "labels, e.g. 'DON', 'RB', 'MC'. Must be unique across all properties."
+        ),
+    )
     address = models.TextField(blank=True)
     total_floors = models.PositiveSmallIntegerField(default=1)
     notes = models.TextField(blank=True)
@@ -133,10 +141,79 @@ class Unit(models.Model):
         ordering = ["building__name", "floor", "label"]
         constraints = [
             models.UniqueConstraint(fields=["building", "label"], name="unique_unit_per_building"),
+            # Labels must be unique across ALL buildings (case-insensitive) so a
+            # payment reference like '90290#DON1A' maps to exactly one unit on any
+            # channel — no ambiguity for the matcher to guess at.
+            models.UniqueConstraint(Upper("label"), name="unique_unit_label_global"),
         ]
 
     def __str__(self) -> str:
         return f"{self.building.name} — {self.label}"
+
+    def save(self, *args, **kwargs):
+        self.label = (self.label or "").strip()
+        super().save(*args, **kwargs)
+
+    def clean(self):
+        super().clean()
+        self.label = (self.label or "").strip()
+        if not self.label:
+            return
+        clash = Unit.objects.filter(label__iexact=self.label).exclude(pk=self.pk)
+        if clash.exists():
+            other = clash.select_related("building").first()
+            suggestion = f"{self.building.code}{self.label}" if (self.building_id and self.building.code) else self.label
+            raise ValidationError({
+                "label": (
+                    f"Label '{self.label}' is already used in '{other.building.name}'. "
+                    f"Unit labels must be unique across ALL buildings so M-Pesa and "
+                    f"bank payments can be matched automatically. Use the building's "
+                    f"code as a prefix, e.g. '{suggestion}'."
+                )
+            })
+
+
+class UnitAlias(models.Model):
+    """A retired/legacy unit label, kept so payments that still use the OLD
+    account reference (e.g. '90290#G01' before the building-code relabel) keep
+    auto-matching during the transition.
+
+    The matcher tries current `Unit.label` first, then falls back to these.
+    Aliases are globally unique and must not clash with any current unit label,
+    so the fallback is never ambiguous. Retire (delete) them once tenants are on
+    the new codes and statements have been reissued.
+    """
+    unit = models.ForeignKey(Unit, on_delete=models.CASCADE, related_name="aliases")
+    label = models.CharField(max_length=30, help_text="Old unit label, e.g. 'G01'.")
+    note = models.CharField(max_length=120, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "buildings_unit_alias"
+        verbose_name_plural = "unit aliases"
+        constraints = [
+            models.UniqueConstraint(Upper("label"), name="unique_unit_alias_label_global"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.label} → {self.unit}"
+
+    def save(self, *args, **kwargs):
+        self.label = (self.label or "").strip()
+        super().save(*args, **kwargs)
+
+    def clean(self):
+        super().clean()
+        self.label = (self.label or "").strip()
+        if not self.label:
+            return
+        # An alias must never collide with a CURRENT unit label, or the matcher's
+        # fallback would be ambiguous (which unit does '90290#G01' mean?).
+        if Unit.objects.filter(label__iexact=self.label).exists():
+            raise ValidationError({
+                "label": f"Alias '{self.label}' clashes with a current unit label; "
+                         f"aliases may only point to retired labels.",
+            })
 
 
 class MaintenanceStatus(models.TextChoices):

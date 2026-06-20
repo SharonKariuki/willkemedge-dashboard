@@ -1,0 +1,8 @@
+property_code,property_name,location,classification,unit_code,unit_type,monthly_rent,tenant_name,kra_pin,id_number,phone,deposit,opening_balance,move_in_date
+DON,Example Apartments - Donholm,DONHOLM NAIROBI,residential,DON1A,1br,15000,Jane Doe,A000000001X,,0700000001,14000,7450,2025-01-01
+DON,Example Apartments - Donholm,DONHOLM NAIROBI,residential,DON3A,1br,20000,John Sample,A000000002X,,0700000002,20000,-1400,2025-02-01
+KH,Example Villas - Khaoya,KHAOYA ELDORET,residential,KH01,bedsitter,9500,Mary Test,A000000003X,,0700000003,9000,9500,2025-03-01
+MV,Example Villas - Mt View,MT VIEW NAIROBI,residential,MV01,3br,110000,Sample Company Ltd,P000000004X,,0700000004,0,0,2025-04-01
+RB,Example Apartments - Road Block,ROAD BLOCK ELDORET,business,RB01,shop,10300,Demo Trader - Shop,A000000005X,,0700000005,12000,10300,2025-05-01
+RB,Example Apartments - Road Block,ROAD BLOCK ELDORET,residential,RB02,single,0,Vacant,,,,0,0,
+RB,Example Apartments - Road Block,ROAD BLOCK ELDORET,residential,RB09,single,6500,Placeholder Person,INVALIDPIN,,0700000006,12000,6500,
