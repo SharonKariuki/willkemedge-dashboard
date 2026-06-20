@@ -243,6 +243,10 @@ class Command(BaseCommand):
             raise CommandError(f"CSV not found: {path}") from None
 
     def _reset(self, Building, Unit, Tenant, Arrears, Payment, force):
+        from apps.expenses.models import Expense
+        from apps.ledger.models import JournalEntry
+        from apps.payments.models import TenantNotification, Transaction, UtilityCharge
+
         payment_count = Payment.objects.count()
         if payment_count and not force:
             raise CommandError(
@@ -251,13 +255,21 @@ class Command(BaseCommand):
             )
         self.stdout.write(self.style.WARNING(
             f"--reset: clearing {Building.objects.count()} building(s), "
-            f"{Unit.objects.count()} unit(s), {Tenant.objects.count()} tenant(s)..."
+            f"{Unit.objects.count()} unit(s), {Tenant.objects.count()} tenant(s) "
+            f"and ALL related financial records (payments, transactions, arrears, "
+            f"utilities, expenses, ledger entries)..."
         ))
-        # Tenant.unit is PROTECT, so tenants (and their dependents) go before units.
-        Arrears.objects.all().delete()
-        Payment.objects.all().delete()
-        Tenant.objects.all().delete()
-        Unit.objects.all().delete()
+        # Delete in FK-dependency order: several models PROTECT Payment / Tenant /
+        # Building, so children must go before their parents.
+        JournalEntry.objects.all().delete()        # JournalLine cascades
+        Transaction.objects.all().delete()         # PROTECTs Payment + Tenant
+        TenantNotification.objects.all().delete()  # PROTECTs Tenant
+        UtilityCharge.objects.all().delete()       # PROTECTs Tenant
+        Arrears.objects.all().delete()             # PROTECTs Tenant
+        Payment.objects.all().delete()             # PROTECTs Tenant
+        Expense.objects.all().delete()             # PROTECTs Building
+        Tenant.objects.all().delete()              # PROTECTs Unit
+        Unit.objects.all().delete()                # UnitAlias + maintenance cascade
         Building.objects.all().delete()
 
     def _report(self, per_property, issues):
