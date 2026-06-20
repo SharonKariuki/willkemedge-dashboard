@@ -8,10 +8,10 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.buildings.models import Building, Unit, UnitClassification, UnitStatus
+from apps.buildings.models import Building, Unit, UnitStatus
 from apps.expenses.models import Account, AccountType, Expense
-from apps.payments.models import Arrears, Payment, PaymentType
-from apps.tenants.models import Tenant, TenantStatus
+from apps.payments.models import Arrears, Payment
+from apps.tenants.models import Tenant
 
 
 class MonthlyCollectionReportView(APIView):
@@ -490,7 +490,7 @@ class AccountingDashboardView(APIView):
         Return real journal entries for the period.
         Supports optional ?account=<code> filter for single-account ledger view.
         """
-        from apps.ledger.models import JournalEntry, JournalLine
+        from apps.ledger.models import JournalEntry
 
         entries_qs = (
             JournalEntry.objects.filter(
@@ -605,7 +605,6 @@ class AccountingDashboardView(APIView):
                 total_actual += actual
         else:
             # Fallback: compare actual rent collected vs expected from tenants
-            from apps.payments.models import PaymentType
             from apps.tenants.models import TenantStatus
             actual_rent_dr, actual_rent_cr = period_balances.get("4110", (Decimal("0"), Decimal("0")))
             actual_rent_dr2, actual_rent_cr2 = period_balances.get("4120", (Decimal("0"), Decimal("0")))

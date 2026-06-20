@@ -7,7 +7,6 @@ import datetime
 from decimal import Decimal
 
 import pytest
-from django.core.exceptions import ValidationError
 
 # ── fixtures ─────────────────────────────────────────────────────────────────
 
@@ -73,13 +72,13 @@ def commercial_tenant(db, commercial_unit):
 
 @pytest.fixture
 def expense_category(db):
-    from apps.expenses.models import Account, AccountType, ExpenseCategory
+    from apps.expenses.models import Account, ExpenseCategory
     account = Account.objects.get(code="5200")  # seeded COA
     return ExpenseCategory.objects.create(name="Repairs", account=account)
 
 
 def _make_payment(tenant, amount, payment_type, month=4, year=2026):
-    from apps.payments.models import Payment, PaymentType
+    from apps.payments.models import Payment
     # Use Payment.objects.create — signals will fire but we'll test posting directly
     p = Payment(
         tenant=tenant,
@@ -114,11 +113,10 @@ def _make_expense(category, amount, building=None, method="bank"):
 
 @pytest.mark.django_db
 def test_post_rent_payment_balances(residential_tenant):
-    from apps.ledger.posting import post_payment
-    from apps.payments.models import PaymentType
-
     # Skip signal-created entry if any, test directly
     from apps.ledger.models import JournalEntry
+    from apps.ledger.posting import post_payment
+    from apps.payments.models import PaymentType
     JournalEntry.objects.filter(source_type="payment").delete()
 
     payment = _make_payment(residential_tenant, "25000.00", PaymentType.RENT)
@@ -127,8 +125,8 @@ def test_post_rent_payment_balances(residential_tenant):
     entry = post_payment(payment)
     lines = list(entry.lines.all())
 
-    total_debit = sum(l.debit for l in lines)
-    total_credit = sum(l.credit for l in lines)
+    total_debit = sum(line.debit for line in lines)
+    total_credit = sum(line.credit for line in lines)
     assert total_debit == total_credit, f"Entry not balanced: DR={total_debit} CR={total_credit}"
 
 
@@ -143,7 +141,7 @@ def test_residential_rent_credits_4110(residential_tenant):
     JournalEntry.objects.filter(source_type="payment").delete()
 
     entry = post_payment(payment)
-    credit_codes = [l.account.code for l in entry.lines.all() if l.credit > 0]
+    credit_codes = [line.account.code for line in entry.lines.all() if line.credit > 0]
     assert "4110" in credit_codes, f"Expected 4110 in credit lines, got: {credit_codes}"
 
 
@@ -158,7 +156,7 @@ def test_commercial_rent_credits_4120(commercial_tenant):
     JournalEntry.objects.filter(source_type="payment").delete()
 
     entry = post_payment(payment)
-    credit_codes = [l.account.code for l in entry.lines.all() if l.credit > 0]
+    credit_codes = [line.account.code for line in entry.lines.all() if line.credit > 0]
     assert "4120" in credit_codes, f"Expected 4120 in credit lines, got: {credit_codes}"
 
 
@@ -174,8 +172,8 @@ def test_late_fee_payment_balances(residential_tenant):
 
     entry = post_payment(payment)
     lines = list(entry.lines.all())
-    assert sum(l.debit for l in lines) == sum(l.credit for l in lines)
-    credit_codes = [l.account.code for l in lines if l.credit > 0]
+    assert sum(line.debit for line in lines) == sum(line.credit for line in lines)
+    credit_codes = [line.account.code for line in lines if line.credit > 0]
     assert "4200" in credit_codes
 
 
@@ -191,9 +189,9 @@ def test_deposit_payment_balances(residential_tenant):
 
     entry = post_payment(payment)
     lines = list(entry.lines.all())
-    assert sum(l.debit for l in lines) == sum(l.credit for l in lines)
-    debit_codes = [l.account.code for l in lines if l.debit > 0]
-    credit_codes = [l.account.code for l in lines if l.credit > 0]
+    assert sum(line.debit for line in lines) == sum(line.credit for line in lines)
+    debit_codes = [line.account.code for line in lines if line.debit > 0]
+    credit_codes = [line.account.code for line in lines if line.credit > 0]
     assert "1030" in debit_codes
     assert "2100" in credit_codes
 
@@ -209,8 +207,8 @@ def test_post_expense_bank_balances(expense_category, building):
 
     entry = post_expense(expense)
     lines = list(entry.lines.all())
-    assert sum(l.debit for l in lines) == sum(l.credit for l in lines)
-    credit_codes = [l.account.code for l in lines if l.credit > 0]
+    assert sum(line.debit for line in lines) == sum(line.credit for line in lines)
+    credit_codes = [line.account.code for line in lines if line.credit > 0]
     assert "1020" in credit_codes, "Bank expense should credit 1020"
 
 
@@ -225,8 +223,8 @@ def test_post_expense_petty_cash_credits_1010(expense_category, building):
 
     entry = post_expense(expense)
     lines = list(entry.lines.all())
-    assert sum(l.debit for l in lines) == sum(l.credit for l in lines)
-    credit_codes = [l.account.code for l in lines if l.credit > 0]
+    assert sum(line.debit for line in lines) == sum(line.credit for line in lines)
+    credit_codes = [line.account.code for line in lines if line.credit > 0]
     assert "1010" in credit_codes, f"Petty cash expense should credit 1010, got {credit_codes}"
     assert "1020" not in credit_codes, "Petty cash expense must NOT credit 1020"
 
