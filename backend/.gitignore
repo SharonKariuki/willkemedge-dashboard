@@ -1,0 +1,4 @@
+
+# Real tenant PII — never commit
+property_roll.csv
+tmp_verify.db*

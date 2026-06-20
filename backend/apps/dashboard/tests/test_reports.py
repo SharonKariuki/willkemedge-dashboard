@@ -141,14 +141,26 @@ class ReportsTests(APITestCase):
     # --- Trial balance -------------------------------------------------
 
     def test_trial_balance_numbers(self):
+        # Trial balance is sourced from the double-entry general ledger
+        # (JournalLine), so it is cash-basis: only the 22000 actually collected
+        # and the 4500 of expenses paid are posted — no accrued arrears.
         resp = self.client.get("/api/reports/trial-balance/", {"month": MONTH, "year": YEAR})
         assert resp.status_code == 200
         body = resp.json()
+        # Accounts are keyed by "<code> <name>" from the Chart of Accounts.
         accounts = {a["account"]: a for a in body["accounts"]}
-        assert accounts["Cash / Bank (collected)"]["debit"] == 22000.0
-        assert accounts["Accounts Receivable (Arrears)"]["debit"] == 8000.0
-        # Rent revenue credit = expected rent of active tenants = 30000.
-        assert accounts["Rent Revenue"]["credit"] == 30000.0
+        # Operating bank: DR 22000 collected, CR 4500 paid out for expenses.
+        assert accounts["1020 Operating Bank Account"]["debit"] == 22000.0
+        assert accounts["1020 Operating Bank Account"]["credit"] == 4500.0
+        # Rental income is split by unit classification.
+        assert accounts["4110 Residential Rental Income"]["credit"] == 10000.0
+        assert accounts["4120 Commercial Rental Income"]["credit"] == 12000.0
+        # Expense legs debit their GL accounts.
+        assert accounts["5200 Repairs & Maintenance"]["debit"] == 3000.0
+        assert accounts["5300 Utilities (Common Areas)"]["debit"] == 1500.0
+        # The defining invariant of double-entry bookkeeping.
+        assert body["total_debit"] == body["total_credit"] == 26500.0
+        assert body["is_balanced"] is True
 
     # --- Expense breakdown ---------------------------------------------
 

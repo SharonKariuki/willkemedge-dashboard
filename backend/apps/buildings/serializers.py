@@ -19,6 +19,23 @@ class UnitSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["status", "created_at", "updated_at"]
 
+    def validate_label(self, value):
+        """Labels must be unique across ALL buildings (case-insensitive) so every
+        payment reference resolves to exactly one unit."""
+        label = (value or "").strip()
+        if not label:
+            return value
+        clash = Unit.objects.filter(label__iexact=label)
+        if self.instance:
+            clash = clash.exclude(pk=self.instance.pk)
+        if clash.exists():
+            other = clash.select_related("building").first()
+            raise serializers.ValidationError(
+                f"Label '{label}' is already used in '{other.building.name}'. "
+                f"Unit labels must be unique across all buildings."
+            )
+        return value
+
 
 class BuildingSerializer(serializers.ModelSerializer):
     unit_count = serializers.IntegerField(read_only=True)
@@ -27,7 +44,7 @@ class BuildingSerializer(serializers.ModelSerializer):
     class Meta:
         model = Building
         fields = [
-            "id", "name", "address", "total_floors", "notes",
+            "id", "name", "code", "address", "total_floors", "notes",
             "legal_name", "postal_address", "contact_phone", "contact_email",
             "paybill_number", "paybill_account_format",
             "bank_name", "bank_branch", "bank_account", "bank_account_name",

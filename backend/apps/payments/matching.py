@@ -13,7 +13,7 @@ import re
 
 from django.conf import settings
 
-from apps.buildings.models import Unit
+from apps.buildings.models import Unit, UnitAlias
 from apps.tenants.models import Tenant, TenantStatus
 
 # Separators a payer might type between the account prefix and house number
@@ -34,28 +34,45 @@ def normalize_bill_ref(bill_ref: str) -> str:
     return _BILL_REF_SEP_RE.sub("", ref).strip()
 
 
+def _unit_for_label(house_number: str) -> Unit | None:
+    """Resolve a bare label to a single Unit, or None if absent/ambiguous.
+
+    Tries the current `Unit.label` first, then falls back to retired labels in
+    `UnitAlias` so payments that still use the OLD account reference keep
+    matching during the building-code transition. A global unique constraint
+    keeps both label and alias namespaces unambiguous, so this returns at most
+    one unit; the `[:2]` guard is belt-and-braces in case the constraint is not
+    yet deployed.
+    """
+    units = list(Unit.objects.filter(label__iexact=house_number)[:2])
+    if len(units) == 1:
+        return units[0]
+    if len(units) > 1:
+        return None  # ambiguous — let the caller queue it for admin review
+    aliases = list(UnitAlias.objects.filter(label__iexact=house_number).select_related("unit")[:2])
+    if len(aliases) == 1:
+        return aliases[0].unit
+    return None
+
+
 def match_tenant(bill_ref: str) -> Tenant | None:
     """Match a (normalised) BillRefNumber to the active tenant on that unit.
 
     Returns None when:
       - the normalised ref is empty
-      - no Unit has that label
+      - no Unit (or retired alias) has that label
       - more than one Unit shares that label across buildings (ambiguous —
         we refuse to silently guess which one; the event lands in the
-        UNMATCHED queue for admin review). Today's seed data has no
-        collisions, but a future building could introduce one.
+        UNMATCHED queue for admin review). The global unique-label constraint
+        makes genuine collisions impossible once deployed.
     """
     house_number = normalize_bill_ref(bill_ref)
     if not house_number:
         return None
-    units = list(Unit.objects.filter(label__iexact=house_number)[:2])
-    if not units:
+    unit = _unit_for_label(house_number)
+    if unit is None:
         return None
-    if len(units) > 1:
-        # Ambiguous — multiple buildings share this label. Caller will
-        # treat the event as UNMATCHED so an admin can disambiguate.
-        return None
-    return Tenant.objects.filter(unit=units[0], status=TenantStatus.ACTIVE).first()
+    return Tenant.objects.filter(unit=unit, status=TenantStatus.ACTIVE).first()
 
 
 def normalize_msisdn(phone: str | int) -> str:
