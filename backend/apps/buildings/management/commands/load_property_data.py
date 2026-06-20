@@ -92,7 +92,7 @@ class Command(BaseCommand):
                             help="Parse, validate and report, then roll back (no writes).")
 
     def handle(self, *args, **opts):
-        from apps.buildings.models import Building, Unit, UnitClassification
+        from apps.buildings.models import Building, Unit, UnitClassification, UnitStatus
         from apps.payments.models import Arrears, Payment
         from apps.tenants.models import Tenant, TenantStatus
 
@@ -201,6 +201,13 @@ class Command(BaseCommand):
                     stats["tenants"] += 1
                     stats["deposit"] += deposit
                     stats["opening"] += opening
+
+                    # Mark the unit occupied so occupancy/vacancy reflects reality.
+                    # Net balance owed -> unpaid; cleared -> paid.
+                    unit.status = (
+                        UnitStatus.OCCUPIED_UNPAID if opening > 0 else UnitStatus.OCCUPIED_PAID
+                    )
+                    unit.save(update_fields=["status"])
 
                     if not opts["no_opening_balances"]:
                         Arrears.objects.update_or_create(
