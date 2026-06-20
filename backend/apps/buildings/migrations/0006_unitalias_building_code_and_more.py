@@ -5,6 +5,34 @@ import django.db.models.functions.text
 from django.db import migrations, models
 
 
+def _dedupe_unit_labels(apps, schema_editor):
+    """Make Unit.label globally unique (case-insensitive) before the
+    unique_unit_label_global constraint is created.
+
+    Pre-existing demo/seed data can reuse a label across buildings
+    (e.g. 'Unit 1'), which would make the unique index fail to build. Rename
+    the later duplicates so the index can be created. These rows are expected
+    to be replaced by the real rent roll (load_property_data --reset)."""
+    Unit = apps.get_model('buildings', 'Unit')
+    seen = set()
+    for unit in Unit.objects.order_by('pk').iterator():
+        label = (unit.label or '').strip()
+        key = label.upper()
+        if key and key not in seen:
+            seen.add(key)
+            if label != unit.label:
+                unit.label = label
+                unit.save(update_fields=['label'])
+            continue
+        # blank or duplicate -> make unique using the pk
+        new_label = (f"{label}-{unit.pk}" if label else f"UNIT-{unit.pk}")[:30]
+        while new_label.upper() in seen:
+            new_label = f"{new_label[:24]}-{unit.pk}"[:30]
+        unit.label = new_label
+        unit.save(update_fields=['label'])
+        seen.add(new_label.upper())
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -30,6 +58,7 @@ class Migration(migrations.Migration):
             name='code',
             field=models.CharField(blank=True, help_text="Short property code used as the prefix for this building's unit labels, e.g. 'DON', 'RB', 'MC'. Must be unique across all properties.", max_length=10, null=True, unique=True),
         ),
+        migrations.RunPython(_dedupe_unit_labels, migrations.RunPython.noop),
         migrations.AddConstraint(
             model_name='unit',
             constraint=models.UniqueConstraint(django.db.models.functions.text.Upper('label'), name='unique_unit_label_global'),
