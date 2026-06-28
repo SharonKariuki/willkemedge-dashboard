@@ -2,6 +2,7 @@
 import random
 import string
 
+from django.db import transaction as db_transaction
 from django.utils import timezone
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
@@ -10,7 +11,7 @@ from rest_framework.response import Response
 
 from apps.tenants.models import Tenant
 
-from .models import Arrears, Payment, PaymentSource, Transaction
+from .models import Arrears, CoopIpnEvent, CoopIpnStatus, Payment, PaymentSource, Transaction
 from .pdf_service import render_to_pdf
 from .receipt_service import generate_receipt
 from .serializers import (
@@ -287,4 +288,102 @@ class TransactionViewSet(viewsets.ReadOnlyModelViewSet):
             response["Content-Disposition"] = f'attachment; filename="{filename}"'
             return response
         return Response({"detail": "PDF generation failed."}, status=500)
+
+
+# ---------------------------------------------------------------------------
+# Manual reconciliation — assign unmatched Co-op credits to a tenant
+# ---------------------------------------------------------------------------
+
+class UnmatchedCreditSerializer(serializers.ModelSerializer):
+    """An unmatched Co-op credit awaiting manual reconciliation."""
+
+    payer_hint = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CoopIpnEvent
+        fields = [
+            "id", "transaction_id", "payment_ref", "account_number", "amount",
+            "channel", "narration", "detail", "status", "received_at", "payer_hint",
+        ]
+
+    def get_payer_hint(self, obj) -> dict:
+        # Surface the parsed payer phone/name so staff can pick the right tenant.
+        from .coop_ipn import _parse_narration
+
+        parsed = _parse_narration(obj.narration or "")
+        return {"phone": parsed.get("payer_phone", ""), "name": parsed.get("payer_name", "")}
+
+
+class AssignCreditSerializer(serializers.Serializer):
+    tenant = serializers.IntegerField(min_value=1)
+
+
+class UnmatchedCreditViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Manual reconciliation queue: Co-op credits that couldn't be auto-matched
+    to a tenant. Staff list them and POST .../assign/ to book the payment
+    against a chosen tenant (mirrors the admin assign action).
+    """
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = UnmatchedCreditSerializer
+
+    def get_queryset(self):
+        return CoopIpnEvent.objects.filter(
+            status=CoopIpnStatus.UNMATCHED
+        ).order_by("-received_at")
+
+    @action(detail=True, methods=["post"])
+    def assign(self, request, pk=None):
+        body = AssignCreditSerializer(data=request.data)
+        body.is_valid(raise_exception=True)
+        tenant = Tenant.objects.filter(pk=body.validated_data["tenant"]).first()
+        if not tenant:
+            return Response({"detail": "Tenant not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        from .coop_ipn import _parse_narration, _posting_date
+        from .services import allocate_payment_fifo
+        from .tasks import send_deposit_receipt
+
+        try:
+            with db_transaction.atomic():
+                # Lock + re-check under the lock so two clicks can't double-book.
+                event = CoopIpnEvent.objects.select_for_update().get(pk=pk)
+                if event.status != CoopIpnStatus.UNMATCHED:
+                    return Response(
+                        {"detail": f"Event is not unmatched (status: {event.get_status_display()})."},
+                        status=status.HTTP_409_CONFLICT,
+                    )
+                pay_date = _posting_date(event.raw_payload or {})
+                channel = _parse_narration(event.narration).get("channel", event.channel or "bank")
+                payments = allocate_payment_fifo(
+                    tenant=tenant,
+                    amount=event.amount,
+                    payment_date=pay_date,
+                    source=channel,
+                    reference=event.transaction_id,
+                    notes=f"Manually assigned by {request.user}; IPN event #{event.pk}",
+                )
+                event.status = CoopIpnStatus.RECORDED
+                event.detail = f"Manually assigned to {tenant} by {request.user}"
+                event.payment = payments[0]
+                event.save(update_fields=["status", "detail", "payment"])
+        except CoopIpnEvent.DoesNotExist:
+            return Response({"detail": "Event not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        # Receipt off the atomic block so a broker outage can't roll back the booking.
+        try:
+            send_deposit_receipt.delay(
+                tenant.id, str(event.amount), event.transaction_id, pay_date.isoformat()
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+        return Response(
+            {
+                "detail": f"KES {event.amount} assigned to {tenant.full_name} — payment recorded.",
+                "payment_id": event.payment_id,
+            },
+            status=status.HTTP_200_OK,
+        )
 

@@ -12,6 +12,7 @@ const DEFAULTS: ViewPreferences = {
   units: true,
   tenants: true,
   payments: true,
+  reconciliation: true,
   expenses: true,
   accounting: true,
   notifications: true,
