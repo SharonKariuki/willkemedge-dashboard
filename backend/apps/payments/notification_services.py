@@ -47,6 +47,18 @@ def _resolve_placeholders(text: str, tenant: Tenant) -> str:
         return text
 
 
+def _at_message_id(receipt: dict) -> str:
+    """Pull the messageId out of an Africa's Talking send response, if present.
+
+    Shape: {"SMSMessageData": {"Recipients": [{"messageId": "ATXid_…", …}]}}.
+    """
+    try:
+        recipients = receipt["SMSMessageData"]["Recipients"]
+        return str(recipients[0].get("messageId", ""))[:120] if recipients else ""
+    except (KeyError, IndexError, TypeError):
+        return ""
+
+
 def _current_balance(tenant: Tenant) -> Decimal:
     """Total unpaid balance across all open arrears rows."""
     from django.db.models import Sum
@@ -67,11 +79,18 @@ def dispatch_notification(notification: TenantNotification) -> TenantNotificatio
     rendered_body = _resolve_placeholders(notification.body, tenant)
     rendered_subject = _resolve_placeholders(notification.subject or "Notice", tenant)
 
+    update_fields = ["status", "sent_at", "body", "subject"]
     try:
         if notification.channel in (NotificationChannel.SMS, NotificationChannel.BOTH):
             if not tenant.phone:
                 raise ValueError("Tenant has no phone number on file")
-            send_sms(tenant.phone, rendered_body)
+            sms_receipt = send_sms(tenant.phone, rendered_body)
+            if sms_receipt is not None:
+                # Persist the Africa's Talking delivery receipt (status, cost,
+                # messageId) for auditing.
+                notification.provider_response = str(sms_receipt)[:5000]
+                notification.provider_message_id = _at_message_id(sms_receipt)
+                update_fields += ["provider_response", "provider_message_id"]
 
         if notification.channel in (NotificationChannel.EMAIL, NotificationChannel.BOTH):
             if tenant.email:
@@ -88,7 +107,7 @@ def dispatch_notification(notification: TenantNotification) -> TenantNotificatio
         notification.sent_at = timezone.now()
         notification.body = rendered_body
         notification.subject = rendered_subject
-        notification.save(update_fields=["status", "sent_at", "body", "subject"])
+        notification.save(update_fields=update_fields)
         logger.info("Notification %s sent to %s", notification.id, tenant)
     except Exception as exc:
         notification.status = NotificationStatus.FAILED

@@ -161,7 +161,7 @@ export default function PaymentReceipt({ data, className }: PaymentReceiptProps)
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1.5 text-ink-400">
           <Building2 className="h-3 w-3" />
-          <span className="text-[10px]">Dr. William Osoro — Property Management</span>
+          <span className="text-[10px]">Dr. Wilson Osoro — Property Management</span>
         </div>
         <span className="text-[10px] text-ink-400">
           {data.unit_classification === "BUSINESS" ? "VAT Inc." : "VAT Exempt"}

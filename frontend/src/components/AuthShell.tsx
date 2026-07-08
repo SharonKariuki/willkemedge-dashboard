@@ -36,7 +36,7 @@ export default function AuthShell({ children, title, subtitle }: Props) {
         </div>
 
         <p className="absolute bottom-6 left-6 text-[11px] text-ink-400 sm:left-10 lg:left-16">
-          © {new Date().getFullYear()} Wilkem Ventures · Dr. William Osoro
+          © {new Date().getFullYear()} Wilkem Ventures · Dr. Wilson Osoro
         </p>
       </div>
 

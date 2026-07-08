@@ -1,4 +1,4 @@
-# Dr. William Osoro Rental Management Dashboard — Development & Implementation Plan
+# Dr. Wilson Osoro Rental Management Dashboard — Development & Implementation Plan
 
 > **Version:** 1.1 (7-day compressed delivery)
 > **Date:** 2026-04-09
@@ -426,7 +426,7 @@ SENTRY_DSN=
 
 ```env
 VITE_API_BASE_URL=http://localhost:8000/api
-VITE_APP_NAME="Dr. William Osoro - Property Dashboard"
+VITE_APP_NAME="Dr. Wilson Osoro - Property Dashboard"
 ```
 
 ---
@@ -807,7 +807,7 @@ Runs at 00:30 EAT daily:
 
 ```
 ┌──────────────────────────────────────────────────────┐
-│  Dr. William Osoro - Property Dashboard    [Logout]  │
+│  Dr. Wilson Osoro - Property Dashboard    [Logout]  │
 ├──────────┬───────────────────────────────────────────┤
 │          │  KPI Cards Row                            │
 │          │  ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐    │
@@ -1313,7 +1313,7 @@ def export_monthly_collection_pdf(month: str) -> bytes:
 ```
 
 PDF templates will be clean HTML with inline CSS, including:
-- Header with branding ("Dr. William Osoro - Property Dashboard")
+- Header with branding ("Dr. Wilson Osoro - Property Dashboard")
 - Report title and date range
 - Summary statistics
 - Data table with colour-coded status indicators

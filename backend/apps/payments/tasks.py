@@ -5,6 +5,8 @@ Tasks:
   send_payment_confirmation  — SMS + email after every payment
   recalculate_all_statuses   — nightly unit status sweep
   generate_monthly_arrears   — 1st of month: create arrears records
+  send_rent_reminders        — daily: SMS N days before each tenant's due day
+  send_arrears_reminders     — daily: SMS on/after due day when rent unpaid
   poll_bank_statement        — hourly fallback for banks without webhooks
 
 All tasks use bind=True + max_retries=3 with exponential backoff.
@@ -371,3 +373,145 @@ def generate_monthly_arrears() -> None:
             created += 1
 
     logger.info("generate_monthly_arrears: created %d new arrears records", created)
+
+
+# ---------------------------------------------------------------------------
+# Rent reminders (Feature 5) — SMS N days before each tenant's due day
+# ---------------------------------------------------------------------------
+
+@shared_task
+def send_rent_reminders() -> int:
+    """
+    Daily at 08:00 EAT. Send each active tenant a rent-reminder SMS when their
+    rent due date is within RENT_REMINDER_LEAD_DAYS days.
+
+    Idempotent: one reminder per tenant per period, keyed by dedupe_key, so
+    re-running the job (or a missed-then-recovered scheduler) never double-sends.
+    The Africa's Talking delivery receipt is persisted on the notification by
+    dispatch_notification.
+    """
+    import calendar
+    from datetime import date
+
+    from django.conf import settings
+
+    from apps.tenants.models import Tenant, TenantStatus
+
+    from .models import NotificationChannel, NotificationStatus, TenantNotification
+    from .notification_services import dispatch_notification
+    from .notification_templates import get_template
+
+    lead_days = int(getattr(settings, "RENT_REMINDER_LEAD_DAYS", 3))
+    today = timezone.localdate()
+    last_day = calendar.monthrange(today.year, today.month)[1]
+    template = get_template("rent_reminder")
+    sent = 0
+
+    active = Tenant.objects.filter(status=TenantStatus.ACTIVE).select_related(
+        "unit", "unit__building"
+    )
+    for tenant in active:
+        if not tenant.unit_id or not tenant.phone:
+            continue
+        # Clamp the due day to the current month's length (e.g. 31 → 30 / 28).
+        due_day = min(int(tenant.due_day or 5), last_day)
+        due_date = date(today.year, today.month, due_day)
+        days_until = (due_date - today).days
+        if not 0 <= days_until <= lead_days:
+            continue
+
+        dedupe_key = f"rent_reminder:{tenant.id}:{due_date:%Y-%m}"
+        if TenantNotification.objects.filter(dedupe_key=dedupe_key).exists():
+            continue
+
+        notification = TenantNotification.objects.create(
+            tenant=tenant,
+            channel=NotificationChannel.SMS,
+            subject=template["subject"],
+            body=template["body"],
+            template_key="rent_reminder",
+            dedupe_key=dedupe_key,
+            status=NotificationStatus.PENDING,
+        )
+        dispatch_notification(notification)
+        notification.refresh_from_db()
+        if notification.status == NotificationStatus.SENT:
+            sent += 1
+
+    logger.info("send_rent_reminders: sent %d reminders (lead=%d days)", sent, lead_days)
+    return sent
+
+
+# ---------------------------------------------------------------------------
+# Arrears reminders (Feature 6) — SMS on/after due day when rent is unpaid
+# ---------------------------------------------------------------------------
+
+@shared_task
+def send_arrears_reminders() -> int:
+    """
+    Daily at 09:00 EAT. Send an overdue-rent SMS to each active tenant whose
+    rent for the current period is still unpaid once their due day has passed.
+
+    Unpaid is sourced from the canonical Arrears row for the current period
+    (so the figure matches the tenant statement). One reminder per tenant per
+    period via dedupe_key — re-running the job never double-sends.
+    """
+    import calendar
+    from datetime import date
+
+    from apps.tenants.models import Tenant, TenantStatus
+
+    from .models import (
+        Arrears,
+        NotificationChannel,
+        NotificationStatus,
+        TenantNotification,
+    )
+    from .notification_services import dispatch_notification
+    from .notification_templates import get_template
+
+    today = timezone.localdate()
+    last_day = calendar.monthrange(today.year, today.month)[1]
+    template = get_template("rent_overdue")
+    sent = 0
+
+    active = Tenant.objects.filter(status=TenantStatus.ACTIVE).select_related(
+        "unit", "unit__building"
+    )
+    for tenant in active:
+        if not tenant.unit_id or not tenant.phone:
+            continue
+        due_day = min(int(tenant.due_day or 5), last_day)
+        due_date = date(today.year, today.month, due_day)
+        if today < due_date:
+            continue  # rent not due yet this period
+
+        arrears = Arrears.objects.filter(
+            tenant=tenant,
+            period_month=today.month,
+            period_year=today.year,
+            is_cleared=False,
+        ).first()
+        if not arrears or arrears.balance <= 0:
+            continue  # nothing outstanding for the current period
+
+        dedupe_key = f"rent_overdue:{tenant.id}:{due_date:%Y-%m}"
+        if TenantNotification.objects.filter(dedupe_key=dedupe_key).exists():
+            continue
+
+        notification = TenantNotification.objects.create(
+            tenant=tenant,
+            channel=NotificationChannel.SMS,
+            subject=template["subject"],
+            body=template["body"],
+            template_key="rent_overdue",
+            dedupe_key=dedupe_key,
+            status=NotificationStatus.PENDING,
+        )
+        dispatch_notification(notification)
+        notification.refresh_from_db()
+        if notification.status == NotificationStatus.SENT:
+            sent += 1
+
+    logger.info("send_arrears_reminders: sent %d arrears reminders", sent)
+    return sent

@@ -7,7 +7,11 @@ import { BrowserRouter } from "react-router-dom";
 import App from "./App";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { AuthProvider } from "./hooks/useAuth";
+import { initSentry } from "./lib/sentry";
 import "./index.css";
+
+// Initialise error monitoring before anything renders (no-op without DSN).
+initSentry();
 
 // Apply saved theme before first paint to avoid flash.
 try {

@@ -1,6 +1,6 @@
 # Willkemedge Dashboard
 
-Single-owner rental management dashboard for Dr. William Osoro.
+Single-owner rental management dashboard for Dr. Wilson Osoro.
 Captures M-Pesa + bank payments, tracks tenants, and surfaces real-time
 unit status, arrears, and analytics.
 

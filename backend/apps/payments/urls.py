@@ -5,13 +5,20 @@ from rest_framework.routers import DefaultRouter
 from .coop_ipn import CoopIpnView
 from .notification_views import NotificationViewSet
 from .reconciliation_views import DailyReconciliationTriggerView
-from .views import ArrearsViewSet, PaymentViewSet, TransactionViewSet
+from .views import (
+    ArrearsViewSet,
+    PaymentViewSet,
+    TransactionViewSet,
+    UnmatchedCreditViewSet,
+)
 
 router = DefaultRouter()
 router.register("payments", PaymentViewSet, basename="payment")
 router.register("arrears", ArrearsViewSet, basename="arrears")
 router.register("notifications", NotificationViewSet, basename="notification")
 router.register("transactions", TransactionViewSet, basename="transaction")
+# Distinct prefix (not "payments/…") so it doesn't collide with payments/<pk>/.
+router.register("unmatched-credits", UnmatchedCreditViewSet, basename="unmatched-credit")
 
 app_name = "payments"
 

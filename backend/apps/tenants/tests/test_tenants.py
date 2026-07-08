@@ -83,6 +83,37 @@ class TenantLifecycleTests(APITestCase):
         )
         assert resp.status_code == status.HTTP_400_BAD_REQUEST
 
+    # --- Rent due day (Feature 8: rent-due-date capture) ----------------
+
+    def test_create_tenant_persists_due_day(self):
+        resp = self.client.post(
+            "/api/tenants/", self._tenant_payload(due_day=12), format="json"
+        )
+        assert resp.status_code == status.HTTP_201_CREATED
+        tid = resp.json()["id"]
+        # Round-trips from the DB on retrieve → persisted, and available to the
+        # reminder scheduler (which builds the due date from due_day).
+        assert self.client.get(f"/api/tenants/{tid}/").json()["due_day"] == 12
+
+    def test_due_day_defaults_to_5_when_omitted(self):
+        resp = self.client.post("/api/tenants/", self._tenant_payload(), format="json")
+        assert resp.status_code == status.HTTP_201_CREATED
+        assert self.client.get(f"/api/tenants/{resp.json()['id']}/").json()["due_day"] == 5
+
+    def test_update_due_day(self):
+        tid = self.client.post(
+            "/api/tenants/", self._tenant_payload(), format="json"
+        ).json()["id"]
+        resp = self.client.patch(f"/api/tenants/{tid}/", {"due_day": 20}, format="json")
+        assert resp.status_code == 200
+        assert self.client.get(f"/api/tenants/{tid}/").json()["due_day"] == 20
+
+    def test_due_day_out_of_range_rejected(self):
+        resp = self.client.post(
+            "/api/tenants/", self._tenant_payload(due_day=40), format="json"
+        )
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+
     # --- List / filter --------------------------------------------------
 
     def test_list_tenants(self):

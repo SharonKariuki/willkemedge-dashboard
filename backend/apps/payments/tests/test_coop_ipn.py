@@ -96,6 +96,92 @@ class TestCoopIpnAuth:
         assert CoopIpnEvent.objects.count() == 0
 
 
+def _post_from(client, payload, ip=None, xff=None, token=TOKEN):
+    """POST an IPN simulating a given source IP (REMOTE_ADDR) and/or an
+    X-Forwarded-For chain, plus the bearer token unless overridden."""
+    extra = {}
+    if token is not None:
+        extra["HTTP_AUTHORIZATION"] = f"Bearer {token}"
+    if ip is not None:
+        extra["REMOTE_ADDR"] = ip
+    if xff is not None:
+        extra["HTTP_X_FORWARDED_FOR"] = xff
+    return client.post(IPN_URL, payload, format="json", **extra)
+
+
+class TestCoopIpnIpAllowlist:
+    """Day 2: only Co-op's source IPs may post; everything else gets 403."""
+
+    @pytest.fixture(autouse=True)
+    def _one_trusted_proxy(self, settings):
+        # Match production (Render runs one edge proxy in front of the app).
+        settings.COOP_IPN_TRUSTED_PROXY_COUNT = 1
+
+    def test_empty_allowlist_allows_all(self, api_client, db, settings):
+        settings.COOP_IPN_ALLOWED_IPS = []
+        with patch("apps.payments.coop_ipn.send_unmatched_credit_alert.delay"):
+            resp = _post_from(api_client, _credit(bill_ref="NOPE"), ip="8.8.8.8")
+        assert resp.status_code == 200
+        assert CoopIpnEvent.objects.count() == 1
+
+    def test_non_allowlisted_ip_forbidden(self, api_client, db, settings):
+        settings.COOP_IPN_ALLOWED_IPS = ["196.201.214.200"]
+        resp = _post_from(api_client, _credit(), ip="8.8.8.8")
+        assert resp.status_code == 403
+        assert CoopIpnEvent.objects.count() == 0
+
+    def test_allowlisted_exact_ip_passes_gate(self, api_client, db, settings):
+        settings.COOP_IPN_ALLOWED_IPS = ["196.201.214.200"]
+        with patch("apps.payments.coop_ipn.send_unmatched_credit_alert.delay"):
+            resp = _post_from(api_client, _credit(bill_ref="NOPE"), ip="196.201.214.200")
+        assert resp.status_code == 200
+        assert CoopIpnEvent.objects.count() == 1
+
+    def test_allowlisted_cidr_range_passes_gate(self, api_client, db, settings):
+        settings.COOP_IPN_ALLOWED_IPS = ["196.201.214.0/24"]
+        with patch("apps.payments.coop_ipn.send_unmatched_credit_alert.delay"):
+            resp = _post_from(api_client, _credit(bill_ref="NOPE"), ip="196.201.214.137")
+        assert resp.status_code == 200
+        assert CoopIpnEvent.objects.count() == 1
+
+    def test_ip_outside_cidr_forbidden(self, api_client, db, settings):
+        settings.COOP_IPN_ALLOWED_IPS = ["196.201.214.0/24"]
+        resp = _post_from(api_client, _credit(), ip="196.201.215.1")
+        assert resp.status_code == 403
+        assert CoopIpnEvent.objects.count() == 0
+
+    def test_ip_gate_runs_before_token(self, api_client, db, settings):
+        # A non-allowlisted source is forbidden (403) even with no token —
+        # the IP gate is evaluated before bearer auth (401).
+        settings.COOP_IPN_ALLOWED_IPS = ["196.201.214.200"]
+        resp = _post_from(api_client, _credit(), ip="8.8.8.8", token=None)
+        assert resp.status_code == 403
+        assert CoopIpnEvent.objects.count() == 0
+
+    def test_xff_leftmost_spoof_does_not_grant_access(self, api_client, db, settings):
+        # Client forges the allowlisted IP as the leftmost X-Forwarded-For entry;
+        # the trusted proxy appends the real source. With one trusted proxy the
+        # rightmost entry wins, so the forged value is ignored → 403.
+        settings.COOP_IPN_ALLOWED_IPS = ["196.201.214.200"]
+        resp = _post_from(
+            api_client, _credit(), xff="196.201.214.200, 8.8.8.8", ip="10.0.0.1",
+        )
+        assert resp.status_code == 403
+        assert CoopIpnEvent.objects.count() == 0
+
+    def test_xff_trusted_position_grants_access(self, api_client, db, settings):
+        # The genuine Co-op IP arrives as the value the trusted proxy appended
+        # (rightmost with one proxy) → allowed.
+        settings.COOP_IPN_ALLOWED_IPS = ["196.201.214.200"]
+        with patch("apps.payments.coop_ipn.send_unmatched_credit_alert.delay"):
+            resp = _post_from(
+                api_client, _credit(bill_ref="NOPE"),
+                xff="8.8.8.8, 196.201.214.200", ip="10.0.0.1",
+            )
+        assert resp.status_code == 200
+        assert CoopIpnEvent.objects.count() == 1
+
+
 class TestCoopIpnProcessing:
     @patch("apps.payments.coop_ipn.send_deposit_receipt.delay")
     def test_credit_matched_by_bill_ref(self, mock_receipt, api_client, tenant):
@@ -282,3 +368,89 @@ class TestCoopIpnProcessing:
         resp = _post(api_client, payload)
         assert resp.status_code == 400
         assert CoopIpnEvent.objects.count() == 0
+
+
+# Day 3 · Feature 4 — confirm the parser extracts the unit number from a real
+# M-Pesa C2B narration across the revised property-coding label styles, and the
+# resolver books the credit to the correct tenant. Real production layout:
+#   <code>~90290#<UNIT>~<payer phone>~MPESAC2B_400222~<PAYER NAME>
+# (≥3 sample narrations, per the Day 3 acceptance criteria).
+_NARRATION_SAMPLES = [
+    # (building name, unit label, payer phone, payer name, M-Pesa code)
+    ("Wilkem Edge Apartments, Road Block", "RB001", "254726012481", "SARAH HAMISI", "UF7HG6UZBO"),
+    ("Wilkem Villas, Khaoya", "KH01", "254701834008", "LIONEL OBINO", "TIP6V5IRAE"),
+    ("Wilkem Edge Apartments, Donholm", "DON1A", "254711406924", "MERCY MURUNGA", "QR42AB91XZ"),
+    ("Wilkem Edge Residential, Matasia", "MR201", "254741357229", "ANGELA WANYONYI", "ZX99KK12MM"),
+]
+
+
+class TestNarrationUnitExtraction:
+    """Day 3 · Feature 4 — unit-number extraction from real M-Pesa narration,
+    confirmed across the revised property-coding label styles (RB/KH/DON/MR)."""
+
+    @pytest.mark.parametrize("raw,expected", [
+        ("90290#RB001", "RB001"),   # standard "<prefix>#<unit>"
+        ("90290#KH01", "KH01"),
+        ("90290 DON1A", "DON1A"),   # space separator
+        ("90290-MR201", "MR201"),   # hyphen separator
+        ("RB001", "RB001"),         # payer typed the bare unit, no prefix
+        ("90290#rb001", "RB001"),   # case-insensitive
+    ])
+    def test_normalize_bill_ref_recovers_unit_label(self, raw, expected, settings):
+        # The parser must strip the Paybill prefix + any separator and recover
+        # the bare unit label, regardless of how the payer typed it.
+        settings.MPESA_ACCOUNT_PREFIX = "90290"
+        from apps.payments.matching import normalize_bill_ref
+
+        assert normalize_bill_ref(raw) == expected
+
+    @pytest.mark.parametrize("bldg,label,phone,name,code", _NARRATION_SAMPLES)
+    @patch("apps.payments.coop_ipn.send_deposit_receipt.delay")
+    def test_extracts_unit_and_books_to_correct_tenant(
+        self, mock_receipt, api_client, db, settings, bldg, label, phone, name, code
+    ):
+        settings.MPESA_ACCOUNT_PREFIX = "90290"
+        building = Building.objects.create(name=bldg, total_floors=4)
+        unit = Unit.objects.create(
+            building=building, label=label, monthly_rent=Decimal("20000"),
+            status=UnitStatus.OCCUPIED_UNPAID,
+        )
+        first, last = name.split()[0], name.split()[-1]
+        tenant = Tenant.objects.create(
+            first_name=first, last_name=last, id_number=f"ID-{label}",
+            phone=f"+{phone}", unit=unit, monthly_rent=Decimal("20000"),
+            move_in_date="2026-01-01", status=TenantStatus.ACTIVE,
+        )
+
+        narration = f"{code}~90290#{label}~{phone}~MPESAC2B_400222~{name}"
+        resp = _post(
+            api_client,
+            _credit(trans_id=f"CB_{label}", narration=narration, bill_ref=f"90290#{label}"),
+        )
+
+        assert resp.status_code == 200
+        event = CoopIpnEvent.objects.get(transaction_id=f"CB_{label}")
+        # Unit number extracted from the narration → high-confidence bill-ref match.
+        assert event.status == CoopIpnStatus.RECORDED
+        assert "bill_ref" in event.detail.lower()
+        payment = Payment.objects.get(reference=f"CB_{label}")
+        assert payment.tenant_id == tenant.id
+        assert payment.tenant.unit.label == label
+        mock_receipt.assert_called_once()
+
+    @patch("apps.payments.coop_ipn.send_unmatched_credit_alert.delay")
+    def test_unrecognised_unit_label_is_flagged_for_reconciliation(
+        self, mock_alert, api_client, db
+    ):
+        # A narration whose unit label matches no Unit must not be booked — it is
+        # queued UNMATCHED for manual reconciliation (Feature 4 acceptance).
+        narration = "AB12CD34EF~90290#ZZ999~254700000000~MPESAC2B_400222~UNKNOWN PAYER"
+        resp = _post(
+            api_client,
+            _credit(trans_id="CB_NO_UNIT", narration=narration, bill_ref="90290#ZZ999"),
+        )
+        assert resp.status_code == 200
+        event = CoopIpnEvent.objects.get(transaction_id="CB_NO_UNIT")
+        assert event.status == CoopIpnStatus.UNMATCHED
+        assert Payment.objects.count() == 0
+        mock_alert.assert_called_once()

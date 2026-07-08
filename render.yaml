@@ -53,6 +53,8 @@ services:
         value: "01136069098300"
       - key: COOP_IPN_ALLOWED_IPS
         sync: false
+      - key: COOP_IPN_TRUSTED_PROXY_COUNT
+        value: "1"
       - key: ADMIN_ALERT_PHONE
         sync: false
       - key: ADMIN_ALERT_EMAIL
@@ -70,6 +72,8 @@ services:
         sync: false
       - key: AT_SENDER_ID
         sync: false
+      - key: RENT_REMINDER_LEAD_DAYS
+        value: "3"
       # Email
       - key: EMAIL_BACKEND
         value: django.core.mail.backends.smtp.EmailBackend

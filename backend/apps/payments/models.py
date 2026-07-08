@@ -450,6 +450,15 @@ class TenantNotification(models.Model):
         blank=True,
         help_text="Identifier of the template used (blank if custom).",
     )
+    # Idempotency marker for automated sends (e.g. one rent reminder per tenant
+    # per period). Blank for ad-hoc admin messages. The scheduler skips a send
+    # when a row with the same dedupe_key already exists, so re-running the
+    # daily job never double-sends.
+    dedupe_key = models.CharField(max_length=120, blank=True, db_index=True)
+    # Africa's Talking delivery receipt: the provider's message id + the raw
+    # send response, persisted so a delivery can be audited later.
+    provider_message_id = models.CharField(max_length=120, blank=True)
+    provider_response = models.TextField(blank=True)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
