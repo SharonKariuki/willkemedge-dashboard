@@ -27,7 +27,7 @@ def _e(value) -> str:
 # SMS — Africa's Talking
 # ---------------------------------------------------------------------------
 
-def send_sms(phone: str, message: str) -> None:
+def send_sms(phone: str, message: str) -> dict | None:
     """
     Send an SMS via Africa's Talking REST API (using httpx).
 
@@ -36,6 +36,11 @@ def send_sms(phone: str, message: str) -> None:
     urllib3 2.x.  httpx works reliably.
 
     Phone should be in international format: +2547XXXXXXXX
+
+    Returns the parsed Africa's Talking response (the delivery receipt — it
+    carries the per-recipient status, cost, and messageId) on success, or
+    None when sending is skipped because no API key is configured. Raises on
+    a real send failure so the caller can record it.
     """
     import httpx
 
@@ -44,7 +49,7 @@ def send_sms(phone: str, message: str) -> None:
 
     if not api_key:
         logger.warning("SMS skipped (AT_API_KEY not set): to=%s msg=%s", phone, message)
-        return
+        return None
 
     env = "sandbox" if username == "sandbox" else "live"
     base = f"https://api.{env}.africastalking.com" if env == "sandbox" else "https://api.africastalking.com"
@@ -61,7 +66,9 @@ def send_sms(phone: str, message: str) -> None:
             timeout=15,
         )
         resp.raise_for_status()
-        logger.info("SMS sent to %s: %s", phone, resp.json())
+        data = resp.json()
+        logger.info("SMS sent to %s: %s", phone, data)
+        return data
     except Exception as exc:
         logger.error("SMS failed to %s: %s", phone, exc)
         raise

@@ -194,6 +194,11 @@ AT_API_KEY = config("AT_API_KEY", default="")
 AT_USERNAME = config("AT_USERNAME", default="sandbox")
 AT_SENDER_ID = config("AT_SENDER_ID", default="")
 
+# Rent reminders: how many days before a tenant's due day the reminder SMS
+# fires. The daily job sends once per tenant per period as soon as the due
+# date is within this many days.
+RENT_REMINDER_LEAD_DAYS = config("RENT_REMINDER_LEAD_DAYS", default=3, cast=int)
+
 # Email — SMTP (Gmail by default; swap host/port for any other SMTP provider)
 EMAIL_BACKEND = config(
     "EMAIL_BACKEND",

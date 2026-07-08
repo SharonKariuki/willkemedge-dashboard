@@ -72,6 +72,8 @@ services:
         sync: false
       - key: AT_SENDER_ID
         sync: false
+      - key: RENT_REMINDER_LEAD_DAYS
+        value: "3"
       # Email
       - key: EMAIL_BACKEND
         value: django.core.mail.backends.smtp.EmailBackend
