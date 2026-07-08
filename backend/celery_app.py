@@ -43,6 +43,11 @@ app.conf.beat_schedule = {
         "task": "apps.payments.tasks.send_rent_reminders",
         "schedule": crontab(hour=8, minute=0),
     },
+    # Daily at 09:00 EAT — arrears reminders for unpaid rent past the due day
+    "daily-arrears-reminders": {
+        "task": "apps.payments.tasks.send_arrears_reminders",
+        "schedule": crontab(hour=9, minute=0),
+    },
     # Hourly bank statement poll fallback
     "hourly-bank-poll": {
         "task": "apps.payments.tasks.poll_bank_statement",
