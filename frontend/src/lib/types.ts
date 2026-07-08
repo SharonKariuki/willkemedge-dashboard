@@ -103,6 +103,8 @@ export interface TenantListItem {
   status_display: string;
   kyc_status: KycStatus;
   kyc_status_display: string;
+  balance: string;
+  payment_status: "paid" | "in_arrears";
   move_in_date: string;
   move_out_date: string | null;
   due_day: number;

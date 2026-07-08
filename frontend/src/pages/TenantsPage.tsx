@@ -10,7 +10,7 @@
  */
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
-  AlertTriangle, CheckCircle2, FileText, LogOut,
+  AlertTriangle, CheckCircle2, Download, FileText, LogOut,
   Pencil, Phone, Plus, Search, ShieldCheck, Upload, UserPlus, X, XCircle,
 } from "lucide-react";
 
@@ -35,7 +35,7 @@ import { useUnits } from "@/hooks/useUnits";
 import { getErrorMessage } from "@/lib/apiError";
 import { cn } from "@/lib/cn";
 import type { KycStatus, TenantDetail } from "@/lib/types";
-import { downloadPdf } from "@/lib/downloadPdf";
+import { downloadCsv, downloadPdf } from "@/lib/downloadPdf";
 import { avatarFor } from "@/lib/images";
 
 
@@ -578,9 +578,11 @@ export default function TenantsPage() {
   const [statusFilter, setStatusFilter] = useState("");
   const [kycFilter, setKycFilter] = useState("");
   const [buildingFilter, setBuildingFilter] = useState<number | "">("");
+  const [payFilter, setPayFilter] = useState("");
   const [search, setSearch] = useState(searchParams.get("q") ?? "");
   const [showForm, setShowForm] = useState(false);
   const [selectedTenantId, setSelectedTenantId] = useState<number | null>(null);
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => { setSearch(searchParams.get("q") ?? ""); }, [searchParams]);
 
@@ -588,7 +590,19 @@ export default function TenantsPage() {
   if (statusFilter) filters.status = statusFilter;
   if (kycFilter) filters.kyc_status = kycFilter;
   if (buildingFilter) filters.building = buildingFilter;
+  if (payFilter) filters.payment_status = payFilter;
   if (search) filters.search = search;
+
+  async function handleExport() {
+    setExporting(true);
+    try {
+      await downloadCsv("/tenants/export/", "tenants.csv", filters);
+    } catch {
+      toast.error("Could not export the tenant list.");
+    } finally {
+      setExporting(false);
+    }
+  }
 
   const { data: tenants, isLoading, isError, refetch } = useTenants(filters);
   const { data: buildings } = useBuildings();
@@ -604,6 +618,12 @@ export default function TenantsPage() {
     { value: "active", label: "Active" },
     { value: "notice_given", label: "Notice Given" },
     { value: "moved_out", label: "Moved Out" },
+  ];
+
+  const PAY_FILTERS = [
+    { value: "", label: "All" },
+    { value: "paid", label: "Paid" },
+    { value: "in_arrears", label: "In Arrears" },
   ];
 
   const KYC_FILTERS = [
@@ -626,10 +646,20 @@ export default function TenantsPage() {
           title="Tenants"
           description={`${activeCount} active · ${tenants?.length ?? 0} total on file${pendingKycCount > 0 ? ` · ${pendingKycCount} pending KYC` : ""}.`}
           actions={
-            <Button onClick={() => setShowForm(!showForm)}>
-              {showForm ? <X className="h-4 w-4" /> : <UserPlus className="h-4 w-4" />}
-              {showForm ? "Cancel" : "Register Tenant"}
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="glass"
+                onClick={handleExport}
+                disabled={exporting || !tenants?.length}
+              >
+                <Download className="h-4 w-4" />
+                {exporting ? "Exporting…" : "Export CSV"}
+              </Button>
+              <Button onClick={() => setShowForm(!showForm)}>
+                {showForm ? <X className="h-4 w-4" /> : <UserPlus className="h-4 w-4" />}
+                {showForm ? "Cancel" : "Register Tenant"}
+              </Button>
+            </div>
           }
         />
 
@@ -661,6 +691,21 @@ export default function TenantsPage() {
                 aria-pressed={statusFilter === s.value}
                 className={cn("rounded-full px-3 py-1.5 text-xs font-medium transition-all",
                   statusFilter === s.value ? "bg-ochre-500 text-ink-900 shadow-float" : "glass text-ink-700")}>
+                {s.label}
+              </button>
+            ))}
+          </div>
+          {/* Payment status toggle */}
+          <div className="flex flex-wrap gap-1.5" role="group" aria-label="Filter by payment status">
+            {PAY_FILTERS.map((s) => (
+              <button key={s.value} onClick={() => setPayFilter(s.value)}
+                aria-pressed={payFilter === s.value}
+                className={cn("rounded-full px-3 py-1.5 text-xs font-medium transition-all",
+                  payFilter === s.value
+                    ? s.value === "in_arrears"
+                      ? "bg-coral-500 text-white shadow-float"
+                      : "bg-sage-500 text-white shadow-float"
+                    : "glass text-ink-700")}>
                 {s.label}
               </button>
             ))}
@@ -704,7 +749,7 @@ export default function TenantsPage() {
                     <TH>Unit</TH>
                     <TH>Phone</TH>
                     <TH className="text-right">Rent (KES)</TH>
-                    <TH>Deposit (KES)</TH>
+                    <TH className="text-right">Balance (KES)</TH>
                     <TH>Move-in</TH>
                     <TH>Status</TH>
                     <TH>KYC</TH>
@@ -736,7 +781,11 @@ export default function TenantsPage() {
                       <TD>{t.unit_label}</TD>
                       <TD className="font-mono text-xs">{t.phone}</TD>
                       <TD className="text-right font-medium tabular-nums">{Number(t.monthly_rent).toLocaleString()}</TD>
-                      <TD className="tabular-nums">{Number(t.deposit_paid).toLocaleString()}</TD>
+                      <TD className="text-right tabular-nums">
+                        <span className={cn("font-medium", t.payment_status === "in_arrears" ? "text-coral-600" : "text-sage-600")}>
+                          {Number(t.balance).toLocaleString()}
+                        </span>
+                      </TD>
                       <TD className="text-ink-500">{t.move_in_date}</TD>
                       <TD>
                         <Badge tone={t.status === "active" ? "sage" : t.status === "notice_given" ? "ochre" : "neutral"} withDot>
@@ -787,7 +836,9 @@ export default function TenantsPage() {
                         <a href={`tel:${t.phone}`} onClick={(e) => e.stopPropagation()} className="flex items-center gap-1 text-sage-600">
                           <Phone className="h-3 w-3" />{t.phone}
                         </a>
-                        <p className="font-medium text-ink-900 tabular-nums">KES {Number(t.monthly_rent).toLocaleString()}</p>
+                        <p className={cn("font-medium tabular-nums", t.payment_status === "in_arrears" ? "text-coral-600" : "text-ink-900")}>
+                          {t.payment_status === "in_arrears" ? `KES ${Number(t.balance).toLocaleString()} due` : "Paid up"}
+                        </p>
                       </div>
                     </div>
                   </div>

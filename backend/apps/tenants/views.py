@@ -2,6 +2,7 @@
 from decimal import ROUND_HALF_UP, Decimal
 
 from django.db import models, transaction
+from django.db.models.functions import Coalesce
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.parsers import FormParser, MultiPartParser
@@ -45,9 +46,21 @@ class TenantViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        # Active/notice tenants first, then moved-out, then by move-in date
+        # Active/notice tenants first, then moved-out, then by move-in date.
+        # `outstanding_balance` = sum of uncleared arrears (positive = owed);
+        # drives the paid/in-arrears filter and the balance column/CSV.
         qs = (
             Tenant.objects.select_related("unit", "unit__building")
+            .annotate(
+                outstanding_balance=Coalesce(
+                    models.Sum(
+                        "arrears__balance",
+                        filter=models.Q(arrears__is_cleared=False),
+                    ),
+                    models.Value(Decimal("0.00")),
+                    output_field=models.DecimalField(max_digits=12, decimal_places=2),
+                )
+            )
             .order_by(
                 models.Case(
                     models.When(status="active", then=0),
@@ -76,6 +89,12 @@ class TenantViewSet(viewsets.ModelViewSet):
         if kyc:
             qs = qs.filter(kyc_status=kyc)
 
+        payment_status = self.request.query_params.get("payment_status")
+        if payment_status == "in_arrears":
+            qs = qs.filter(outstanding_balance__gt=0)
+        elif payment_status == "paid":
+            qs = qs.filter(outstanding_balance__lte=0)
+
         search = self.request.query_params.get("search")
         if search:
             qs = qs.filter(
@@ -99,6 +118,36 @@ class TenantViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         tenant = serializer.save()
         move_in_tenant(tenant)
+
+    @action(detail=False, methods=["get"], url_path="export")
+    def export_csv(self, request):
+        """GET /api/tenants/export/ — CSV of the (filtered) tenant list.
+
+        Honors the same query params as the list endpoint (status, building,
+        unit, kyc_status, search, payment_status), so the export always
+        mirrors what the manager currently sees on screen.
+        """
+        import csv
+
+        from django.http import HttpResponse
+
+        qs = self.get_queryset()
+        response = HttpResponse(content_type="text/csv")
+        response["Content-Disposition"] = 'attachment; filename="tenants.csv"'
+        writer = csv.writer(response)
+        writer.writerow(["Tenant", "Building", "Unit", "Balance", "Payment Status", "Status"])
+        for t in qs:
+            balance = getattr(t, "outstanding_balance", None) or 0
+            payment_status = "In Arrears" if balance > 0 else "Paid"
+            writer.writerow([
+                t.full_name,
+                t.unit.building.name,
+                t.unit.label,
+                _money(balance),
+                payment_status,
+                t.get_status_display(),
+            ])
+        return response
 
     @action(detail=True, methods=["post"], url_path="move-out-notice")
     def move_out_notice(self, request, pk=None):
