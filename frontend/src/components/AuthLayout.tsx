@@ -41,11 +41,7 @@ export default function AuthLayout() {
           {/* Topbar */}
           <header className="sticky top-0 z-30 px-2 pt-2 sm:px-4 lg:px-6 lg:pt-4">
             <div className="glass-strong flex items-center gap-2 rounded-xl px-2.5 py-2 ring-1 ring-ochre-500/10 sm:gap-3 sm:px-4 sm:py-2.5">
-              <div className="min-w-0 flex-1">
-                <p className="font-display text-[13px] font-semibold leading-none text-ink-900 sm:text-base">
-                  Welcome back{user?.email ? `, ${displayName(user.email.split("@")[0])}` : ""}
-                </p>
-              </div>
+              <div className="min-w-0 flex-1" />
 
               <GlobalSearch />
 
