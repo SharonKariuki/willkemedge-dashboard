@@ -40,7 +40,7 @@ export default function MobileNav() {
       {/* Bottom tab bar (mobile only) */}
       <nav
         aria-label="Primary"
-        className="fixed inset-x-3 bottom-3 z-40 lg:hidden"
+        className="fixed inset-x-3 bottom-3 z-40 md:hidden"
         style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
       >
         <div className="glass-strong flex items-center justify-around rounded-xl px-2 py-2 ring-1 ring-ochre-500/15">
@@ -99,11 +99,11 @@ export default function MobileNav() {
           <button
             type="button"
             aria-label="Close menu"
-            className="fixed inset-0 z-50 bg-ink-900/30 backdrop-blur-sm lg:hidden"
+            className="fixed inset-0 z-50 bg-ink-900/30 backdrop-blur-sm md:hidden"
             onClick={() => setOpen(false)}
           />
           <div
-            className="glass-strong fixed inset-x-3 bottom-3 z-50 rounded-xl p-4 lg:hidden animate-fade-up"
+            className="glass-strong fixed inset-x-3 bottom-3 z-50 rounded-xl p-4 md:hidden animate-fade-up"
             style={{ paddingBottom: "max(env(safe-area-inset-bottom), 1rem)" }}
           >
             <div className="mb-3 flex items-center justify-between">
