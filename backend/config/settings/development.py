@@ -17,6 +17,11 @@ if DATABASE_URL:
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
+    # Extra ports Vite falls back to when 5173 is busy (e.g. git worktrees).
+    "http://localhost:5174",
+    "http://127.0.0.1:5174",
+    "http://localhost:5175",
+    "http://127.0.0.1:5175",
 ]
 
 # Email — console by default in dev. Set EMAIL_BACKEND in .env to override
