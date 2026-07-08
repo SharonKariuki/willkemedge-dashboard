@@ -152,12 +152,22 @@
     border: 1px solid rgba(var(--glass-border), 0.22);
     box-shadow: var(--shadow-float);
   }
-  /* Dark espresso anchor — used by Sidebar for layer separation */
+  /* Dark espresso anchor — full-height Sidebar panel, flush to the viewport
+     edge with a single right divider (no float shadow / card border). */
   .sidebar-shell {
     background: rgb(var(--espresso));
     color: rgba(255, 255, 255, 0.78);
-    box-shadow: var(--shadow-float);
-    border: 1px solid rgba(255, 255, 255, 0.04);
+    border-right: 1px solid rgba(255, 255, 255, 0.06);
+  }
+  /* Sidebar nav scrolls when items overflow, but the scrollbar is hidden. */
+  .sidebar-nav {
+    scrollbar-width: none; /* Firefox */
+    -ms-overflow-style: none; /* legacy Edge/IE */
+  }
+  .sidebar-nav::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+    display: none; /* Chrome/Safari */
   }
   .neu {
     background: rgb(var(--bg-canvas));

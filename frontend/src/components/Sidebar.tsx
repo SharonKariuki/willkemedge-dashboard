@@ -1,9 +1,11 @@
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, LogOut } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { NavLink } from "react-router-dom";
 
+import { useAuth } from "@/hooks/useAuth";
 import { useViewPreferences } from "@/hooks/useViewPreferences";
 import { cn } from "@/lib/cn";
+import { displayName } from "@/lib/displayName";
 import { NAV_ITEMS } from "@/lib/nav";
 
 const STORAGE_KEY = "willkemedge-sidebar-collapsed";
@@ -33,15 +35,24 @@ export default function Sidebar() {
     [prefs]
   );
 
+  const { user, logout } = useAuth();
+  const handle = displayName(user?.email?.split("@")[0] ?? "");
+  const initials =
+    (handle || "??")
+      .split(/[._\- ]/)
+      .slice(0, 2)
+      .map((s) => s[0]?.toUpperCase() ?? "")
+      .join("") || "U";
+
   return (
     <aside
       className={cn(
-        "hidden shrink-0 transition-[width] duration-300 ease-out lg:sticky lg:top-4 lg:flex lg:h-[calc(100vh-2rem)] lg:flex-col lg:py-4 lg:pl-4",
-        collapsed ? "lg:w-[88px]" : "lg:w-64"
+        "hidden shrink-0 transition-[width] duration-300 ease-out md:sticky md:top-0 md:flex md:h-screen md:flex-col",
+        collapsed ? "md:w-[72px]" : "md:w-56"
       )}
     >
-      <div className="sidebar-shell relative flex h-full flex-col rounded-xl p-3">
-        {/* Collapse toggle — floats on the right edge */}
+      <div className="sidebar-shell relative flex h-full flex-col px-3 py-4">
+        {/* Collapse toggle — pill straddling the right divider */}
         <button
           type="button"
           onClick={toggle}
@@ -58,27 +69,17 @@ export default function Sidebar() {
         {/* Brand */}
         <div
           className={cn(
-            "flex items-center gap-3 pb-6 pt-2",
-            collapsed ? "justify-center" : "px-2"
+            "flex shrink-0 items-center gap-3 border-b border-white/[0.06] pb-5 pt-1",
+            collapsed ? "justify-center" : "px-3"
           )}
         >
           <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-ochre-500 text-ink-900 shadow-glass ring-1 ring-ochre-600/40">
             <span className="font-display text-lg font-semibold leading-none">W</span>
           </div>
-          {!collapsed && (
-            <div className="min-w-0 animate-fade-up">
-              <p className="font-display text-base font-semibold leading-tight text-white">
-                Wilkem Ventures
-              </p>
-              <p className="truncate text-[11px] uppercase tracking-[0.14em] text-ochre-400/80">
-                Property Suite
-              </p>
-            </div>
-          )}
         </div>
 
-        {/* Primary nav */}
-        <nav className="flex flex-1 flex-col gap-1">
+        {/* Primary nav — scrolls internally so the profile stays pinned */}
+        <nav className="sidebar-nav flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto pt-4">
           {visibleItems.map(({ to, label, icon: Icon }) => (
             <NavLink
               key={to}
@@ -117,17 +118,38 @@ export default function Sidebar() {
           ))}
         </nav>
 
-        {/* Footer hint — hidden when collapsed */}
-        {!collapsed && (
-          <div className="relative mt-4 overflow-hidden rounded-md bg-white/[0.04] p-4 ring-1 ring-white/[0.06]">
-            <p className="font-display text-sm font-semibold text-white">
-              Dr. Osoro's suite
-            </p>
-            <p className="mt-1 text-xs text-white/55">
-              Rent collection, tenants & reports — all in one place.
-            </p>
+        {/* Profile + logout — pinned to the bottom */}
+        <div
+          className={cn(
+            "mt-3 flex shrink-0 items-center gap-3 border-t border-white/[0.06] pt-4",
+            collapsed ? "flex-col" : "px-3"
+          )}
+        >
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-ochre-500 text-xs font-semibold text-ink-900 ring-1 ring-ochre-600/40">
+            {initials}
           </div>
-        )}
+
+          {!collapsed && (
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-medium text-white">
+                {handle || "User"}
+              </p>
+              <p className="text-[10px] uppercase tracking-[0.14em] text-white/45">
+                Admin
+              </p>
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={() => void logout()}
+            aria-label="Sign out"
+            title="Sign out"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-white/55 transition-colors hover:bg-white/5 hover:text-white"
+          >
+            <LogOut className="h-4 w-4" />
+          </button>
+        </div>
       </div>
     </aside>
   );

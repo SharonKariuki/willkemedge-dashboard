@@ -75,7 +75,7 @@ export default function AuthLayout() {
           </header>
 
           {/* Main */}
-          <main className="flex-1 px-2.5 pb-28 pt-3 sm:px-4 sm:pt-4 lg:px-6 lg:pb-8">
+          <main className="flex-1 px-2.5 pb-28 pt-3 sm:px-4 sm:pt-4 md:pb-8 lg:px-6">
             <div className="mx-auto max-w-[1400px] animate-fade-up">
               {/* Keyed by path so a render error in one page is cleared on
                   navigation and never blanks the whole shell. */}
