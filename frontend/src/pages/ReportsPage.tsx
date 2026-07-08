@@ -465,7 +465,7 @@ function LandlordTab() {
       <CardHeader>
         <div>
           <CardTitle>Landlord Statement</CardTitle>
-          <p className="mt-1 text-xs text-ink-500">Monthly summary for Dr. William Osoro</p>
+          <p className="mt-1 text-xs text-ink-500">Monthly summary for Dr. Wilson Osoro</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <MonthYearPicker month={month} year={year} onMonth={setMonth} onYear={setYear} />

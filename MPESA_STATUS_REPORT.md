@@ -1,6 +1,6 @@
 # M-Pesa Integration — Status Report
 
-**Prepared for:** Dr. William Osoro
+**Prepared for:** Dr. Wilson Osoro
 **Prepared by:** Sharon, Wilkem Ventures rental management system
 **Date:** 17 May 2026
 **Status:** Blocked — awaiting Co-op Bank API access
