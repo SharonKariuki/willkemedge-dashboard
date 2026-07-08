@@ -69,3 +69,20 @@ EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
 # is running.
 CELERY_TASK_ALWAYS_EAGER = config("CELERY_TASK_ALWAYS_EAGER", default=True, cast=bool)
 CELERY_TASK_EAGER_PROPAGATES = False
+
+# ── Sentry (error monitoring) ──────────────────────────────────────────────
+# Only initialised when SENTRY_DSN is configured, so the app runs without it.
+# sentry-sdk[django] auto-enables the Django/DRF/Celery integrations.
+SENTRY_DSN = config("SENTRY_DSN", default="")
+if SENTRY_DSN:
+    import sentry_sdk
+
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        environment=config("SENTRY_ENVIRONMENT", default="production"),
+        release=config("SENTRY_RELEASE", default=""),
+        # Performance tracing is sampled low to control cost; tune via env.
+        traces_sample_rate=config("SENTRY_TRACES_SAMPLE_RATE", default=0.1, cast=float),
+        # Never ship PII (tenant names, emails, payment refs) to Sentry.
+        send_default_pii=False,
+    )
