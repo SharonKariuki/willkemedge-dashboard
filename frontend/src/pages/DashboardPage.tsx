@@ -21,13 +21,20 @@ import {
 import {
   Badge,
   Button,
+  Card,
   EmptyState,
   ErrorState,
   Skeleton,
+  TBody,
+  TD,
+  TH,
+  THead,
+  TR,
+  Table,
 } from "@/components/ui";
+import { cn } from "@/lib/cn";
 import { useAuth } from "@/hooks/useAuth";
 import { useDashboard, type DashboardData } from "@/hooks/useDashboard";
-import { displayName } from "@/lib/displayName";
 import { avatarFor, propertyImage } from "@/lib/images";
 
 const OCCUPANCY_COLORS = [
@@ -46,13 +53,6 @@ function formatK(n: number) {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(0)}k`;
   return String(n);
-}
-
-function greetingFor(hour: number) {
-  if (hour < 5) return "Good evening";
-  if (hour < 12) return "Good morning";
-  if (hour < 17) return "Good afternoon";
-  return "Good evening";
 }
 
 function headlineFor(data: DashboardData): string {
@@ -90,22 +90,15 @@ export default function DashboardPage() {
   const { data, isLoading, isError, refetch } = useDashboard();
   const { user } = useAuth();
 
-  const firstName = user?.first_name?.trim() || displayName(user?.email?.split("@")[0]) || "there";
+  const firstName = user?.first_name?.trim() || "Wilson";
   const today = new Date();
   const dateLine = format(today, "EEEE, d MMMM").toUpperCase();
-  const greeting = `${greetingFor(today.getHours())}, ${firstName}.`;
+  const greeting = `Welcome back, ${firstName}.`;
 
   if (isError && !data) {
     return (
-      <div className="space-y-10">
-        <header className="space-y-2">
-          <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-ink-500">
-            {dateLine}
-          </p>
-          <h1 className="font-display text-4xl font-semibold leading-tight text-ink-900 sm:text-5xl">
-            {greeting}
-          </h1>
-        </header>
+      <div className="space-y-8">
+        <Masthead dateLine={dateLine} greeting={greeting} />
         <ErrorState
           title="The dashboard could not be loaded."
           description="Your portfolio summary did not come back. This is usually temporary."
@@ -117,18 +110,18 @@ export default function DashboardPage() {
 
   if (isLoading || !data) {
     return (
-      <div className="space-y-10">
-        <header className="space-y-2">
-          <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-ink-500">
-            {dateLine}
-          </p>
-          <h1 className="font-display text-4xl font-semibold leading-tight text-ink-900 sm:text-5xl">
-            {greeting}
-          </h1>
-          <Skeleton className="h-4 w-64" />
-        </header>
-        <Skeleton className="h-48 w-full" rounded="lg" />
-        <Skeleton className="h-[280px] w-full" rounded="lg" />
+      <div className="space-y-8">
+        <Masthead dateLine={dateLine} greeting={greeting} />
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Skeleton key={i} className="h-28 w-full" rounded="lg" />
+          ))}
+        </div>
+        <div className="grid gap-4 lg:grid-cols-3">
+          <Skeleton className="h-[280px] w-full lg:col-span-2" rounded="lg" />
+          <Skeleton className="h-[280px] w-full" rounded="lg" />
+        </div>
+        <Skeleton className="h-64 w-full" rounded="lg" />
       </div>
     );
   }
@@ -158,85 +151,71 @@ export default function DashboardPage() {
     : kpis.collection_percentage ?? 0;
 
   const headline = headlineFor(data);
-  const monthLabel = format(today, "MMMM").toUpperCase();
+  const monthLabel = format(today, "MMMM");
 
   return (
-    <div className="space-y-12">
-      {/* ── Editorial masthead ────────────────────────────────────────────── */}
-      <header className="flex flex-col gap-6 sm:flex-row sm:items-end sm:justify-between">
-        <div className="min-w-0">
-          <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-ink-500">
-            {dateLine}
-          </p>
-          <h1 className="mt-3 font-display text-4xl font-semibold leading-[1.05] text-ink-900 sm:text-5xl">
-            {greeting}
-          </h1>
-          <p className="mt-3 max-w-2xl font-display text-xl font-normal leading-snug text-ink-500">
-            {headline}
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Link to="/payments">
-            <Button variant="glass" size="md">
-              <CreditCard className="h-4 w-4" />
-              Record payment
-            </Button>
-          </Link>
-          <Link to="/reports">
-            <Button variant="primary" size="md">
-              View reports
-              <ArrowUpRight className="h-4 w-4" />
-            </Button>
-          </Link>
-        </div>
-      </header>
+    <div className="space-y-8">
+      {/* ── Masthead with actions ─────────────────────────────────────────── */}
+      <Masthead dateLine={dateLine} greeting={greeting} headline={headline}>
+        <Link to="/payments">
+          <Button variant="glass" size="md">
+            <CreditCard className="h-4 w-4" />
+            Record payment
+          </Button>
+        </Link>
+        <Link to="/reports">
+          <Button variant="primary" size="md">
+            View reports
+            <ArrowUpRight className="h-4 w-4" />
+          </Button>
+        </Link>
+      </Masthead>
 
-      {/* ── Lead figure: collection + occupancy ───────────────────────────── */}
-      <section className="grid gap-10 lg:grid-cols-3 lg:gap-12">
-        {/* Collection — the lead figure */}
-        <div className="lg:col-span-2">
-          <div className="flex items-baseline justify-between gap-4 border-b border-ink-200 pb-3">
-            <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-ink-500">
-              {monthLabel} · Collected
-            </p>
-            <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-ink-500">
-              of {KES(kpis.collection_expected)} expected
-            </p>
+      {/* ── KPI tiles ─────────────────────────────────────────────────────── */}
+      <section className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <Kpi
+          label="Total units"
+          value={kpis.total_units.toLocaleString()}
+          caption={`${kpis.occupied} occupied · ${kpis.vacant} vacant`}
+        />
+        <Kpi
+          label="Occupancy"
+          value={`${occupancyPct}%`}
+          progress={occupancyPct}
+        />
+        <Kpi
+          label={`Collected · ${monthLabel}`}
+          value={`${collectionPct}%`}
+          caption={`${KES(kpis.collection_received)} of ${KES(kpis.collection_expected).replace("KES ", "")}`}
+        />
+        <Kpi
+          label="Arrears"
+          value={KES(kpis.total_arrears)}
+          caption={kpis.total_arrears > 0 ? `${alerts.filter((a) => a.type === "overdue").length} tenants overdue` : "All settled"}
+          tone={kpis.total_arrears > 0 ? "alert" : "neutral"}
+        />
+      </section>
+
+      {/* ── Income trend + Rent status ────────────────────────────────────── */}
+      <section className="grid gap-4 lg:grid-cols-3">
+        <Card variant="flat" padding="none" className="ring-1 ring-ink-200/70 lg:col-span-2">
+          <div className="flex items-center justify-between border-b border-ink-200 px-5 py-4">
+            <h2 className="font-display text-lg font-semibold text-ink-900">
+              Income — last 6 months
+            </h2>
+            {lastMonth > 0 ? (
+              <Badge tone={trendDelta >= 0 ? "sage" : "coral"}>
+                {trendSign}{trendDelta.toFixed(1)}% vs last month
+              </Badge>
+            ) : (
+              <Badge tone="neutral">First month on record</Badge>
+            )}
           </div>
-          <div className="mt-6 flex flex-wrap items-end justify-between gap-6">
-            <p className="font-display text-4xl font-semibold leading-none tracking-tight text-ink-900 sm:text-5xl lg:text-[4rem]">
-              <span className="text-ink-400">KES </span>
-              <span className="tabular-nums">{Math.round(thisMonth).toLocaleString()}</span>
-            </p>
-            <div className="text-right">
-              <p className="font-display text-3xl font-semibold tabular-nums text-ink-900 sm:text-4xl">
-                {collectionPct}
-                <span className="ml-0.5 text-xl text-ink-400">%</span>
-              </p>
-              {lastMonth > 0 ? (
-                <p className="mt-1 text-xs uppercase tracking-[0.16em] text-ink-500">
-                  {trendSign}{trendDelta.toFixed(1)}% vs last month
-                </p>
-              ) : (
-                <p className="mt-1 text-xs uppercase tracking-[0.16em] text-ink-500">
-                  First month on record
-                </p>
-              )}
-            </div>
-          </div>
-          {/* Hairline progress */}
-          <div className="mt-6 h-px w-full bg-ink-100">
-            <div
-              className="h-px bg-sage-500 transition-[width] duration-700 ease-out"
-              style={{ width: `${Math.min(100, collectionPct)}%` }}
-            />
-          </div>
-          {/* Income trend — no card walls */}
-          <div className="mt-6 h-[200px]">
+          <div className="h-[220px] px-2 py-4">
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart
                 data={income_trend}
-                margin={{ top: 10, right: 4, left: -20, bottom: 0 }}
+                margin={{ top: 10, right: 12, left: -8, bottom: 0 }}
               >
                 <defs>
                   <linearGradient id="incomeGrad" x1="0" y1="0" x2="0" y2="1">
@@ -277,99 +256,69 @@ export default function DashboardPage() {
               </AreaChart>
             </ResponsiveContainer>
           </div>
-        </div>
+        </Card>
 
-        {/* Occupancy — quiet sidebar */}
-        <div className="lg:border-l lg:border-ink-200 lg:pl-12">
-          <div className="border-b border-ink-200 pb-3">
-            <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-ink-500">
-              Occupancy
-            </p>
+        <Card variant="flat" padding="none" className="ring-1 ring-ink-200/70">
+          <div className="border-b border-ink-200 px-5 py-4">
+            <h2 className="font-display text-lg font-semibold text-ink-900">Rent status</h2>
           </div>
-          <div className="relative mx-auto mt-4 flex h-[180px] w-full items-center justify-center">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={occData}
-                  dataKey="value"
-                  innerRadius={56}
-                  outerRadius={80}
-                  paddingAngle={2}
-                  stroke="none"
-                >
-                  {occData.map((_, i) => (
-                    <Cell key={i} fill={OCCUPANCY_COLORS[i % OCCUPANCY_COLORS.length]} />
-                  ))}
-                </Pie>
-                <RcTooltip
-                  contentStyle={{
-                    background: "rgba(255,255,255,0.96)",
-                    border: "1px solid rgba(44,31,26,0.08)",
-                    borderRadius: 10,
-                    fontSize: 12,
-                  }}
-                />
-              </PieChart>
-            </ResponsiveContainer>
-            <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-              <p className="font-display text-4xl font-semibold tabular-nums text-ink-900">
-                {occupancyPct}
-                <span className="text-xl text-ink-400">%</span>
-              </p>
-              <p className="mt-1 text-[10px] uppercase tracking-[0.18em] text-ink-500">
-                {kpis.occupied} of {kpis.total_units} occupied
-              </p>
+          <div className="p-5">
+            <div className="relative mx-auto flex h-[160px] w-full items-center justify-center">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={occData}
+                    dataKey="value"
+                    innerRadius={52}
+                    outerRadius={74}
+                    paddingAngle={2}
+                    stroke="none"
+                  >
+                    {occData.map((_, i) => (
+                      <Cell key={i} fill={OCCUPANCY_COLORS[i % OCCUPANCY_COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <RcTooltip
+                    contentStyle={{
+                      background: "rgba(255,255,255,0.96)",
+                      border: "1px solid rgba(44,31,26,0.08)",
+                      borderRadius: 10,
+                      fontSize: 12,
+                    }}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                <p className="font-display text-3xl font-semibold tabular-nums text-ink-900">
+                  {occupancyPct}
+                  <span className="text-lg text-ink-400">%</span>
+                </p>
+                <p className="mt-0.5 text-[10px] uppercase tracking-[0.16em] text-ink-500">
+                  occupied
+                </p>
+              </div>
             </div>
+            <ul className="mt-5 space-y-2 text-xs">
+              {occData.map((d, i) => (
+                <li key={d.name} className="flex items-center gap-3">
+                  <span
+                    className="h-2 w-2 rounded-full"
+                    style={{ background: OCCUPANCY_COLORS[i % OCCUPANCY_COLORS.length] }}
+                  />
+                  <span className="text-ink-500">{d.name}</span>
+                  <span className="ml-auto font-medium tabular-nums text-ink-900">{d.value}</span>
+                </li>
+              ))}
+            </ul>
           </div>
-          <ul className="mt-6 space-y-2 text-xs">
-            {occData.map((d, i) => (
-              <li key={d.name} className="flex items-center gap-3">
-                <span
-                  className="h-1.5 w-1.5 rounded-full"
-                  style={{ background: OCCUPANCY_COLORS[i % OCCUPANCY_COLORS.length] }}
-                />
-                <span className="text-ink-500">{d.name}</span>
-                <span className="ml-auto font-medium tabular-nums text-ink-900">{d.value}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      </section>
-
-      {/* ── Supporting figure row ─────────────────────────────────────────── */}
-      <section className="grid grid-cols-2 divide-x divide-ink-200 border-y border-ink-200 sm:grid-cols-4">
-        <Figure
-          label="Total units"
-          value={kpis.total_units.toString()}
-          caption={`${kpis.occupied} occupied · ${kpis.vacant} vacant`}
-        />
-        <Figure
-          label="Active tenants"
-          value={kpis.active_tenants.toString()}
-          caption={kpis.active_tenants === 1 ? "Single tenancy" : "Across the portfolio"}
-        />
-        <Figure
-          label="Outstanding"
-          value={KES(kpis.total_arrears).replace("KES ", "")}
-          prefix="KES "
-          caption={kpis.total_arrears > 0 ? "Awaiting payment" : "All settled"}
-          tone={kpis.total_arrears > 0 ? "alert" : "neutral"}
-        />
-        <Figure
-          label="Last month"
-          value={KES(lastMonth).replace("KES ", "")}
-          prefix="KES "
-          caption={lastMonth > 0 ? "Collected in full" : "No record yet"}
-        />
+        </Card>
       </section>
 
       {/* ── This morning + Recent payments ────────────────────────────────── */}
-      <section className="grid gap-10 lg:grid-cols-2 lg:gap-12">
-        <div>
-          <div className="flex items-baseline justify-between border-b border-ink-200 pb-3">
-            <h2 className="font-display text-xl font-semibold text-ink-900">
-              This morning
-            </h2>
+      <section className="grid gap-4 lg:grid-cols-5">
+        <Card variant="flat" padding="none" className="ring-1 ring-ink-200/70 lg:col-span-2">
+          <div className="flex items-center justify-between border-b border-ink-200 px-5 py-4">
+            <h2 className="font-display text-lg font-semibold text-ink-900">This morning</h2>
             <Badge tone={alerts.length === 0 ? "sage" : "coral"} withDot>
               {alerts.length === 0
                 ? "Nothing pressing"
@@ -377,16 +326,16 @@ export default function DashboardPage() {
             </Badge>
           </div>
           {alerts.length === 0 ? (
-            <div className="mt-6 max-w-md">
-              <p className="font-display text-lg leading-snug text-ink-700">
+            <div className="px-5 py-6">
+              <p className="font-display text-base leading-snug text-ink-700">
                 Nothing demands your attention.
               </p>
               <p className="mt-1 text-sm text-ink-500">
-                Tenants are current, leases are running, and the portfolio is quiet. Enjoy the morning.
+                Tenants are current and leases are running. Enjoy the morning.
               </p>
             </div>
           ) : (
-            <ul className="mt-4 divide-y divide-ink-100">
+            <ul className="divide-y divide-ink-100 px-5">
               {alerts.slice(0, 6).map((a, i) => (
                 <li key={i} className="flex items-start gap-3 py-3 text-sm">
                   <AlertSeverityDot type={a.type} />
@@ -394,80 +343,90 @@ export default function DashboardPage() {
                 </li>
               ))}
               {alerts.length > 6 && (
-                <li className="pt-3 text-xs text-ink-500">
-                  +{alerts.length - 6} more items
-                </li>
+                <li className="py-3 text-xs text-ink-500">+{alerts.length - 6} more items</li>
               )}
             </ul>
           )}
-        </div>
+        </Card>
 
-        <div>
-          <div className="flex items-baseline justify-between border-b border-ink-200 pb-3">
-            <h2 className="font-display text-xl font-semibold text-ink-900">
-              Recent payments
-            </h2>
+        <div className="lg:col-span-3">
+          <div className="mb-3 flex items-baseline justify-between">
+            <h2 className="font-display text-lg font-semibold text-ink-900">Recent payments</h2>
             <Link
               to="/payments"
-              className="text-xs font-medium uppercase tracking-[0.18em] text-sage-600 hover:text-sage-700"
+              className="text-xs font-medium uppercase tracking-[0.16em] text-sage-600 hover:text-sage-700"
             >
-              All payments
+              All payments →
             </Link>
           </div>
           {recent_payments.length === 0 ? (
-            <div className="mt-6 max-w-md">
-              <p className="font-display text-lg leading-snug text-ink-700">
+            <Card variant="flat" padding="lg" className="ring-1 ring-ink-200/70">
+              <p className="font-display text-base leading-snug text-ink-700">
                 No payments recorded yet.
               </p>
               <p className="mt-1 text-sm text-ink-500">
                 When tenants pay, the ledger appears here.
               </p>
-            </div>
+            </Card>
           ) : (
-            <ul className="mt-2 divide-y divide-ink-100">
-              {recent_payments.slice(0, 6).map((p) => (
-                <li key={p.id} className="flex items-center gap-3 py-3">
-                  <img
-                    src={avatarFor(p.tenant_name)}
-                    alt=""
-                    aria-hidden
-                    className="h-9 w-9 rounded-full ring-1 ring-ink-200/60"
-                  />
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium text-ink-900">{p.tenant_name}</p>
-                    <p className="truncate text-[11px] text-ink-500">
+            <Table>
+              <THead>
+                <TR>
+                  <TH>Tenant</TH>
+                  <TH className="hidden sm:table-cell">Building / Unit</TH>
+                  <TH className="hidden md:table-cell">Method</TH>
+                  <TH className="text-right">Amount</TH>
+                  <TH className="text-right">Date</TH>
+                </TR>
+              </THead>
+              <TBody>
+                {recent_payments.slice(0, 6).map((p) => (
+                  <TR key={p.id}>
+                    <TD>
+                      <div className="flex items-center gap-3">
+                        <img
+                          src={avatarFor(p.tenant_name)}
+                          alt=""
+                          aria-hidden
+                          className="h-8 w-8 rounded-full ring-1 ring-ink-200/60"
+                        />
+                        <span className="font-medium text-ink-900">{p.tenant_name}</span>
+                      </div>
+                    </TD>
+                    <TD className="hidden text-ink-500 sm:table-cell">
                       {p.building_name} · {p.unit_label}
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <p className="font-display text-base font-semibold tabular-nums text-ink-900">
+                    </TD>
+                    <TD className="hidden md:table-cell">
+                      <Badge tone="neutral">{p.source || "—"}</Badge>
+                    </TD>
+                    <TD className="text-right font-display font-semibold tabular-nums text-ink-900">
                       <span className="text-ink-400">KES </span>
                       {Number(p.amount).toLocaleString()}
-                    </p>
-                    <p className="text-[10px] uppercase tracking-[0.14em] text-ink-400">
+                    </TD>
+                    <TD className="text-right text-xs uppercase tracking-[0.12em] text-ink-400">
                       {p.payment_date}
-                    </p>
-                  </div>
-                </li>
-              ))}
-            </ul>
+                    </TD>
+                  </TR>
+                ))}
+              </TBody>
+            </Table>
           )}
         </div>
       </section>
 
-      {/* ── Properties — the editorial gallery ────────────────────────────── */}
+      {/* ── Properties gallery ────────────────────────────────────────────── */}
       {buildings.length > 0 && (
         <section>
           <div className="flex items-baseline justify-between border-b border-ink-200 pb-3">
             <div>
-              <h2 className="font-display text-xl font-semibold text-ink-900">Properties</h2>
+              <h2 className="font-display text-lg font-semibold text-ink-900">Properties</h2>
               <p className="mt-1 text-sm text-ink-500">
                 {buildings.length} {buildings.length === 1 ? "building" : "buildings"} in the portfolio
               </p>
             </div>
             <Link
               to="/buildings"
-              className="text-xs font-medium uppercase tracking-[0.18em] text-sage-600 hover:text-sage-700"
+              className="text-xs font-medium uppercase tracking-[0.16em] text-sage-600 hover:text-sage-700"
             >
               Manage
             </Link>
@@ -479,9 +438,9 @@ export default function DashboardPage() {
                 <Link
                   key={b.id}
                   to="/buildings"
-                  className="group relative block overflow-hidden rounded-md transition-all hover:-translate-y-0.5"
+                  className="group relative block overflow-hidden rounded-lg ring-1 ring-ink-200/70 transition-all hover:-translate-y-0.5 hover:shadow-float"
                 >
-                  <div className="relative h-44 w-full overflow-hidden rounded-md">
+                  <div className="relative h-40 w-full overflow-hidden">
                     <img
                       src={propertyImage(b.id ?? b.name, "md")}
                       alt={b.name}
@@ -498,7 +457,7 @@ export default function DashboardPage() {
                       </p>
                     </div>
                   </div>
-                  <div className="mt-3 flex items-center gap-4 text-xs">
+                  <div className="flex items-center gap-4 bg-white px-3 py-3 text-xs">
                     <span className="text-ink-500">
                       <span className="font-medium tabular-nums text-ink-900">{b.occupied}</span> occupied
                     </span>
@@ -513,15 +472,15 @@ export default function DashboardPage() {
             })}
           </div>
           {buildings.length > 1 && (
-            <div className="mt-10">
-              <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-ink-500">
-                By building
-              </p>
-              <div className="mt-3 h-[180px]">
+            <Card variant="flat" padding="none" className="mt-6 ring-1 ring-ink-200/70">
+              <div className="border-b border-ink-200 px-5 py-4">
+                <h3 className="font-display text-base font-semibold text-ink-900">Occupancy by building</h3>
+              </div>
+              <div className="h-[200px] px-2 py-4">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart
                     data={buildings}
-                    margin={{ top: 10, right: 4, left: -20, bottom: 0 }}
+                    margin={{ top: 10, right: 12, left: -8, bottom: 0 }}
                     barCategoryGap="28%"
                   >
                     <XAxis
@@ -549,12 +508,11 @@ export default function DashboardPage() {
                   </BarChart>
                 </ResponsiveContainer>
               </div>
-            </div>
+            </Card>
           )}
         </section>
       )}
 
-      {/* If no buildings at all */}
       {buildings.length === 0 && (
         <EmptyState
           title="No buildings yet"
@@ -567,33 +525,70 @@ export default function DashboardPage() {
 
 // ─── Local primitives ───────────────────────────────────────────────────────
 
-interface FigureProps {
+interface MastheadProps {
+  dateLine: string;
+  greeting: string;
+  headline?: string;
+  children?: React.ReactNode;
+}
+
+function Masthead({ dateLine, greeting, headline, children }: MastheadProps) {
+  return (
+    <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+      <div className="min-w-0">
+        <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-ink-500">
+          {dateLine}
+        </p>
+        <h1 className="mt-2 font-display text-3xl font-semibold leading-tight text-ink-900 sm:text-4xl">
+          {greeting}
+        </h1>
+        {headline && (
+          <p className="mt-2 font-display text-lg font-normal leading-snug text-ink-500">
+            {headline}
+          </p>
+        )}
+      </div>
+      {children && <div className="flex flex-wrap items-center gap-2">{children}</div>}
+    </header>
+  );
+}
+
+interface KpiProps {
   label: string;
   value: string;
-  prefix?: string;
-  caption: string;
+  caption?: string;
+  progress?: number;
   tone?: "neutral" | "alert";
 }
 
-function Figure({ label, value, prefix, caption, tone = "neutral" }: FigureProps) {
+function Kpi({ label, value, caption, progress, tone = "neutral" }: KpiProps) {
   return (
-    <div className="px-5 py-5 first:pl-0 last:pr-0 sm:py-6">
-      <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-ink-500">
+    <Card variant="flat" padding="md" className="ring-1 ring-ink-200/70">
+      <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-ink-500">
         {label}
       </p>
-      <p className="mt-3 font-display text-2xl font-semibold leading-none tabular-nums text-ink-900 sm:text-3xl">
-        {prefix && <span className="text-ink-400">{prefix}</span>}
+      <p
+        className={cn(
+          "mt-2 font-display text-2xl font-semibold leading-none tabular-nums sm:text-3xl",
+          tone === "alert" ? "text-coral-600" : "text-ink-900"
+        )}
+      >
         {value}
       </p>
-      <p
-        className={
-          "mt-2 text-xs " +
-          (tone === "alert" ? "text-coral-600" : "text-ink-500")
-        }
-      >
-        {caption}
-      </p>
-    </div>
+      {progress !== undefined && (
+        <div className="mt-3 h-1.5 w-full rounded-full bg-ink-100">
+          <div
+            className="h-1.5 rounded-full bg-sage-500 transition-[width] duration-700 ease-out"
+            style={{ width: `${Math.min(100, progress)}%` }}
+          />
+        </div>
+      )}
+      {caption && (
+        <p className={cn("mt-2 text-xs", tone === "alert" ? "text-coral-600" : "text-ink-500")}>
+          {caption}
+        </p>
+      )}
+    </Card>
   );
 }
 
