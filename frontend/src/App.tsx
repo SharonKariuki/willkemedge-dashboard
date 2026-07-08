@@ -12,6 +12,7 @@ import NotificationsPage from "@/pages/NotificationsPage";
 import PasswordResetPage from "@/pages/PasswordResetPage";
 import PasswordResetConfirmPage from "@/pages/PasswordResetConfirmPage";
 import PaymentsPage from "@/pages/PaymentsPage";
+import ReconciliationPage from "@/pages/ReconciliationPage";
 import ReportsPage from "@/pages/ReportsPage";
 import SettingsPage from "@/pages/SettingsPage";
 import TenantsPage from "@/pages/TenantsPage";
@@ -37,6 +38,7 @@ export default function App() {
         <Route path="/units" element={<UnitsPage />} />
         <Route path="/tenants" element={<TenantsPage />} />
         <Route path="/payments" element={<PaymentsPage />} />
+        <Route path="/reconciliation" element={<ReconciliationPage />} />
         <Route path="/expenses" element={<ExpensesPage />} />
         <Route path="/accounting" element={<AccountingPage />} />
         <Route path="/notifications" element={<NotificationsPage />} />
