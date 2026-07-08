@@ -162,6 +162,23 @@
         </tr>
     </table>
 
+    <!-- ===== receipt breakdown (5 named totals) ===== -->
+    <table class="panels">
+        <tr>
+            <td>
+                <div class="panel-title">Receipt Breakdown</div>
+                <table class="summary-tbl">
+                    <tr><td>Security Deposit (held)</td><td class="amt">{{ security_deposit }}</td></tr>
+                    <tr><td>Arrears Brought Forward</td><td class="amt">{{ arrears_bf }}</td></tr>
+                    <tr><td>Month Rent</td><td class="amt">{{ month_rent }}</td></tr>
+                    <tr><td>Other Charges</td><td class="amt">{{ other_charges }}</td></tr>
+                    <tr class="grand"><td>Unpaid Balance</td><td class="amt">{{ unpaid_balance }}</td></tr>
+                </table>
+            </td>
+            <td></td>
+        </tr>
+    </table>
+
     <div class="note">
         * Please note that ALL PAYMENTS should made to the Paybill / Bank account given in the Payment Options;
         The total amount payable is due on or before the {{ due_day_ordinal }} day of the Billing Month.

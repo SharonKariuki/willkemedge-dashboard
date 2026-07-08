@@ -43,11 +43,14 @@ def _notify_tenant_payment(tenant, amount, reference: str, payment_date) -> None
 
     unit_label = f"{tenant.unit.building.name} – {tenant.unit.label}"
 
-    msg = payment_sms_message(tenant.full_name, amount, unit_label, reference)
+    # Build the statement once — the SMS now carries the same five named totals
+    # as the email receipt, so both channels agree.
+    statement = build_statement(tenant, statement_date=payment_date, as_of=payment_date)
+
+    msg = payment_sms_message(tenant.full_name, amount, unit_label, reference, statement)
     send_sms(tenant.phone, msg)
 
     if tenant.email:
-        statement = build_statement(tenant, statement_date=payment_date, as_of=payment_date)
         html = payment_statement_email_html(tenant.full_name, amount, reference, statement)
         attachments = []
         pdf = render_to_pdf("payments/statement_pdf.html", statement)

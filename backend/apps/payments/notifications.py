@@ -122,11 +122,25 @@ def send_email(
 # Message builders
 # ---------------------------------------------------------------------------
 
-def payment_sms_message(tenant_name: str, amount, unit_label: str, reference: str) -> str:
-    return (
+def payment_sms_message(
+    tenant_name: str, amount, unit_label: str, reference: str, statement: dict | None = None
+) -> str:
+    """Payment-received SMS. When a statement is supplied, the five named
+    totals (deposit, arrears b/f, month rent, other charges, unpaid balance)
+    are appended so the SMS receipt carries the same figures as the email."""
+    msg = (
         f"Dear {tenant_name}, payment of KES {amount:,.2f} received "
-        f"for Unit {unit_label}. Ref: {reference}. Thank you - Wilkem Edge."
+        f"for Unit {unit_label}. Ref: {reference}."
     )
+    if statement:
+        msg += (
+            f" Statement (KES): Deposit {statement['security_deposit']}, "
+            f"Arrears B/F {statement['arrears_bf']}, "
+            f"Month Rent {statement['month_rent']}, "
+            f"Other Charges {statement['other_charges']}, "
+            f"Unpaid Balance {statement['unpaid_balance']}."
+        )
+    return msg + " Thank you - Wilkem Edge."
 
 
 def _row(label: str, value: str, *, bold: bool = False) -> str:
@@ -170,6 +184,15 @@ def payment_statement_email_html(tenant_name: str, amount, reference: str, state
     if statement.get("is_business"):
         summary_rows.append(_row("16% VAT on Rent", statement["vat_on_rent"]))
     summary_rows.append(_row("Total KES Due:", statement["total_due"], bold=True))
+
+    # ── Receipt breakdown (Feature 7) — the five named totals ──
+    breakdown_rows = [
+        _row("Security Deposit (held)", statement["security_deposit"]),
+        _row("Arrears Brought Forward", statement["arrears_bf"]),
+        _row("Month Rent", statement["month_rent"]),
+        _row("Other Charges", statement["other_charges"]),
+        _row("Unpaid Balance", statement["unpaid_balance"], bold=True),
+    ]
 
     # ── Payment options ──
     pay_rows = []
@@ -261,6 +284,12 @@ def payment_statement_email_html(tenant_name: str, amount, reference: str, state
       </td>
     </tr>
   </table>
+
+  <!-- receipt breakdown (5 named totals) -->
+  <div style="margin-top:10px">
+    <div style="font-weight:bold;margin-bottom:4px">Receipt Breakdown</div>
+    <table style="border-collapse:collapse;width:100%">{"".join(breakdown_rows)}</table>
+  </div>
 
   <!-- note -->
   <div style="border:1px solid #c9c9c9;padding:6px 8px;margin-top:8px;font-style:italic;color:#333">
