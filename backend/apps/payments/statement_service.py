@@ -26,6 +26,8 @@ from __future__ import annotations
 import datetime as _dt
 from decimal import Decimal
 
+from django.db.models import Q, Sum
+
 from apps.buildings.models import UnitClassification
 
 from .tax_service import calculate_tax
@@ -187,6 +189,34 @@ def build_statement(tenant, *, statement_date: _dt.date | None = None, as_of: _d
     total_due = balance
     arrears_others = total_due - current_base - vat_on_rent
 
+    # --- Receipt breakdown (Feature 7) ---------------------------------------
+    # Five named figures for the SMS/email receipt, each sourced from real
+    # records. These are informational: the authoritative amount owed remains
+    # `total_due` ("Unpaid Balance"). They are additive to the account rather
+    # than a re-derivation of the net balance.
+    from .models import Payment, PaymentType, UtilityCharge
+
+    #  Security deposit held = deposit-type payments received (up to as_of).
+    deposit_q = Payment.objects.filter(tenant=tenant, payment_type=PaymentType.DEPOSIT)
+    if as_of:
+        deposit_q = deposit_q.filter(payment_date__lte=as_of)
+    security_deposit = _money(deposit_q.aggregate(t=Sum("amount"))["t"])
+
+    #  Arrears brought forward = rent balance for periods before the current one.
+    bf_q = Arrears.objects.filter(tenant=tenant)
+    if current is not None:
+        bf_q = bf_q.filter(
+            Q(period_year__lt=current.period_year)
+            | Q(period_year=current.period_year, period_month__lt=current.period_month)
+        )
+    arrears_bf = _money(bf_q.aggregate(t=Sum("balance"))["t"])
+
+    #  Other charges = non-rent utility charges posted (up to as_of).
+    util_q = UtilityCharge.objects.filter(tenant=tenant)
+    if as_of:
+        util_q = util_q.filter(posting_date__lte=as_of)
+    other_charges = _money(util_q.aggregate(t=Sum("amount"))["t"])
+
     paybill_number = building.paybill_number or ""
     paybill_account = building.paybill_account_for(unit.label) if paybill_number else ""
 
@@ -219,6 +249,13 @@ def build_statement(tenant, *, statement_date: _dt.date | None = None, as_of: _d
         "total_due_whole": _fmt_money_whole(total_due),
         "total_due_value": total_due,
         "due_day_ordinal": _ordinal(tenant.due_day),
+
+        # --- receipt breakdown (Feature 7): the five named totals ---
+        "security_deposit": _fmt_money(security_deposit),
+        "arrears_bf": _fmt_money(arrears_bf),
+        "month_rent": _fmt_money(current_base),
+        "other_charges": _fmt_money(other_charges),
+        "unpaid_balance": _fmt_money(total_due),
 
         # --- payment options ---
         "paybill_number": paybill_number,

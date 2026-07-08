@@ -27,6 +27,8 @@ class TenantListSerializer(serializers.ModelSerializer):
     building_id = serializers.IntegerField(source="unit.building.id", read_only=True)
     status_display = serializers.CharField(source="get_status_display", read_only=True)
     kyc_status_display = serializers.CharField(source="get_kyc_status_display", read_only=True)
+    balance = serializers.SerializerMethodField()
+    payment_status = serializers.SerializerMethodField()
 
     class Meta:
         model = Tenant
@@ -34,10 +36,25 @@ class TenantListSerializer(serializers.ModelSerializer):
             "id", "full_name", "first_name", "last_name", "phone",
             "unit", "unit_label", "building_name", "building_id",
             "monthly_rent", "deposit_paid", "due_day", "status", "status_display",
-            "kyc_status", "kyc_status_display",
+            "kyc_status", "kyc_status_display", "balance", "payment_status",
             "move_in_date", "move_out_date", "notice_date", "intended_move_out_date",
 
         ]
+
+    def _outstanding(self, obj):
+        """Uncleared arrears balance — prefers the queryset annotation,
+        falls back to a query if the object was fetched without it."""
+        balance = getattr(obj, "outstanding_balance", None)
+        if balance is None:
+            from django.db.models import Sum
+            balance = obj.arrears.filter(is_cleared=False).aggregate(total=Sum("balance"))["total"]
+        return balance or 0
+
+    def get_balance(self, obj):
+        return _money(self._outstanding(obj))
+
+    def get_payment_status(self, obj):
+        return "in_arrears" if self._outstanding(obj) > 0 else "paid"
 
 
 class TenantDetailSerializer(serializers.ModelSerializer):

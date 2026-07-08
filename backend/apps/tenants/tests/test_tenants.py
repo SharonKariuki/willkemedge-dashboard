@@ -279,3 +279,80 @@ class TenantLifecycleTests(APITestCase):
         anon = APIClient()
         resp = anon.get("/api/tenants/")
         assert resp.status_code == 401
+
+
+class TenantArrearsFilterExportTests(APITestCase):
+    """Feature 9: paid/arrears filter toggle + CSV export."""
+
+    @classmethod
+    def setUpTestData(cls):
+        from apps.payments.models import Arrears
+        from apps.tenants.models import Tenant
+
+        cls.user = User.objects.create_user(
+            username="admin", email="admin@test.com", password="testpass123!"
+        )
+        cls.building = Building.objects.create(name="Block B", total_floors=2)
+
+        def _tenant(label, first, rent):
+            unit = Unit.objects.create(
+                building=cls.building, label=label,
+                monthly_rent=Decimal(rent), status=UnitStatus.OCCUPIED_UNPAID,
+            )
+            return Tenant.objects.create(
+                first_name=first, last_name="Test", id_number=f"ID{label}",
+                phone=f"+25470000{label[-1]}", unit=unit,
+                monthly_rent=Decimal(rent), move_in_date="2026-04-01",
+            )
+
+        # In arrears: uncleared balance of 5000
+        cls.owing = _tenant("B1", "Owing", "15000")
+        Arrears.objects.create(
+            tenant=cls.owing, period_month=5, period_year=2026,
+            expected_rent=Decimal("15000"), amount_paid=Decimal("10000"),
+            balance=Decimal("5000"), is_cleared=False,
+        )
+        # Paid up: an arrears row that is fully cleared (balance ignored)
+        cls.paid = _tenant("B2", "Paidup", "12000")
+        Arrears.objects.create(
+            tenant=cls.paid, period_month=5, period_year=2026,
+            expected_rent=Decimal("12000"), amount_paid=Decimal("12000"),
+            balance=Decimal("0"), is_cleared=True,
+        )
+
+    def setUp(self):
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.user)
+
+    def test_list_exposes_balance_and_payment_status(self):
+        rows = {r["full_name"]: r for r in self.client.get("/api/tenants/").json()}
+        assert rows["Owing Test"]["payment_status"] == "in_arrears"
+        assert Decimal(rows["Owing Test"]["balance"]) == Decimal("5000.00")
+        assert rows["Paidup Test"]["payment_status"] == "paid"
+        assert Decimal(rows["Paidup Test"]["balance"]) == Decimal("0.00")
+
+    def test_filter_in_arrears(self):
+        resp = self.client.get("/api/tenants/", {"payment_status": "in_arrears"})
+        names = [r["full_name"] for r in resp.json()]
+        assert names == ["Owing Test"]
+
+    def test_filter_paid(self):
+        resp = self.client.get("/api/tenants/", {"payment_status": "paid"})
+        names = [r["full_name"] for r in resp.json()]
+        assert names == ["Paidup Test"]
+
+    def test_csv_export_all(self):
+        resp = self.client.get("/api/tenants/export/")
+        assert resp.status_code == 200
+        assert resp["Content-Type"].startswith("text/csv")
+        assert "attachment" in resp["Content-Disposition"]
+        body = resp.content.decode()
+        assert "Tenant,Building,Unit,Balance,Payment Status,Status" in body
+        assert "Owing Test" in body and "In Arrears" in body
+        assert "Paidup Test" in body and "Paid" in body
+
+    def test_csv_export_honors_filter(self):
+        resp = self.client.get("/api/tenants/export/", {"payment_status": "in_arrears"})
+        body = resp.content.decode()
+        assert "Owing Test" in body
+        assert "Paidup Test" not in body

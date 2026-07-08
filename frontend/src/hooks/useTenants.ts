@@ -2,12 +2,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import type { TenantDetail, TenantListItem } from "@/lib/types";
 
-interface TenantFilters {
+export interface TenantFilters {
   status?: string;
   kyc_status?: string;
   building?: number | string;
   unit?: number | string;
   search?: string;
+  payment_status?: string;
 }
 
 export function useTenants(filters?: TenantFilters) {
