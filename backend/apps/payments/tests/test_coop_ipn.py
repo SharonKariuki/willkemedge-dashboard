@@ -96,6 +96,92 @@ class TestCoopIpnAuth:
         assert CoopIpnEvent.objects.count() == 0
 
 
+def _post_from(client, payload, ip=None, xff=None, token=TOKEN):
+    """POST an IPN simulating a given source IP (REMOTE_ADDR) and/or an
+    X-Forwarded-For chain, plus the bearer token unless overridden."""
+    extra = {}
+    if token is not None:
+        extra["HTTP_AUTHORIZATION"] = f"Bearer {token}"
+    if ip is not None:
+        extra["REMOTE_ADDR"] = ip
+    if xff is not None:
+        extra["HTTP_X_FORWARDED_FOR"] = xff
+    return client.post(IPN_URL, payload, format="json", **extra)
+
+
+class TestCoopIpnIpAllowlist:
+    """Day 2: only Co-op's source IPs may post; everything else gets 403."""
+
+    @pytest.fixture(autouse=True)
+    def _one_trusted_proxy(self, settings):
+        # Match production (Render runs one edge proxy in front of the app).
+        settings.COOP_IPN_TRUSTED_PROXY_COUNT = 1
+
+    def test_empty_allowlist_allows_all(self, api_client, db, settings):
+        settings.COOP_IPN_ALLOWED_IPS = []
+        with patch("apps.payments.coop_ipn.send_unmatched_credit_alert.delay"):
+            resp = _post_from(api_client, _credit(bill_ref="NOPE"), ip="8.8.8.8")
+        assert resp.status_code == 200
+        assert CoopIpnEvent.objects.count() == 1
+
+    def test_non_allowlisted_ip_forbidden(self, api_client, db, settings):
+        settings.COOP_IPN_ALLOWED_IPS = ["196.201.214.200"]
+        resp = _post_from(api_client, _credit(), ip="8.8.8.8")
+        assert resp.status_code == 403
+        assert CoopIpnEvent.objects.count() == 0
+
+    def test_allowlisted_exact_ip_passes_gate(self, api_client, db, settings):
+        settings.COOP_IPN_ALLOWED_IPS = ["196.201.214.200"]
+        with patch("apps.payments.coop_ipn.send_unmatched_credit_alert.delay"):
+            resp = _post_from(api_client, _credit(bill_ref="NOPE"), ip="196.201.214.200")
+        assert resp.status_code == 200
+        assert CoopIpnEvent.objects.count() == 1
+
+    def test_allowlisted_cidr_range_passes_gate(self, api_client, db, settings):
+        settings.COOP_IPN_ALLOWED_IPS = ["196.201.214.0/24"]
+        with patch("apps.payments.coop_ipn.send_unmatched_credit_alert.delay"):
+            resp = _post_from(api_client, _credit(bill_ref="NOPE"), ip="196.201.214.137")
+        assert resp.status_code == 200
+        assert CoopIpnEvent.objects.count() == 1
+
+    def test_ip_outside_cidr_forbidden(self, api_client, db, settings):
+        settings.COOP_IPN_ALLOWED_IPS = ["196.201.214.0/24"]
+        resp = _post_from(api_client, _credit(), ip="196.201.215.1")
+        assert resp.status_code == 403
+        assert CoopIpnEvent.objects.count() == 0
+
+    def test_ip_gate_runs_before_token(self, api_client, db, settings):
+        # A non-allowlisted source is forbidden (403) even with no token —
+        # the IP gate is evaluated before bearer auth (401).
+        settings.COOP_IPN_ALLOWED_IPS = ["196.201.214.200"]
+        resp = _post_from(api_client, _credit(), ip="8.8.8.8", token=None)
+        assert resp.status_code == 403
+        assert CoopIpnEvent.objects.count() == 0
+
+    def test_xff_leftmost_spoof_does_not_grant_access(self, api_client, db, settings):
+        # Client forges the allowlisted IP as the leftmost X-Forwarded-For entry;
+        # the trusted proxy appends the real source. With one trusted proxy the
+        # rightmost entry wins, so the forged value is ignored → 403.
+        settings.COOP_IPN_ALLOWED_IPS = ["196.201.214.200"]
+        resp = _post_from(
+            api_client, _credit(), xff="196.201.214.200, 8.8.8.8", ip="10.0.0.1",
+        )
+        assert resp.status_code == 403
+        assert CoopIpnEvent.objects.count() == 0
+
+    def test_xff_trusted_position_grants_access(self, api_client, db, settings):
+        # The genuine Co-op IP arrives as the value the trusted proxy appended
+        # (rightmost with one proxy) → allowed.
+        settings.COOP_IPN_ALLOWED_IPS = ["196.201.214.200"]
+        with patch("apps.payments.coop_ipn.send_unmatched_credit_alert.delay"):
+            resp = _post_from(
+                api_client, _credit(bill_ref="NOPE"),
+                xff="8.8.8.8, 196.201.214.200", ip="10.0.0.1",
+            )
+        assert resp.status_code == 200
+        assert CoopIpnEvent.objects.count() == 1
+
+
 class TestCoopIpnProcessing:
     @patch("apps.payments.coop_ipn.send_deposit_receipt.delay")
     def test_credit_matched_by_bill_ref(self, mock_receipt, api_client, tenant):

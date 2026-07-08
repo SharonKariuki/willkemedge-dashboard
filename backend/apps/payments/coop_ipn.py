@@ -9,8 +9,12 @@ Notification spec for the payload shape.
 
 Safety properties (see review C1–C4, H1/H3/H5)
 ----------------------------------------------
-* **Bearer-token auth**, timing-safe, fail-closed. Optional source-IP allowlist
-  (COOP_IPN_ALLOWED_IPS) for defence-in-depth once Co-op shares their range.
+* **Source-IP allowlist** (COOP_IPN_ALLOWED_IPS, single IPs or CIDR ranges)
+  checked first: a request from outside Co-op's range is rejected with 403
+  before the token is even examined. Spoof-resistant — the client IP is taken
+  from the trusted-proxy position in X-Forwarded-For, not the leftmost
+  (client-supplied) entry. Empty allowlist = allow all until Co-op shares it.
+* **Bearer-token auth**, timing-safe, fail-closed (401 on missing/invalid).
 * **Per-IP throttle** so retry storms / brute-force can't overwhelm the endpoint.
 * **Atomic idempotency:** the unique `TransactionId` is *claimed* by creating the
   CoopIpnEvent row inside the same transaction as the Payment. A concurrent or
@@ -34,6 +38,7 @@ kept, so the parser can be refined and history re-processed without data loss.
 """
 import datetime as dt
 import hmac
+import ipaddress
 import logging
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
@@ -67,9 +72,23 @@ def _ipn_error(message: str) -> dict:
 
 
 def _client_ip(request: Request) -> str:
-    fwd = request.META.get("HTTP_X_FORWARDED_FOR")
-    if fwd:
-        return fwd.split(",")[0].strip()
+    """Resolve the originating client IP, safe to use for an allowlist.
+
+    `X-Forwarded-For` is "client, proxy1, proxy2, …": each proxy appends the IP
+    it received the request FROM. A client can prepend a forged value, so the
+    *leftmost* entry is spoofable and must never be trusted for access control.
+    With N trusted proxies in front of the app (Render runs one edge proxy by
+    default), the real client IP is the Nth entry from the right. Anything
+    further left is client-supplied. When no proxy is trusted, or X-F-F is
+    absent, fall back to REMOTE_ADDR (the immediate peer).
+    """
+    num_proxies = getattr(settings, "COOP_IPN_TRUSTED_PROXY_COUNT", 1)
+    if num_proxies > 0:
+        fwd = request.META.get("HTTP_X_FORWARDED_FOR", "")
+        parts = [p.strip() for p in fwd.split(",") if p.strip()]
+        if parts:
+            idx = len(parts) - num_proxies
+            return parts[idx] if idx >= 0 else parts[0]
     return request.META.get("REMOTE_ADDR", "")
 
 
@@ -109,12 +128,31 @@ def _bearer_token_ok(request: Request) -> bool:
 
 
 def _ip_allowed(request: Request) -> bool:
-    """Optional source-IP allowlist. Empty COOP_IPN_ALLOWED_IPS == allow all
-    (until Co-op shares their range)."""
-    allowed = [ip.strip() for ip in getattr(settings, "COOP_IPN_ALLOWED_IPS", []) if ip.strip()]
+    """Source-IP allowlist. Empty COOP_IPN_ALLOWED_IPS == allow all (until Co-op
+    shares their range). Entries may be single IPs (`196.201.214.200`) or CIDR
+    ranges (`196.201.214.0/24`); a bank typically posts from a subnet.
+
+    Fail-closed: once an allowlist is configured, an unparseable client IP is
+    denied rather than waved through."""
+    allowed = [e.strip() for e in getattr(settings, "COOP_IPN_ALLOWED_IPS", []) if e.strip()]
     if not allowed:
         return True
-    return _client_ip(request) in allowed
+    try:
+        client = ipaddress.ip_address(_client_ip(request))
+    except ValueError:
+        logger.warning("Co-op IPN: client IP %r unparseable — denied", _client_ip(request))
+        return False
+    for entry in allowed:
+        try:
+            if "/" in entry:
+                if client in ipaddress.ip_network(entry, strict=False):
+                    return True
+            elif client == ipaddress.ip_address(entry):
+                return True
+        except ValueError:
+            logger.error("Co-op IPN: invalid COOP_IPN_ALLOWED_IPS entry %r — skipped", entry)
+            continue
+    return False
 
 
 def _posting_date(payload: dict) -> dt.date:
@@ -244,11 +282,13 @@ class CoopIpnView(APIView):
     throttle_classes = [CoopIpnThrottle]
 
     def post(self, request: Request, *_args, **_kwargs) -> Response:
-        if not _bearer_token_ok(request):
-            logger.warning("Co-op IPN: invalid/missing bearer token — rejected")
-            return Response({"MessageCode": "401", "Message": "Unauthorized"}, status=401)
+        # Source-IP allowlist first: a request from outside Co-op's range is
+        # forbidden regardless of whether it carries a (guessed) token (403).
         if not _ip_allowed(request):
             logger.warning("Co-op IPN: source IP %s not allowlisted — rejected", _client_ip(request))
+            return Response({"MessageCode": "403", "Message": "Forbidden"}, status=403)
+        if not _bearer_token_ok(request):
+            logger.warning("Co-op IPN: invalid/missing bearer token — rejected")
             return Response({"MessageCode": "401", "Message": "Unauthorized"}, status=401)
 
         payload = request.data if isinstance(request.data, dict) else {}

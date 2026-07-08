@@ -232,9 +232,14 @@ COOP_IPN_TOKEN = config("COOP_IPN_TOKEN", default="")
 # The institution account (behind Paybill 400222) credits are expected on.
 # Credits to any other AcctNo are ignored, not booked as rent.
 COOP_ACCOUNT_NUMBER = config("COOP_ACCOUNT_NUMBER", default="")
-# Optional defence-in-depth: comma-separated source IPs Co-op posts from.
-# Empty = allow all (until Co-op shares their range).
+# Defence-in-depth: comma-separated source IPs/CIDRs Co-op posts from. A request
+# from outside this list is rejected with 403. Empty = allow all (until Co-op
+# shares their range). Accepts single IPs (196.201.214.200) or CIDR (…/24).
 COOP_IPN_ALLOWED_IPS = config("COOP_IPN_ALLOWED_IPS", default="", cast=Csv())
+# Trusted proxies in front of the IPN endpoint, used to pick the real client IP
+# out of X-Forwarded-For for the allowlist (Render runs one edge proxy = 1).
+# Set 0 only when the app is exposed with no proxy (then REMOTE_ADDR is used).
+COOP_IPN_TRUSTED_PROXY_COUNT = config("COOP_IPN_TRUSTED_PROXY_COUNT", default=1, cast=int)
 # Dev-only escape hatch: skip bearer auth when DEBUG and this is explicitly set.
 ALLOW_INSECURE_COOP_IPN = config("ALLOW_INSECURE_COOP_IPN", default=False, cast=bool)
 # Admin alerted (SMS + email) when an IPN credit can't be auto-matched/errors.

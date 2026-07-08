@@ -53,6 +53,8 @@ services:
         value: "01136069098300"
       - key: COOP_IPN_ALLOWED_IPS
         sync: false
+      - key: COOP_IPN_TRUSTED_PROXY_COUNT
+        value: "1"
       - key: ADMIN_ALERT_PHONE
         sync: false
       - key: ADMIN_ALERT_EMAIL
