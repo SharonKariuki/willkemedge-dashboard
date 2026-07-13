@@ -15,36 +15,31 @@ Returns:
   200 {"status":"ok", "date": <yyyy-mm-dd>}     on success
   401 {"detail":"Unauthorized"}                  on bad/missing token
 """
-import hmac
 import logging
 
-from django.conf import settings
 from rest_framework.permissions import AllowAny
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from .cron_views import token_ok
 from .tasks import send_daily_reconciliation
 
 logger = logging.getLogger(__name__)
 
 
 class DailyReconciliationTriggerView(APIView):
-    """Token-gated endpoint that runs the daily summary synchronously."""
+    """Token-gated endpoint that runs the daily summary synchronously.
+
+    Superseded by the generic /api/payments/cron/daily-reconciliation/ route and
+    kept so an already-configured scheduler keeps working. Shares the same token
+    check, so there is only one secret to manage.
+    """
     permission_classes = [AllowAny]
     authentication_classes = []
 
     def _token_ok(self, request: Request) -> bool:
-        expected = getattr(settings, "RECONCILIATION_TRIGGER_TOKEN", "")
-        if not expected:
-            logger.error("Reconciliation trigger rejected: RECONCILIATION_TRIGGER_TOKEN not set")
-            return False
-        header = request.headers.get("Authorization", "")
-        if header.startswith("Bearer "):
-            provided = header[len("Bearer "):].strip()
-        else:
-            provided = str(request.query_params.get("token", ""))
-        return bool(provided) and hmac.compare_digest(provided, expected)
+        return token_ok(request)
 
     def get(self, request: Request, *_a, **_kw) -> Response:
         return self._run(request)

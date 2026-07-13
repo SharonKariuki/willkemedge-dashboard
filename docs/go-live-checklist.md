@@ -1,118 +1,116 @@
 # Go-Live Checklist
 
 All application features (F1–F9) are built, merged, and on `main`. What remains is
-infrastructure and the Co-op Bank cutover. Work through this in order — the phases
-are sequenced because of two hard dependencies:
+configuration and the Co-op Bank cutover.
 
-- **Redis must exist before any SMS can send.** The Celery worker and beat services
-  cannot start without `REDIS_URL`, and every reminder, receipt, and alert is a
-  Celery task.
-- **The custom domain must be live before you contact Co-op.** Co-op allowlists the
-  IPN endpoint **by domain**, and that domain can never change afterwards.
+## The deployment, as it actually is
 
-> **Deploy note.** Render deploys from the **fork** (`SharonKariuki/willkemedge-dashboard`),
-> default branch `main` — not the `WILLKEMEDGE` org remote. Pushing to `origin/main`
-> alone does **not** deploy. `backend/build.sh` runs `migrate --noinput` on every deploy.
+Production is **one hand-created Render web service, `willkemedge-dashboard`** (Starter
+plan). There is no Redis, no Celery worker, and no beat process, and there will not be
+— each would be another paid instance, which is hard to justify at this scale. Instead:
+
+- **Async tasks run inline in the web request.** `production.py` sets
+  `CELERY_TASK_ALWAYS_EAGER=True`, so receipts, SMS, and alerts still send with no
+  broker and no worker.
+- **Scheduled jobs are driven by a free external scheduler** (cron-job.org, GitHub
+  Actions) calling the token-gated endpoints at `/api/payments/cron/<job>/`.
+
+> **`render.yaml` does not configure the live service.** It has never been applied, and
+> its service names don't match, so applying it would create a *duplicate* web service.
+> Env vars must be set **by hand** in the `willkemedge-dashboard` dashboard.
+
+> **Deploy note.** Render deploys from the **fork**
+> (`SharonKariuki/willkemedge-dashboard`), default branch `main` — not the `WILLKEMEDGE`
+> org remote. Pushing to `origin/main` alone does **not** deploy. `backend/build.sh`
+> runs `migrate --noinput` on every deploy.
+
+**Do the domain (2.2) before Co-op (Phase 3)** — Co-op allowlists the IPN endpoint *by
+domain*, and it can never change afterwards.
 
 ---
 
-## Phase 2 — Render infrastructure
+## Phase 2 — Configure the live service
 
-### 2.1 Create the Redis instance
+### 2.1 Set the env vars on `willkemedge-dashboard`
 
-The blueprint cannot provision Redis, so it must be created by hand.
-
-- [ ] Render → **New + → Redis**. Any paid plan; the free tier is not offered for Redis.
-- [ ] Copy its internal connection URL into `REDIS_URL` on **all three** services
-      (`wilkemedge-api`, `wilkemedge-celery`, `wilkemedge-beat`).
-
-Until this is done the worker and beat services will crash-loop and **nothing that
-sends an SMS or email will run at all.**
-
-### 2.2 Fill the `sync: false` env vars
-
-Render creates these keys from the blueprint but leaves them **empty** — it will not
-invent values. Every one must be filled in the dashboard.
-
-**`wilkemedge-api` (web)**
+Nothing sets these for you. In the Render dashboard → Environment:
 
 - [ ] `DJANGO_ALLOWED_HOSTS` — your API domain
 - [ ] `DATABASE_URL` — the Neon Postgres URL
-- [ ] `CORS_ALLOWED_ORIGINS` / `FRONTEND_URL` — the Vercel frontend URL
-- [ ] `COOP_IPN_TOKEN` — generate a long random string; you will give this to Co-op
-- [ ] `COOP_IPN_ALLOWED_IPS` — **leave blank for now**; fill in Phase 3 once Co-op
+- [ ] `CORS_ALLOWED_ORIGINS` / `FRONTEND_URL` — the Vercel frontend URL.
+      `FRONTEND_URL` is also what builds the link in password-reset emails.
+- [ ] `CRON_TRIGGER_TOKEN` — generate with
+      `python -c "import secrets; print(secrets.token_urlsafe(48))"`. This is the
+      secret the scheduler presents in 2.3.
+- [ ] `COOP_IPN_TOKEN` — a second, *different* random string. You give this one to Co-op.
+- [ ] `COOP_IPN_ALLOWED_IPS` — **leave blank for now**; filled in Phase 3 once Co-op
       confirms their source IPs. Blank means allow-all, which is why the bearer token
-      matters in the meantime.
+      carries the weight in the meantime.
+- [ ] `COOP_ACCOUNT_NUMBER` = `01136069098300`
+- [ ] `COOP_IPN_TRUSTED_PROXY_COUNT` = `1` (correct for Render's single edge proxy)
+- [ ] `MPESA_ACCOUNT_PREFIX` = `90290`
 - [ ] `ADMIN_ALERT_PHONE` / `ADMIN_ALERT_EMAIL` — who hears about unmatched credits
 - [ ] `DIRECTOR_ALERT_PHONE` / `DIRECTOR_ALERT_EMAIL` — Osoro, for reversal alerts
-- [ ] `DIRECTOR_EMAIL` — Osoro's **login email**. This gates who may authorise a
-      reversal in the Django admin. Distinct from `DIRECTOR_ALERT_EMAIL`. Left blank,
-      the gate falls back to superuser-only.
+- [ ] `DIRECTOR_EMAIL` — Osoro's **login email**. Gates who may authorise a reversal in
+      the Django admin. Distinct from `DIRECTOR_ALERT_EMAIL`; blank falls back to
+      superuser-only.
 - [ ] `AT_API_KEY` / `AT_USERNAME` / `AT_SENDER_ID` — Africa's Talking **live** creds
+- [ ] `RENT_REMINDER_LEAD_DAYS` = `3`
 - [ ] `EMAIL_HOST_USER` / `EMAIL_HOST_PASSWORD` / `DEFAULT_FROM_EMAIL`
-- [ ] `SENTRY_DSN`
+- [ ] `SENTRY_DSN` (+ `SENTRY_ENVIRONMENT=production`)
 
-**`wilkemedge-celery` (worker)** — this is the one that was silently misconfigured.
-The tasks in `apps/payments/tasks.py` execute **here, not on web**, so these must be
-set on the worker even though they look like duplicates of the web service:
+### 2.2 Domain and SSL
 
-- [ ] `DATABASE_URL`, `DJANGO_ALLOWED_HOSTS`
-- [ ] `ADMIN_ALERT_PHONE` / `ADMIN_ALERT_EMAIL`
-- [ ] `DIRECTOR_ALERT_PHONE` / `DIRECTOR_ALERT_EMAIL`
-- [ ] `FRONTEND_URL` — password-reset emails are rendered here; without it the reset
-      link in the email is broken
-- [ ] `AT_API_KEY` / `AT_USERNAME` / `AT_SENDER_ID`
-- [ ] `EMAIL_HOST_USER` / `EMAIL_HOST_PASSWORD` / `DEFAULT_FROM_EMAIL`
-- [ ] `SENTRY_DSN`
-
-**`wilkemedge-beat`**
-
-- [ ] `DATABASE_URL`, `DJANGO_ALLOWED_HOSTS`, `SENTRY_DSN`
-
-Already set from the blueprint, no action needed: `COOP_ACCOUNT_NUMBER`
-(`01136069098300`), `MPESA_ACCOUNT_PREFIX` (`90290`), `COOP_IPN_TRUSTED_PROXY_COUNT`
-(`1`, correct for Render's single proxy), `RENT_REMINDER_LEAD_DAYS` (`3`).
-
-### 2.3 Domain and SSL
-
-- [ ] Attach a **stable custom domain** to `wilkemedge-api` and let Render issue SSL.
+- [ ] Attach a **stable custom domain** and let Render issue SSL.
 - [ ] Add that domain to `DJANGO_ALLOWED_HOSTS`.
 
-Do this **before** Phase 3. Co-op allowlists by domain, so it must be final.
+### 2.3 Point a free scheduler at the cron endpoints
 
-### 2.4 Frontend
+This replaces Celery beat. Sign up at cron-job.org (free) and create one job per row.
+Each is a `POST`, with the token either as `?token=<CRON_TRIGGER_TOKEN>` or an
+`Authorization: Bearer <CRON_TRIGGER_TOKEN>` header. Times are **EAT**, matching the
+original beat schedule.
+
+| Schedule | URL |
+|---|---|
+| 00:05, 1st of month | `POST /api/payments/cron/monthly-arrears/` |
+| 00:30 daily | `POST /api/payments/cron/recalculate-statuses/` |
+| 08:00 daily | `POST /api/payments/cron/rent-reminders/` |
+| 09:00 daily | `POST /api/payments/cron/arrears-reminders/` |
+| 03:00 daily | `POST /api/payments/cron/daily-reconciliation/` |
+
+- [ ] All five jobs created and returning **200**.
+
+**`monthly-arrears` is the one that matters most.** It is the only thing that creates an
+`Arrears` row for a tenant who has *not* paid — tenants who do pay get their rows created
+lazily when the payment is processed. Without it, defaulters produce no arrears record at
+all: no arrears reminder, no "in arrears" unit status, and nothing on the arrears report.
+The people the dashboard exists to surface are exactly the ones who go missing.
+
+A failed run returns 500, so the scheduler's history shows red rather than failing quietly.
+
+### 2.4 Backfill the arrears that were never generated
+
+Beat has never run in production, so `generate_monthly_arrears` has never fired for any
+month since the June property load.
+
+- [ ] In Django admin, check whether `Arrears` rows exist for the current month.
+- [ ] If not, fire `POST /api/payments/cron/monthly-arrears/` once by hand. It is
+      idempotent (`get_or_create`), so it is safe to run repeatedly.
+- [ ] Then fire `recalculate-statuses` so unit statuses catch up.
+
+### 2.5 Frontend
 
 - [ ] Deploy the frontend to Vercel; set `VITE_API_BASE_URL` to the API domain.
 - [ ] Point `CORS_ALLOWED_ORIGINS` and `FRONTEND_URL` at the Vercel URL.
 
-### 2.5 Daily reconciliation scheduler
-
-There is **deliberately no Render Cron service** — the HTTP trigger endpoint exists so a
-free external scheduler can do this at no cost.
-
-- [ ] Copy the generated `RECONCILIATION_TRIGGER_TOKEN` out of the `wilkemedge-api`
-      dashboard (Render generates it; it is not shown anywhere else).
-- [ ] Point a free scheduler (cron-job.org, GitHub Actions, UptimeRobot) at, daily:
-      `POST https://<api-domain>/api/payments/coop/reconcile-daily/?token=<TOKEN>`
-      Bearer header also works: `Authorization: Bearer <TOKEN>`.
-
-### 2.6 Verify the infrastructure is actually alive
+### 2.6 Verify it is actually alive
 
 - [ ] `GET https://<api-domain>/api/health/` returns 200.
-- [ ] `wilkemedge-celery` and `wilkemedge-beat` logs show a clean start, no Redis errors.
+- [ ] A cron endpoint called **without** a token returns 401 (it must fail closed).
 - [ ] Trigger a Sentry test event and confirm it lands in the Sentry project.
-- [ ] Send yourself a password reset and confirm **the link in the email works** — this
-      exercises the worker, `FRONTEND_URL`, and email creds in one shot.
-
-Beat schedule, for reference (timezone `Africa/Nairobi`, so these are EAT):
-
-| Time | Task |
-|---|---|
-| 00:05, 1st of month | `generate_monthly_arrears` |
-| 00:30 daily | `recalculate_all_statuses` |
-| 08:00 daily | `send_rent_reminders` |
-| 09:00 daily | `send_arrears_reminders` |
-| hourly | `poll_bank_statement` (Co-op backfill stub — inert until configured) |
+- [ ] Send yourself a password reset and confirm **the link in the email works** — one
+      action that exercises inline task execution, `FRONTEND_URL`, and the email creds.
 
 ---
 
