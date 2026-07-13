@@ -257,7 +257,13 @@ DIRECTOR_ALERT_EMAIL = config("DIRECTOR_ALERT_EMAIL", default="")
 # Login email of the director — only this user may click "Authorize reversal"
 # in admin. Falls back to superuser-only when blank.
 DIRECTOR_EMAIL = config("DIRECTOR_EMAIL", default="")
-# Shared secret that authorises HTTP-triggered runs of the daily reconciliation
-# summary (used by free external schedulers like cron-job.org so we don't need
-# Render's paid Cron Job).
+# Shared secret authorising HTTP-triggered runs of the scheduled jobs.
+#
+# There is no Celery beat process in production: a free external scheduler
+# (cron-job.org, GitHub Actions) calls /api/payments/cron/<job>/ instead, so no
+# paid Render worker/beat/Redis is needed. See apps/payments/cron_views.py.
+#
+# RECONCILIATION_TRIGGER_TOKEN is the older, reconciliation-only name and is
+# still accepted so an already-configured scheduler keeps working.
+CRON_TRIGGER_TOKEN = config("CRON_TRIGGER_TOKEN", default="")
 RECONCILIATION_TRIGGER_TOKEN = config("RECONCILIATION_TRIGGER_TOKEN", default="")

@@ -1,16 +1,30 @@
-## Render Blueprint — Wilkem Edge backend (Django + Celery + Beat)
+## Render Blueprint — Wilkem Edge backend
 ##
-## After signing in to render.com:
-##   1. New + → Blueprint → connect this GitHub repo → it picks up this file.
-##   2. Render creates three services automatically.
-##   3. Fill in the env vars marked `sync: false` in each service's dashboard.
-##   4. Add a Redis instance separately (Render free tier excludes Redis).
+## !! READ THIS BEFORE APPLYING THE BLUEPRINT.
 ##
-## DATABASE_URL points to your existing Neon Postgres — paste it into each
-## service. REDIS_URL points to the Render Redis you create.
+## The live deployment does NOT come from this blueprint. Production runs a
+## single, hand-created web service named `willkemedge-dashboard` (Starter), and
+## this file has never been applied. Render matches blueprint services by NAME,
+## so applying it as-is would create a SECOND, duplicate web service alongside
+## the live one rather than adopting it.
 ##
-## Web service must NOT be on the free tier — M-Pesa callbacks must respond
-## in under 5 seconds; free-tier cold starts violate that.
+## The `wilkemedge-celery` and `wilkemedge-beat` services below are therefore
+## NOT PROVISIONED, and deliberately so: a Celery worker and beat process would
+## each cost a paid instance, plus a paid Redis. Instead —
+##
+##   * Async tasks run inline in the web request (production.py sets
+##     CELERY_TASK_ALWAYS_EAGER=True), so receipts and alerts still send.
+##   * Scheduled jobs are driven by a FREE external scheduler (cron-job.org,
+##     GitHub Actions) hitting the token-gated endpoints at
+##     /api/payments/cron/<job>/. See apps/payments/cron_views.py and
+##     docs/go-live-checklist.md.
+##
+## The worker/beat definitions are kept only as a ready-made upgrade path if the
+## portfolio ever outgrows the inline approach. Until then, env vars must be set
+## BY HAND on `willkemedge-dashboard` — this file does not configure it.
+##
+## The web service must NOT be on the free tier: Co-op IPN callbacks must be
+## answered promptly, and free-tier spin-down would drop them (= lost payments).
 
 services:
   # ---------------------------------------------------------------------------
@@ -67,11 +81,12 @@ services:
       # Django admin. Blank falls back to superuser-only.
       - key: DIRECTOR_EMAIL
         sync: false
-      # Bearer token for POST /api/payments/coop/reconcile-daily/. Point a free
-      # external scheduler (cron-job.org, GitHub Actions) at that endpoint daily
-      # — Render's Cron Job add-on is not needed. Copy the generated value out
-      # of the dashboard when configuring the scheduler.
-      - key: RECONCILIATION_TRIGGER_TOKEN
+      # Bearer token for the scheduled-job endpoints at /api/payments/cron/<job>/.
+      # This is what replaces Celery beat: a free external scheduler
+      # (cron-job.org, GitHub Actions) calls them, so no paid worker/beat/Redis
+      # is needed. Copy the generated value out of the dashboard when configuring
+      # the scheduler.
+      - key: CRON_TRIGGER_TOKEN
         generateValue: true
       - key: MPESA_ACCOUNT_PREFIX
         value: "90290"
