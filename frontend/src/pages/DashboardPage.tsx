@@ -1,7 +1,13 @@
 import { format } from "date-fns";
 import {
+  AlertTriangle,
   ArrowUpRight,
+  Building2,
   CreditCard,
+  TrendingDown,
+  TrendingUp,
+  Wallet,
+  type LucideIcon,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import {
@@ -33,17 +39,27 @@ import {
   Table,
 } from "@/components/ui";
 import { cn } from "@/lib/cn";
-import { useAuth } from "@/hooks/useAuth";
-import { useDashboard, type DashboardData } from "@/hooks/useDashboard";
+import { useDashboard } from "@/hooks/useDashboard";
 import { avatarFor, propertyImage } from "@/lib/images";
 
+// Chart palette — teal (income/occupied) + semantic status, no rainbow.
 const OCCUPANCY_COLORS = [
-  "rgb(216,154,58)",   // amber gold — paid
-  "rgb(214,182,118)",  // ochre — partial
-  "rgb(170,100,75)",   // muted rust — unpaid
-  "rgb(180,124,40)",   // deeper gold — arrears
-  "rgb(225,220,214)",  // taupe — vacant
+  "rgb(22,163,74)",   // Paid — success
+  "rgb(217,119,6)",   // Partial — warning
+  "rgb(220,38,38)",   // Unpaid — danger
+  "rgb(234,88,12)",   // Arrears — orange (attention)
+  "rgb(203,213,225)", // Vacant — neutral-300
 ];
+const TEAL = "rgb(13,148,136)";
+const AXIS_TICK = { fill: "rgb(100,116,139)", fontSize: 12 };
+const TOOLTIP_STYLE = {
+  background: "rgb(255,255,255)",
+  border: "1px solid rgb(226,232,240)",
+  borderRadius: 14,
+  boxShadow: "0 14px 34px -10px rgba(15,23,42,0.14)",
+  fontSize: 13,
+  padding: "10px 14px",
+} as const;
 
 function KES(n: number) {
   return `KES ${Number(n || 0).toLocaleString()}`;
@@ -55,49 +71,16 @@ function formatK(n: number) {
   return String(n);
 }
 
-function headlineFor(data: DashboardData): string {
-  const { kpis, alerts, recent_payments } = data;
-  const overdue = alerts.filter((a) => a.type === "overdue").length;
-  const expiring = alerts.filter((a) => a.type === "expiring_lease" || a.type === "move_out").length;
-
-  if (overdue > 0) {
-    return overdue === 1
-      ? "One tenant is overdue."
-      : `${overdue} tenants are overdue.`;
-  }
-  if (expiring > 0) {
-    return expiring === 1
-      ? "A lease changes this week."
-      : `${expiring} leases change this week.`;
-  }
-  if (recent_payments.length > 0) {
-    const today = recent_payments.filter(
-      (p) => p.payment_date === new Date().toISOString().slice(0, 10)
-    ).length;
-    if (today > 0) {
-      return today === 1
-        ? "One payment landed today."
-        : `${today} payments landed today.`;
-    }
-  }
-  if (kpis.total_arrears === 0 && kpis.vacant === 0) {
-    return "The portfolio is in good order.";
-  }
-  return "Quiet so far.";
-}
-
 export default function DashboardPage() {
   const { data, isLoading, isError, refetch } = useDashboard();
-  const { user } = useAuth();
 
-  const firstName = user?.first_name?.trim() || "Wilson";
   const today = new Date();
   const dateLine = format(today, "EEEE, d MMMM").toUpperCase();
-  const greeting = `Welcome back, ${firstName}.`;
+  const greeting = "Dashboard overview";
 
   if (isError && !data) {
     return (
-      <div className="space-y-8">
+      <div className="space-y-10">
         <Masthead dateLine={dateLine} greeting={greeting} />
         <ErrorState
           title="The dashboard could not be loaded."
@@ -110,18 +93,18 @@ export default function DashboardPage() {
 
   if (isLoading || !data) {
     return (
-      <div className="space-y-8">
+      <div className="space-y-10">
         <Masthead dateLine={dateLine} greeting={greeting} />
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-5 lg:grid-cols-4 lg:gap-6">
           {Array.from({ length: 4 }).map((_, i) => (
-            <Skeleton key={i} className="h-28 w-full" rounded="lg" />
+            <Skeleton key={i} className="h-36 w-full" rounded="lg" />
           ))}
         </div>
-        <div className="grid gap-4 lg:grid-cols-3">
-          <Skeleton className="h-[280px] w-full lg:col-span-2" rounded="lg" />
-          <Skeleton className="h-[280px] w-full" rounded="lg" />
+        <div className="grid gap-6 lg:grid-cols-3">
+          <Skeleton className="h-[320px] w-full lg:col-span-2" rounded="lg" />
+          <Skeleton className="h-[320px] w-full" rounded="lg" />
         </div>
-        <Skeleton className="h-64 w-full" rounded="lg" />
+        <Skeleton className="h-72 w-full" rounded="lg" />
       </div>
     );
   }
@@ -150,15 +133,14 @@ export default function DashboardPage() {
     ? Math.round((kpis.collection_received / kpis.collection_expected) * 100)
     : kpis.collection_percentage ?? 0;
 
-  const headline = headlineFor(data);
   const monthLabel = format(today, "MMMM");
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-10 lg:space-y-12">
       {/* ── Masthead with actions ─────────────────────────────────────────── */}
-      <Masthead dateLine={dateLine} greeting={greeting} headline={headline}>
+      <Masthead dateLine={dateLine} greeting={greeting}>
         <Link to="/payments">
-          <Button variant="glass" size="md">
+          <Button variant="outline" size="md">
             <CreditCard className="h-4 w-4" />
             Record payment
           </Button>
@@ -171,47 +153,63 @@ export default function DashboardPage() {
         </Link>
       </Masthead>
 
-      {/* ── KPI tiles ─────────────────────────────────────────────────────── */}
-      <section className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      {/* ── KPI tiles — glanceable ────────────────────────────────────────── */}
+      <section className="-mt-4 grid gap-5 sm:grid-cols-2 lg:-mt-6 lg:grid-cols-[0.72fr_1fr_1fr] lg:items-start lg:gap-6">
+        {/* Featured collections widget — dark navy hero + arrears, on the LEFT */}
+        <div className="flex flex-col gap-5 lg:gap-6">
+          <CollectedHero
+            month={monthLabel}
+            pct={collectionPct}
+            received={kpis.collection_received}
+            expected={kpis.collection_expected}
+          />
+          <Kpi
+            icon={AlertTriangle}
+            tone={kpis.total_arrears > 0 ? "alert" : "neutral"}
+            label="Arrears"
+            value={KES(kpis.total_arrears)}
+            caption={kpis.total_arrears > 0 ? undefined : "All settled"}
+            compact
+          />
+        </div>
         <Kpi
+          icon={Building2}
+          tone="navy"
           label="Total units"
           value={kpis.total_units.toLocaleString()}
           caption={`${kpis.occupied} occupied · ${kpis.vacant} vacant`}
         />
         <Kpi
+          icon={TrendingUp}
+          tone="teal"
           label="Occupancy"
           value={`${occupancyPct}%`}
           progress={occupancyPct}
         />
-        <Kpi
-          label={`Collected · ${monthLabel}`}
-          value={`${collectionPct}%`}
-          caption={`${KES(kpis.collection_received)} of ${KES(kpis.collection_expected).replace("KES ", "")}`}
-        />
-        <Kpi
-          label="Arrears"
-          value={KES(kpis.total_arrears)}
-          caption={kpis.total_arrears > 0 ? `${alerts.filter((a) => a.type === "overdue").length} tenants overdue` : "All settled"}
-          tone={kpis.total_arrears > 0 ? "alert" : "neutral"}
-        />
       </section>
 
       {/* ── Income trend + Rent status ────────────────────────────────────── */}
-      <section className="grid gap-4 lg:grid-cols-3">
-        <Card variant="flat" padding="none" className="ring-1 ring-ink-200/70 lg:col-span-2">
-          <div className="flex items-center justify-between border-b border-ink-200 px-5 py-4">
-            <h2 className="font-display text-lg font-semibold text-ink-900">
-              Income — last 6 months
-            </h2>
+      <section className="grid gap-6 lg:grid-cols-3">
+        <Card padding="none" className="lg:col-span-2">
+          <div className="flex items-center justify-between px-6 pt-6">
+            <div>
+              <h2 className="text-lg font-semibold text-content">Income</h2>
+              <p className="mt-0.5 text-sm text-content-muted">Last 6 months</p>
+            </div>
             {lastMonth > 0 ? (
               <Badge tone={trendDelta >= 0 ? "sage" : "coral"}>
+                {trendDelta >= 0 ? (
+                  <TrendingUp className="h-3.5 w-3.5" />
+                ) : (
+                  <TrendingDown className="h-3.5 w-3.5" />
+                )}
                 {trendSign}{trendDelta.toFixed(1)}% vs last month
               </Badge>
             ) : (
               <Badge tone="neutral">First month on record</Badge>
             )}
           </div>
-          <div className="h-[220px] px-2 py-4">
+          <div className="h-[240px] px-3 pb-4 pt-6">
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart
                 data={income_trend}
@@ -219,37 +217,21 @@ export default function DashboardPage() {
               >
                 <defs>
                   <linearGradient id="incomeGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="rgb(216,154,58)" stopOpacity={0.35} />
-                    <stop offset="100%" stopColor="rgb(216,154,58)" stopOpacity={0} />
+                    <stop offset="0%" stopColor={TEAL} stopOpacity={0.28} />
+                    <stop offset="100%" stopColor={TEAL} stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <XAxis
-                  dataKey="month"
-                  tickLine={false}
-                  axisLine={false}
-                  tick={{ fill: "rgb(120,100,90)", fontSize: 11 }}
-                />
-                <YAxis
-                  tickLine={false}
-                  axisLine={false}
-                  tick={{ fill: "rgb(120,100,90)", fontSize: 11 }}
-                  tickFormatter={formatK}
-                />
+                <XAxis dataKey="month" tickLine={false} axisLine={false} tick={AXIS_TICK} dy={6} />
+                <YAxis tickLine={false} axisLine={false} tick={AXIS_TICK} tickFormatter={formatK} />
                 <RcTooltip
-                  cursor={{ stroke: "rgba(216,154,58,0.3)" }}
-                  contentStyle={{
-                    background: "rgba(255,255,255,0.96)",
-                    border: "1px solid rgba(44,31,26,0.08)",
-                    borderRadius: 10,
-                    boxShadow: "0 10px 28px -8px rgba(44,31,26,0.12)",
-                    fontSize: 12,
-                  }}
+                  cursor={{ stroke: "rgba(13,148,136,0.35)" }}
+                  contentStyle={TOOLTIP_STYLE}
                   formatter={(v) => [KES(Number(v)), "Income"]}
                 />
                 <Area
                   type="monotone"
                   dataKey="amount"
-                  stroke="rgb(216,154,58)"
+                  stroke={TEAL}
                   strokeWidth={2.5}
                   fill="url(#incomeGrad)"
                 />
@@ -258,19 +240,19 @@ export default function DashboardPage() {
           </div>
         </Card>
 
-        <Card variant="flat" padding="none" className="ring-1 ring-ink-200/70">
-          <div className="border-b border-ink-200 px-5 py-4">
-            <h2 className="font-display text-lg font-semibold text-ink-900">Rent status</h2>
+        <Card padding="none">
+          <div className="px-6 pt-6">
+            <h2 className="text-lg font-semibold text-content">Rent status</h2>
           </div>
-          <div className="p-5">
-            <div className="relative mx-auto flex h-[160px] w-full items-center justify-center">
+          <div className="p-6">
+            <div className="relative mx-auto flex h-[168px] w-full items-center justify-center">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie
                     data={occData}
                     dataKey="value"
-                    innerRadius={52}
-                    outerRadius={74}
+                    innerRadius={56}
+                    outerRadius={80}
                     paddingAngle={2}
                     stroke="none"
                   >
@@ -278,35 +260,28 @@ export default function DashboardPage() {
                       <Cell key={i} fill={OCCUPANCY_COLORS[i % OCCUPANCY_COLORS.length]} />
                     ))}
                   </Pie>
-                  <RcTooltip
-                    contentStyle={{
-                      background: "rgba(255,255,255,0.96)",
-                      border: "1px solid rgba(44,31,26,0.08)",
-                      borderRadius: 10,
-                      fontSize: 12,
-                    }}
-                  />
+                  <RcTooltip contentStyle={TOOLTIP_STYLE} />
                 </PieChart>
               </ResponsiveContainer>
               <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-                <p className="font-display text-3xl font-semibold tabular-nums text-ink-900">
+                <p className="text-4xl font-bold tabular-nums tracking-tight text-content">
                   {occupancyPct}
-                  <span className="text-lg text-ink-400">%</span>
+                  <span className="text-xl font-semibold text-content-muted">%</span>
                 </p>
-                <p className="mt-0.5 text-[10px] uppercase tracking-[0.16em] text-ink-500">
+                <p className="mt-1 text-xs uppercase tracking-wider text-content-muted">
                   occupied
                 </p>
               </div>
             </div>
-            <ul className="mt-5 space-y-2 text-xs">
+            <ul className="mt-6 space-y-2.5 text-sm">
               {occData.map((d, i) => (
                 <li key={d.name} className="flex items-center gap-3">
                   <span
-                    className="h-2 w-2 rounded-full"
+                    className="h-2.5 w-2.5 rounded-full"
                     style={{ background: OCCUPANCY_COLORS[i % OCCUPANCY_COLORS.length] }}
                   />
-                  <span className="text-ink-500">{d.name}</span>
-                  <span className="ml-auto font-medium tabular-nums text-ink-900">{d.value}</span>
+                  <span className="text-content-secondary">{d.name}</span>
+                  <span className="ml-auto font-semibold tabular-nums text-content">{d.value}</span>
                 </li>
               ))}
             </ul>
@@ -315,10 +290,10 @@ export default function DashboardPage() {
       </section>
 
       {/* ── This morning + Recent payments ────────────────────────────────── */}
-      <section className="grid gap-4 lg:grid-cols-5">
-        <Card variant="flat" padding="none" className="ring-1 ring-ink-200/70 lg:col-span-2">
-          <div className="flex items-center justify-between border-b border-ink-200 px-5 py-4">
-            <h2 className="font-display text-lg font-semibold text-ink-900">This morning</h2>
+      <section className="grid gap-6 lg:grid-cols-5">
+        <Card padding="none" className="lg:col-span-2">
+          <div className="flex items-center justify-between px-6 pt-6">
+            <h2 className="text-lg font-semibold text-content">This morning</h2>
             <Badge tone={alerts.length === 0 ? "sage" : "coral"} withDot>
               {alerts.length === 0
                 ? "Nothing pressing"
@@ -326,45 +301,45 @@ export default function DashboardPage() {
             </Badge>
           </div>
           {alerts.length === 0 ? (
-            <div className="px-5 py-6">
-              <p className="font-display text-base leading-snug text-ink-700">
+            <div className="px-6 pb-6 pt-4">
+              <p className="text-base font-medium leading-snug text-content">
                 Nothing demands your attention.
               </p>
-              <p className="mt-1 text-sm text-ink-500">
+              <p className="mt-1.5 text-sm text-content-muted">
                 Tenants are current and leases are running. Enjoy the morning.
               </p>
             </div>
           ) : (
-            <ul className="divide-y divide-ink-100 px-5">
+            <ul className="mt-2 px-6 pb-3">
               {alerts.slice(0, 6).map((a, i) => (
                 <li key={i} className="flex items-start gap-3 py-3 text-sm">
                   <AlertSeverityDot type={a.type} />
-                  <p className="leading-snug text-ink-700">{a.message}</p>
+                  <p className="leading-snug text-content-secondary">{a.message}</p>
                 </li>
               ))}
               {alerts.length > 6 && (
-                <li className="py-3 text-xs text-ink-500">+{alerts.length - 6} more items</li>
+                <li className="py-3 text-xs text-content-muted">+{alerts.length - 6} more items</li>
               )}
             </ul>
           )}
         </Card>
 
         <div className="lg:col-span-3">
-          <div className="mb-3 flex items-baseline justify-between">
-            <h2 className="font-display text-lg font-semibold text-ink-900">Recent payments</h2>
+          <div className="mb-4 flex items-baseline justify-between">
+            <h2 className="text-lg font-semibold text-content">Recent payments</h2>
             <Link
               to="/payments"
-              className="text-xs font-medium uppercase tracking-[0.16em] text-sage-600 hover:text-sage-700"
+              className="text-sm font-medium text-teal-700 transition-colors hover:text-teal-800"
             >
               All payments →
             </Link>
           </div>
           {recent_payments.length === 0 ? (
-            <Card variant="flat" padding="lg" className="ring-1 ring-ink-200/70">
-              <p className="font-display text-base leading-snug text-ink-700">
+            <Card padding="lg">
+              <p className="text-base font-medium leading-snug text-content">
                 No payments recorded yet.
               </p>
-              <p className="mt-1 text-sm text-ink-500">
+              <p className="mt-1.5 text-sm text-content-muted">
                 When tenants pay, the ledger appears here.
               </p>
             </Card>
@@ -388,22 +363,22 @@ export default function DashboardPage() {
                           src={avatarFor(p.tenant_name)}
                           alt=""
                           aria-hidden
-                          className="h-8 w-8 rounded-full ring-1 ring-ink-200/60"
+                          className="h-9 w-9 rounded-full ring-1 ring-border"
                         />
-                        <span className="font-medium text-ink-900">{p.tenant_name}</span>
+                        <span className="font-medium text-content">{p.tenant_name}</span>
                       </div>
                     </TD>
-                    <TD className="hidden text-ink-500 sm:table-cell">
+                    <TD className="hidden text-content-muted sm:table-cell">
                       {p.building_name} · {p.unit_label}
                     </TD>
                     <TD className="hidden md:table-cell">
                       <Badge tone="neutral">{p.source || "—"}</Badge>
                     </TD>
-                    <TD className="text-right font-display font-semibold tabular-nums text-ink-900">
-                      <span className="text-ink-400">KES </span>
+                    <TD className="text-right font-semibold tabular-nums text-content">
+                      <span className="text-content-muted">KES </span>
                       {Number(p.amount).toLocaleString()}
                     </TD>
-                    <TD className="text-right text-xs uppercase tracking-[0.12em] text-ink-400">
+                    <TD className="text-right text-xs uppercase tracking-wider text-content-muted">
                       {p.payment_date}
                     </TD>
                   </TR>
@@ -417,94 +392,77 @@ export default function DashboardPage() {
       {/* ── Properties gallery ────────────────────────────────────────────── */}
       {buildings.length > 0 && (
         <section>
-          <div className="flex items-baseline justify-between border-b border-ink-200 pb-3">
+          <div className="flex items-baseline justify-between">
             <div>
-              <h2 className="font-display text-lg font-semibold text-ink-900">Properties</h2>
-              <p className="mt-1 text-sm text-ink-500">
+              <h2 className="text-lg font-semibold text-content">Properties</h2>
+              <p className="mt-1 text-sm text-content-muted">
                 {buildings.length} {buildings.length === 1 ? "building" : "buildings"} in the portfolio
               </p>
             </div>
             <Link
               to="/buildings"
-              className="text-xs font-medium uppercase tracking-[0.16em] text-sage-600 hover:text-sage-700"
+              className="text-sm font-medium text-teal-700 transition-colors hover:text-teal-800"
             >
-              Manage
+              Manage →
             </Link>
           </div>
-          <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="mt-6 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
             {buildings.slice(0, 6).map((b) => {
               const rate = b.total > 0 ? Math.round((b.occupied / b.total) * 100) : 0;
               return (
                 <Link
                   key={b.id}
                   to="/buildings"
-                  className="group relative block overflow-hidden rounded-lg ring-1 ring-ink-200/70 transition-all hover:-translate-y-0.5 hover:shadow-float"
+                  className="group relative block overflow-hidden rounded-2xl bg-surface shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md dark:border dark:border-border"
                 >
-                  <div className="relative h-40 w-full overflow-hidden">
+                  <div className="relative h-44 w-full overflow-hidden">
                     <img
                       src={propertyImage(b.id ?? b.name, "md")}
                       alt={b.name}
                       loading="lazy"
                       className="h-full w-full object-cover transition-transform duration-700 ease-out group-hover:scale-[1.04]"
                     />
-                    <div className="absolute inset-0 bg-gradient-to-t from-ink-900/70 via-ink-900/10 to-transparent" />
-                    <div className="absolute bottom-3 left-3 right-3 flex items-end justify-between gap-3">
-                      <p className="truncate font-display text-base font-semibold text-white">
+                    <div className="absolute inset-0 bg-gradient-to-t from-neutral-950/70 via-neutral-950/10 to-transparent" />
+                    <div className="absolute bottom-4 left-4 right-4 flex items-end justify-between gap-3">
+                      <p className="truncate text-base font-semibold text-white">
                         {b.name}
                       </p>
-                      <p className="font-display text-base font-semibold tabular-nums text-white">
+                      <p className="text-base font-semibold tabular-nums text-white">
                         {rate}<span className="text-sm text-white/70">%</span>
                       </p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-4 bg-white px-3 py-3 text-xs">
-                    <span className="text-ink-500">
-                      <span className="font-medium tabular-nums text-ink-900">{b.occupied}</span> occupied
+                  <div className="flex items-center gap-4 px-5 py-4 text-sm">
+                    <span className="text-content-muted">
+                      <span className="font-semibold tabular-nums text-content">{b.occupied}</span> occupied
                     </span>
-                    <span className="text-ink-300">·</span>
-                    <span className="text-ink-500">
-                      <span className="font-medium tabular-nums text-ink-900">{b.vacant}</span> vacant
+                    <span className="text-border-strong">·</span>
+                    <span className="text-content-muted">
+                      <span className="font-semibold tabular-nums text-content">{b.vacant}</span> vacant
                     </span>
-                    <span className="ml-auto text-ink-400">{b.total} total</span>
+                    <span className="ml-auto text-content-muted">{b.total} total</span>
                   </div>
                 </Link>
               );
             })}
           </div>
           {buildings.length > 1 && (
-            <Card variant="flat" padding="none" className="mt-6 ring-1 ring-ink-200/70">
-              <div className="border-b border-ink-200 px-5 py-4">
-                <h3 className="font-display text-base font-semibold text-ink-900">Occupancy by building</h3>
+            <Card padding="none" className="mt-8">
+              <div className="px-6 pt-6">
+                <h3 className="text-lg font-semibold text-content">Occupancy by building</h3>
               </div>
-              <div className="h-[200px] px-2 py-4">
+              <div className="h-[220px] px-3 pb-4 pt-6">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart
                     data={buildings}
                     margin={{ top: 10, right: 12, left: -8, bottom: 0 }}
-                    barCategoryGap="28%"
+                    barCategoryGap="30%"
                   >
-                    <XAxis
-                      dataKey="name"
-                      tickLine={false}
-                      axisLine={false}
-                      tick={{ fill: "rgb(120,100,90)", fontSize: 11 }}
-                    />
-                    <YAxis
-                      tickLine={false}
-                      axisLine={false}
-                      tick={{ fill: "rgb(120,100,90)", fontSize: 11 }}
-                    />
-                    <RcTooltip
-                      cursor={{ fill: "rgba(216,154,58,0.06)" }}
-                      contentStyle={{
-                        background: "rgba(255,255,255,0.96)",
-                        border: "1px solid rgba(44,31,26,0.08)",
-                        borderRadius: 10,
-                        fontSize: 12,
-                      }}
-                    />
-                    <Bar dataKey="occupied" stackId="u" fill="rgb(216,154,58)" />
-                    <Bar dataKey="vacant" stackId="u" fill="rgb(225,220,214)" radius={[4, 4, 0, 0]} />
+                    <XAxis dataKey="name" tickLine={false} axisLine={false} tick={AXIS_TICK} dy={6} />
+                    <YAxis tickLine={false} axisLine={false} tick={AXIS_TICK} />
+                    <RcTooltip cursor={{ fill: "rgba(13,148,136,0.06)" }} contentStyle={TOOLTIP_STYLE} />
+                    <Bar dataKey="occupied" stackId="u" fill={TEAL} radius={[0, 0, 0, 0]} />
+                    <Bar dataKey="vacant" stackId="u" fill="rgb(203,213,225)" radius={[6, 6, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -534,57 +492,124 @@ interface MastheadProps {
 
 function Masthead({ dateLine, greeting, headline, children }: MastheadProps) {
   return (
-    <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+    <header className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
       <div className="min-w-0">
-        <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-ink-500">
+        <p className="text-xs font-semibold uppercase tracking-wider text-content-muted">
           {dateLine}
         </p>
-        <h1 className="mt-2 font-display text-3xl font-semibold leading-tight text-ink-900 sm:text-4xl">
+        <h1 className="mt-2.5 text-3xl font-bold leading-tight tracking-tight text-content sm:text-4xl">
           {greeting}
         </h1>
         {headline && (
-          <p className="mt-2 font-display text-lg font-normal leading-snug text-ink-500">
+          <p className="mt-2.5 text-lg leading-snug text-content-secondary">
             {headline}
           </p>
         )}
       </div>
-      {children && <div className="flex flex-wrap items-center gap-2">{children}</div>}
+      {children && <div className="flex flex-wrap items-center gap-2.5">{children}</div>}
     </header>
   );
 }
 
+interface CollectedHeroProps {
+  month: string;
+  pct: number;
+  received: number;
+  expected: number;
+}
+
+function CollectedHero({ month, pct, received, expected }: CollectedHeroProps) {
+  return (
+    <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-navy-600 via-navy-800 to-navy-900 p-4 text-white shadow-lg">
+      {/* Soft teal glow — spatial depth */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute -right-10 -top-12 h-40 w-40 rounded-full bg-teal-500/25 blur-3xl"
+      />
+      <div className="relative flex items-start justify-between gap-3">
+        <p className="text-xs font-medium uppercase tracking-wider text-white/60">
+          Collected · {month}
+        </p>
+        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-white/10 text-teal-300">
+          <Wallet className="h-3.5 w-3.5" />
+        </div>
+      </div>
+      <div className="relative mt-2 flex flex-wrap items-end gap-x-2 gap-y-1">
+        <p className="text-xl font-bold leading-none tabular-nums tracking-tight sm:text-2xl">
+          {KES(received)}
+        </p>
+        <span className="mb-0.5 inline-flex items-center gap-1 rounded-full bg-teal-500/20 px-2 py-0.5 text-[11px] font-semibold text-teal-300">
+          {pct}%
+        </span>
+      </div>
+      <p className="relative mt-1.5 text-xs text-white/55">of {KES(expected)} expected</p>
+    </div>
+  );
+}
+
+type KpiTone = "navy" | "teal" | "success" | "alert" | "neutral";
+
+const KPI_ICON: Record<KpiTone, string> = {
+  navy: "bg-navy-800/[0.07] text-navy-700 dark:bg-navy-500/15 dark:text-navy-500",
+  teal: "bg-info-soft text-teal-700 dark:text-teal-500",
+  success: "bg-success-soft text-success",
+  alert: "bg-orange-500/12 text-orange-700 dark:text-orange-500",
+  neutral: "bg-surface-sunk text-content-secondary",
+};
+
 interface KpiProps {
+  icon: LucideIcon;
   label: string;
   value: string;
   caption?: string;
   progress?: number;
-  tone?: "neutral" | "alert";
+  tone?: KpiTone;
+  compact?: boolean;
 }
 
-function Kpi({ label, value, caption, progress, tone = "neutral" }: KpiProps) {
+function Kpi({ icon: Icon, label, value, caption, progress, tone = "neutral", compact }: KpiProps) {
+  const alert = tone === "alert";
   return (
-    <Card variant="flat" padding="md" className="ring-1 ring-ink-200/70">
-      <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-ink-500">
-        {label}
-      </p>
+    <Card padding="none" className={compact ? "p-4" : "p-5"}>
+      <div className="flex items-start justify-between gap-3">
+        <p className="text-xs font-medium uppercase tracking-wider text-content-muted">
+          {label}
+        </p>
+        <div
+          className={cn(
+            "flex shrink-0 items-center justify-center rounded-lg",
+            compact ? "h-7 w-7" : "h-8 w-8",
+            KPI_ICON[tone]
+          )}
+        >
+          <Icon className={compact ? "h-3.5 w-3.5" : "h-4 w-4"} />
+        </div>
+      </div>
       <p
         className={cn(
-          "mt-2 font-display text-2xl font-semibold leading-none tabular-nums sm:text-3xl",
-          tone === "alert" ? "text-coral-600" : "text-ink-900"
+          "font-bold leading-tight tabular-nums tracking-tight",
+          compact ? "mt-2 text-xl sm:text-2xl" : "mt-2.5 text-2xl sm:text-3xl",
+          alert ? "text-orange-700 dark:text-orange-500" : "text-content"
         )}
       >
         {value}
       </p>
       {progress !== undefined && (
-        <div className="mt-3 h-1.5 w-full rounded-full bg-ink-100">
+        <div className={cn("h-1.5 w-full overflow-hidden rounded-full bg-surface-sunk", compact ? "mt-2.5" : "mt-3")}>
           <div
-            className="h-1.5 rounded-full bg-sage-500 transition-[width] duration-700 ease-out"
+            className="h-1.5 rounded-full bg-teal-600 transition-[width] duration-700 ease-out"
             style={{ width: `${Math.min(100, progress)}%` }}
           />
         </div>
       )}
       {caption && (
-        <p className={cn("mt-2 text-xs", tone === "alert" ? "text-coral-600" : "text-ink-500")}>
+        <p
+          className={cn(
+            "text-xs",
+            compact ? "mt-1.5" : "mt-2",
+            alert ? "text-orange-700 dark:text-orange-500" : "text-content-muted"
+          )}
+        >
           {caption}
         </p>
       )}
@@ -595,15 +620,15 @@ function Kpi({ label, value, caption, progress, tone = "neutral" }: KpiProps) {
 function AlertSeverityDot({ type }: { type: string }) {
   const color =
     type === "overdue"
-      ? "bg-status-unpaid"
+      ? "bg-danger"
       : type === "partial" || type === "expiring_lease"
-      ? "bg-status-partial"
+      ? "bg-warning"
       : type === "move_out"
-      ? "bg-peri-500"
-      : "bg-ink-300";
+      ? "bg-orange-600"
+      : "bg-neutral-300";
   return (
     <span
-      className={"mt-1.5 inline-block h-1.5 w-1.5 shrink-0 rounded-full " + color}
+      className={"mt-1.5 inline-block h-2 w-2 shrink-0 rounded-full " + color}
       aria-hidden
     />
   );

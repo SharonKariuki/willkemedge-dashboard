@@ -32,8 +32,8 @@ export function propertyImage(seed: string | number, size: "sm" | "md" | "lg" = 
 }
 
 export function avatarFor(seed: string | number) {
-  // Solid gold/brown backgrounds — no gradient. Dicebear picks one per seed.
+  // Solid navy / teal backgrounds — on-brand. Dicebear picks one per seed.
   return `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(
     String(seed)
-  )}&backgroundType=solid&backgroundColor=C6A75E,A68A4A,2C1F1A,5C3E2A&fontSize=42`;
+  )}&backgroundType=solid&backgroundColor=0F2A43,12324D,1E4668,0D9488&fontSize=42`;
 }

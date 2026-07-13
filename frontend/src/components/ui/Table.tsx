@@ -3,9 +3,9 @@ import { cn } from "@/lib/cn";
 
 export function Table({ className, ...props }: HTMLAttributes<HTMLTableElement>) {
   return (
-    <div className="overflow-hidden rounded-lg bg-white shadow-glass ring-1 ring-ink-200/70">
+    <div className="overflow-hidden rounded-xl border border-border bg-surface shadow-sm">
       <div className="w-full overflow-x-auto">
-        <table className={cn("w-full border-collapse text-sm", className)} {...props} />
+        <table className={cn("w-full border-collapse text-base", className)} {...props} />
       </div>
     </div>
   );
@@ -15,7 +15,7 @@ export function THead({ className, ...props }: HTMLAttributes<HTMLTableSectionEl
   return (
     <thead
       className={cn(
-        "border-b border-ink-200 bg-[#FAF6EF] text-[11px] uppercase tracking-[0.12em] text-ink-500",
+        "border-b border-border bg-surface-sunk text-xs font-medium uppercase tracking-wider text-content-muted",
         className
       )}
       {...props}
@@ -24,34 +24,25 @@ export function THead({ className, ...props }: HTMLAttributes<HTMLTableSectionEl
 }
 
 export function TBody({ className, ...props }: HTMLAttributes<HTMLTableSectionElement>) {
-  return <tbody className={cn("divide-y divide-ink-200", className)} {...props} />;
+  return <tbody className={cn("divide-y divide-border", className)} {...props} />;
 }
 
 export function TR({ className, ...props }: HTMLAttributes<HTMLTableRowElement>) {
   return (
-    <tr
-      className={cn(
-        "transition-colors hover:bg-[#F9F6F2]",
-        className
-      )}
-      {...props}
-    />
+    <tr className={cn("transition-colors hover:bg-hover", className)} {...props} />
   );
 }
 
 export function TH({ className, ...props }: ThHTMLAttributes<HTMLTableCellElement>) {
   return (
-    <th
-      className={cn("px-5 py-3.5 text-left font-medium", className)}
-      {...props}
-    />
+    <th className={cn("px-5 py-3.5 text-left font-medium", className)} {...props} />
   );
 }
 
 export function TD({ className, ...props }: TdHTMLAttributes<HTMLTableCellElement>) {
   return (
     <td
-      className={cn("px-5 py-4 align-middle text-ink-700", className)}
+      className={cn("px-5 py-4 align-middle text-content-secondary", className)}
       {...props}
     />
   );
