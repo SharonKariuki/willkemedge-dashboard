@@ -63,6 +63,16 @@ services:
         sync: false
       - key: DIRECTOR_ALERT_EMAIL
         sync: false
+      # Login email of the director who may authorise IPN reversals in the
+      # Django admin. Blank falls back to superuser-only.
+      - key: DIRECTOR_EMAIL
+        sync: false
+      # Bearer token for POST /api/payments/coop/reconcile-daily/. Point a free
+      # external scheduler (cron-job.org, GitHub Actions) at that endpoint daily
+      # — Render's Cron Job add-on is not needed. Copy the generated value out
+      # of the dashboard when configuring the scheduler.
+      - key: RECONCILIATION_TRIGGER_TOKEN
+        generateValue: true
       - key: MPESA_ACCOUNT_PREFIX
         value: "90290"
       # Africa's Talking
@@ -89,6 +99,11 @@ services:
         sync: false
       - key: DEFAULT_FROM_EMAIL
         sync: false
+      # Error monitoring. Sentry stays dormant unless SENTRY_DSN is set.
+      - key: SENTRY_DSN
+        sync: false
+      - key: SENTRY_ENVIRONMENT
+        value: production
 
   # ---------------------------------------------------------------------------
   # Celery worker — sends SMS/email, processes async tasks
@@ -137,6 +152,30 @@ services:
         sync: false
       - key: DEFAULT_FROM_EMAIL
         sync: false
+      # The tasks in apps/payments/tasks.py execute HERE, not on the web
+      # service, so every setting they read must be present in this env too.
+      # Without these the alert tasks resolve empty recipients and silently
+      # send nothing.
+      - key: ADMIN_ALERT_PHONE
+        sync: false
+      - key: ADMIN_ALERT_EMAIL
+        sync: false
+      - key: DIRECTOR_ALERT_PHONE
+        sync: false
+      - key: DIRECTOR_ALERT_EMAIL
+        sync: false
+      - key: RENT_REMINDER_LEAD_DAYS
+        value: "3"
+      - key: MPESA_ACCOUNT_PREFIX
+        value: "90290"
+      # Password-reset emails are rendered by apps/accounts/tasks.py on this
+      # worker; without FRONTEND_URL the reset link in the email is broken.
+      - key: FRONTEND_URL
+        sync: false
+      - key: SENTRY_DSN
+        sync: false
+      - key: SENTRY_ENVIRONMENT
+        value: production
 
   # ---------------------------------------------------------------------------
   # Celery beat — schedules nightly status sweep + monthly arrears job
@@ -165,3 +204,8 @@ services:
         sync: false
       - key: REDIS_URL
         sync: false
+      # Beat only dispatches work; a crash here is otherwise silent.
+      - key: SENTRY_DSN
+        sync: false
+      - key: SENTRY_ENVIRONMENT
+        value: production
