@@ -26,18 +26,18 @@ export default function AuthLayout() {
 
         <div className="flex min-w-0 flex-1 flex-col">
           {/* Topbar — search, notifications, profile */}
-          <header className="sticky top-0 z-30 flex items-center justify-end gap-2 border-b border-border/70 bg-app/80 px-2 py-2.5 backdrop-blur-md sm:px-4 sm:py-3 lg:px-6">
+          <header className="sticky top-0 z-30 flex items-center justify-end gap-2 border-b border-border/70 bg-app/80 px-2 py-1.5 backdrop-blur-md sm:px-4 lg:px-6">
             <GlobalSearch />
             <NotificationBell />
             <button
-              className="flex items-center gap-2.5 rounded-full py-1 pl-1 pr-2 transition-colors hover:bg-hover"
+              className="flex items-center gap-2.5 rounded-full py-0.5 pl-0.5 pr-2 transition-colors hover:bg-hover"
               aria-label="Account"
             >
               <img
                 src={avatarFor(fullName)}
                 alt=""
                 aria-hidden
-                className="h-9 w-9 rounded-full ring-1 ring-border"
+                className="h-8 w-8 rounded-full ring-1 ring-border"
               />
               <span className="hidden text-sm font-medium text-content sm:block">
                 {fullName}
