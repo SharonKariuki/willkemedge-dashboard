@@ -5,29 +5,35 @@ import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/cn";
 
 const button = cva(
-  "inline-flex items-center justify-center gap-2 rounded-md font-medium transition-all active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 whitespace-nowrap",
+  "inline-flex items-center justify-center gap-2 rounded-md font-medium transition-colors duration-150 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-app",
   {
     variants: {
       variant: {
+        // Primary — navy identity
         primary:
-          "bg-ink-900 text-white shadow-glass hover:bg-ink-700 hover:shadow-float",
-        gold:
-          "bg-ochre-500 text-ink-900 shadow-glass ring-1 ring-ochre-600/40 hover:bg-ochre-400 hover:shadow-float",
+          "bg-navy-800 text-white shadow-xs hover:bg-navy-700",
+        // Secondary — teal interactive
         secondary:
-          "bg-white text-ink-900 ring-1 ring-ink-200 hover:ring-ink-400",
-        ghost:
-          "text-ink-700 hover:bg-surface-raised/60 hover:text-ink-900",
-        glass:
-          "glass text-ink-900 hover:shadow-float",
+          "bg-teal-700 text-white shadow-xs hover:bg-teal-800",
+        // Neutral outline (subtle secondary action)
         outline:
-          "hairline bg-transparent text-ink-700 hover:bg-surface-raised/60",
+          "bg-surface text-content border border-border hover:bg-hover hover:border-border-strong",
+        // Ghost — transparent with subtle hover
+        ghost:
+          "text-content-secondary hover:bg-hover hover:text-content",
+        // Danger — destructive
         danger:
-          "bg-status-unpaid text-white hover:brightness-110",
+          "bg-danger text-white shadow-xs hover:brightness-105",
+        // Legacy aliases (kept so existing call sites don't break)
+        gold:
+          "bg-teal-700 text-white shadow-xs hover:bg-teal-800",
+        glass:
+          "bg-surface text-content border border-border hover:bg-hover",
       },
       size: {
-        sm: "h-8 px-3 text-xs",
-        md: "h-10 px-4 text-sm",
-        lg: "h-12 px-6 text-base",
+        sm: "h-8 px-3 text-sm",
+        md: "h-10 px-4 text-base",
+        lg: "h-11 px-5 text-md",
         icon: "h-10 w-10",
         "icon-sm": "h-8 w-8",
       },
