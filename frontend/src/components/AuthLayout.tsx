@@ -1,77 +1,48 @@
-import { LogOut } from "lucide-react";
 import { Outlet, useLocation } from "react-router-dom";
 
 import { useAuth } from "@/hooks/useAuth";
-import { displayName } from "@/lib/displayName";
+import { avatarFor } from "@/lib/images";
 
 import ErrorBoundary from "./ErrorBoundary";
 import GlobalSearch from "./GlobalSearch";
 import MobileNav from "./MobileNav";
 import NotificationBell from "./NotificationBell";
 import Sidebar from "./Sidebar";
-import { Button } from "./ui";
 
 export default function AuthLayout() {
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
   const location = useLocation();
 
-  const mappedHandle = displayName(user?.email?.split("@")[0] ?? "");
-
-  const initials = (mappedHandle || "??")
-    .split(/[._-]/)
-    .slice(0, 2)
-    .map((s) => s[0]?.toUpperCase() ?? "")
-    .join("");
+  const fullName =
+    [user?.first_name, user?.last_name]
+      .map((s) => s?.trim())
+      .filter(Boolean)
+      .join(" ") || "Wilson Osoro";
 
   return (
     <div className="relative min-h-screen">
-      {/* Paper-grain texture overlay */}
-      <div
-        aria-hidden
-        className="pointer-events-none fixed inset-0 z-0 opacity-[0.015] mix-blend-multiply"
-        style={{
-          backgroundImage:
-            "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.35 0 0 0 0 0.25 0 0 0 0 0.15 0 0 0 0.9 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>\")",
-        }}
-      />
       <div className="relative z-10 flex">
         <Sidebar />
 
         <div className="flex min-w-0 flex-1 flex-col">
-          {/* Topbar */}
-          <header className="sticky top-0 z-30 px-2 pt-2 sm:px-4 lg:px-6 lg:pt-4">
-            <div className="glass-strong flex items-center gap-2 rounded-xl px-2.5 py-2 ring-1 ring-ochre-500/10 sm:gap-3 sm:px-4 sm:py-2.5">
-              <div className="min-w-0 flex-1" />
-
-              <GlobalSearch />
-
-              {/* Real-time notification bell */}
-              <NotificationBell />
-
-              <div className="flex items-center gap-2 pl-1">
-                <div className="hidden text-right sm:block">
-                  <p className="text-xs font-medium text-ink-900">
-                    {mappedHandle || "User"}
-                  </p>
-                  <p className="text-[10px] uppercase tracking-wider text-ink-500">Admin</p>
-                </div>
-                <button
-                  className="flex h-9 w-9 items-center justify-center rounded-full bg-ink-900 text-xs font-semibold text-white shadow-glass"
-                  aria-label="Account"
-                >
-                  {initials || "U"}
-                </button>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label="Sign out"
-                  onClick={() => void logout()}
-                  className="hidden sm:inline-flex"
-                >
-                  <LogOut className="h-4 w-4" />
-                </Button>
-              </div>
-            </div>
+          {/* Topbar — search, notifications, profile */}
+          <header className="sticky top-0 z-30 flex items-center justify-end gap-2 px-2 pt-3 sm:px-4 sm:pt-4 lg:px-6">
+            <GlobalSearch />
+            <NotificationBell />
+            <button
+              className="flex items-center gap-2.5 rounded-full py-1 pl-1 pr-2 transition-colors hover:bg-hover"
+              aria-label="Account"
+            >
+              <img
+                src={avatarFor(fullName)}
+                alt=""
+                aria-hidden
+                className="h-9 w-9 rounded-full ring-1 ring-border"
+              />
+              <span className="hidden text-sm font-medium text-content sm:block">
+                {fullName}
+              </span>
+            </button>
           </header>
 
           {/* Main */}

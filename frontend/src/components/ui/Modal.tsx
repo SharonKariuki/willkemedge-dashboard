@@ -120,28 +120,28 @@ export function Modal({
       aria-label={typeof title === "string" ? title : ariaLabel}
     >
       <div
-        className="absolute inset-0 bg-ink-900/45 backdrop-blur-sm animate-fade-up"
+        className="absolute inset-0 bg-neutral-950/50 backdrop-blur-sm animate-fade-up"
         onClick={closeOnBackdrop ? onClose : undefined}
         aria-hidden
       />
       <div
         ref={dialogRef}
         className={cn(
-          "relative flex w-full max-h-[90vh] flex-col overflow-hidden rounded-xl bg-canvas shadow-float ring-1 ring-ink-100 animate-fade-up dark:bg-ink-900 dark:ring-ink-700",
+          "relative flex w-full max-h-[90vh] flex-col overflow-hidden rounded-xl border border-border bg-surface shadow-lg animate-fade-up",
           SIZE_CLASSES[size],
         )}
       >
         {hasHeader && (
-          <div className="sticky top-0 z-10 flex items-start justify-between gap-3 border-b border-ink-100 bg-canvas px-6 py-4 dark:border-ink-700 dark:bg-ink-900">
+          <div className="sticky top-0 z-10 flex items-start justify-between gap-3 border-b border-border bg-surface px-6 py-5">
             {header ?? (
               <div className="min-w-0 flex-1">
                 {eyebrow && (
-                  <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-ochre-600">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-teal-700">
                     {eyebrow}
                   </p>
                 )}
                 {title && (
-                  <p className="font-display text-lg font-semibold leading-tight text-ink-900 dark:text-white">
+                  <p className="text-xl font-semibold leading-tight text-content">
                     {title}
                   </p>
                 )}
@@ -154,7 +154,7 @@ export function Modal({
                 type="button"
                 onClick={onClose}
                 aria-label="Close"
-                className="rounded-md p-1.5 text-ink-400 transition-colors hover:bg-ink-100 hover:text-ink-700 focus:outline-none focus:ring-2 focus:ring-ochre-500/40 dark:hover:bg-ink-800 dark:hover:text-white"
+                className="rounded-md p-1.5 text-content-muted transition-colors hover:bg-hover hover:text-content focus:outline-none focus:ring-2 focus:ring-ring/40"
               >
                 <X className="h-4 w-4" />
               </button>
@@ -162,10 +162,10 @@ export function Modal({
           </div>
         )}
 
-        <div className="flex-1 overflow-y-auto px-6 py-5">{children}</div>
+        <div className="flex-1 overflow-y-auto px-6 py-6">{children}</div>
 
         {footer && (
-          <div className="sticky bottom-0 z-10 flex flex-wrap items-center justify-end gap-2 border-t border-ink-100 bg-canvas px-6 py-3 dark:border-ink-700 dark:bg-ink-900">
+          <div className="sticky bottom-0 z-10 flex flex-wrap items-center justify-end gap-2.5 border-t border-border bg-surface px-6 py-4">
             {footer}
           </div>
         )}

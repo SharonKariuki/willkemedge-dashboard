@@ -20,6 +20,7 @@ interface Result {
 export default function GlobalSearch() {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -83,27 +84,37 @@ export default function GlobalSearch() {
 
   useEffect(() => {
     const onDocClick = (e: MouseEvent) => {
-      if (!containerRef.current?.contains(e.target as Node)) setOpen(false);
+      if (!containerRef.current?.contains(e.target as Node)) {
+        setOpen(false);
+        if (!query.trim()) setExpanded(false);
+      }
     };
     document.addEventListener("mousedown", onDocClick);
     return () => document.removeEventListener("mousedown", onDocClick);
-  }, []);
+  }, [query]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
-        inputRef.current?.focus();
+        setExpanded(true);
         setOpen(true);
+        requestAnimationFrame(() => inputRef.current?.focus());
       }
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, []);
 
+  const openSearch = () => {
+    setExpanded(true);
+    requestAnimationFrame(() => inputRef.current?.focus());
+  };
+
   const go = (r: Result) => {
     navigate(r.to);
     setOpen(false);
+    setExpanded(false);
     setQuery("");
     inputRef.current?.blur();
   };
@@ -111,6 +122,7 @@ export default function GlobalSearch() {
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Escape") {
       setOpen(false);
+      setExpanded(false);
       inputRef.current?.blur();
       return;
     }
@@ -129,37 +141,48 @@ export default function GlobalSearch() {
   };
 
   const iconFor = (kind: ResultKind) => {
-    if (kind === "tenant") return <User className="h-3.5 w-3.5 text-ink-500" />;
-    if (kind === "unit") return <DoorOpen className="h-3.5 w-3.5 text-ink-500" />;
-    return <Building2 className="h-3.5 w-3.5 text-ink-500" />;
+    if (kind === "tenant") return <User className="h-3.5 w-3.5 text-content-muted" />;
+    if (kind === "unit") return <DoorOpen className="h-3.5 w-3.5 text-content-muted" />;
+    return <Building2 className="h-3.5 w-3.5 text-content-muted" />;
   };
 
   return (
-    <div ref={containerRef} className="relative hidden min-w-0 max-w-xs flex-1 sm:block">
-      <div className="glass flex items-center gap-2 rounded-md px-3 py-1.5 text-sm">
-        <Search className="h-4 w-4 text-ink-400" />
-        <input
-          ref={inputRef}
-          type="search"
-          placeholder="Search tenants, units…"
-          value={query}
-          onChange={(e) => {
-            setQuery(e.target.value);
-            setOpen(true);
-          }}
-          onFocus={() => setOpen(true)}
-          onKeyDown={onKeyDown}
-          className="w-full bg-transparent text-sm text-ink-900 placeholder:text-ink-400 focus:outline-none"
-        />
-        <kbd className="hidden rounded bg-ink-100 px-1.5 py-0.5 text-[10px] text-ink-500 md:inline">
-          ⌘K
-        </kbd>
-      </div>
+    <div ref={containerRef} className="relative">
+      {expanded ? (
+        <div className="flex w-52 items-center gap-2 rounded-full border border-border bg-surface px-3.5 py-2 shadow-xs transition-all sm:w-64">
+          <Search className="h-4 w-4 shrink-0 text-content-muted" />
+          <input
+            ref={inputRef}
+            type="search"
+            placeholder="Search tenants, units…"
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setOpen(true);
+            }}
+            onFocus={() => setOpen(true)}
+            onKeyDown={onKeyDown}
+            className="w-full bg-transparent text-sm text-content placeholder:text-content-muted focus:outline-none"
+          />
+          <kbd className="hidden rounded bg-surface-sunk px-1.5 py-0.5 text-[10px] text-content-muted md:inline">
+            ⌘K
+          </kbd>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={openSearch}
+          aria-label="Search"
+          className="flex h-9 w-9 items-center justify-center rounded-full text-content-secondary transition-colors hover:bg-hover hover:text-content"
+        >
+          <Search className="h-[18px] w-[18px]" />
+        </button>
+      )}
 
-      {open && query.trim() && (
-        <div className="glass absolute left-0 right-0 top-full z-40 mt-1 max-h-80 overflow-y-auto rounded-md py-1 text-sm shadow-float">
+      {expanded && open && query.trim() && (
+        <div className="absolute right-0 top-full z-40 mt-2 max-h-80 w-72 overflow-y-auto rounded-xl border border-border bg-surface py-1.5 text-sm shadow-lg">
           {results.length === 0 ? (
-            <div className="px-3 py-2 text-xs text-ink-500">No matches</div>
+            <div className="px-3.5 py-2.5 text-xs text-content-muted">No matches</div>
           ) : (
             results.map((r, i) => (
               <button
@@ -171,16 +194,16 @@ export default function GlobalSearch() {
                 }}
                 onMouseEnter={() => setActiveIndex(i)}
                 className={cn(
-                  "flex w-full items-center gap-2 px-3 py-1.5 text-left",
-                  i === activeIndex ? "bg-ink-100/60" : "hover:bg-ink-100/40"
+                  "flex w-full items-center gap-2.5 px-3.5 py-2 text-left transition-colors",
+                  i === activeIndex ? "bg-hover" : "hover:bg-hover"
                 )}
               >
                 {iconFor(r.kind)}
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-xs font-medium text-ink-900">{r.title}</p>
-                  <p className="truncate text-[11px] text-ink-500">{r.subtitle}</p>
+                  <p className="truncate text-xs font-medium text-content">{r.title}</p>
+                  <p className="truncate text-[11px] text-content-muted">{r.subtitle}</p>
                 </div>
-                <span className="text-[10px] uppercase tracking-wider text-ink-400">
+                <span className="text-[10px] uppercase tracking-wider text-content-muted">
                   {r.kind}
                 </span>
               </button>

@@ -1,4 +1,4 @@
-export { Card, CardHeader, CardTitle, CardBody } from "./Card";
+export { Card, CardHeader, CardTitle, CardBody, CardEyebrow } from "./Card";
 export { Button } from "./Button";
 export { Modal } from "./Modal";
 export { Badge } from "./Badge";
