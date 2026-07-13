@@ -26,7 +26,7 @@ export default function AuthLayout() {
 
         <div className="flex min-w-0 flex-1 flex-col">
           {/* Topbar — search, notifications, profile */}
-          <header className="sticky top-0 z-30 flex items-center justify-end gap-2 px-2 pt-3 sm:px-4 sm:pt-4 lg:px-6">
+          <header className="sticky top-0 z-30 flex items-center justify-end gap-2 border-b border-border/70 bg-app/80 px-2 py-2.5 backdrop-blur-md sm:px-4 sm:py-3 lg:px-6">
             <GlobalSearch />
             <NotificationBell />
             <button
