@@ -80,6 +80,54 @@ ACCOUNTS = [
 
 CHART_CODES = {row[0] for row in HEADERS} | {row[0] for row in ACCOUNTS}
 
+# ── Expense categories, each LOCKED to one GL code ───────────────────────────
+# This is the fixed dropdown staff choose from. A category always posts to its
+# mapped account — there is no free-text GL entry anywhere in the system.
+# (name, gl_code)
+EXPENSE_CATEGORIES = [
+    ("Property Management Fees",        "5100"),
+    ("Repairs & Maintenance",           "5200"),
+    ("Plumbing & Electrical",           "5210"),
+    ("Cleaning & Garbage Collection",   "5220"),
+    ("Gardening & Landscaping",         "5230"),
+    ("Utilities (Common Areas)",        "5300"),
+    ("Marketing & Advertising",         "5400"),
+    ("Legal & Professional Fees",       "5500"),
+    ("Security Services",               "5600"),
+    ("Property Management Software",    "5700"),
+    ("Caretaking Services",             "5800"),
+    ("Travel and Vehicle Expenses",     "5900"),
+    ("Salaries and Wages",              "5910"),
+    ("Office Expenses",                 "5920"),
+    ("Commissions",                     "5930"),
+    ("Bank Fees",                       "5940"),
+    ("Insurance",                       "6100"),
+    ("Property Taxes - Land Rates",     "6200"),
+    ("Property Taxes - Land Rent",      "6300"),
+    ("Interest Expense (Mortgages)",    "6400"),
+    ("Corporate Tax",                   "6500"),
+    ("Depreciation Expense",            "6600"),
+]
+
+# Legacy free-text category names (lower-cased) → the GL code they belong to.
+# Used to repair pre-existing rows that were created before categories were
+# locked; without a code, their expenses never reach the ledger.
+LEGACY_CATEGORY_TO_CODE = {
+    "repairs":            "5200",
+    "maintenance":        "5200",
+    "repairs & maintenance": "5200",
+    "utilities":          "5300",
+    "water":              "5300",
+    "electricity":        "5300",
+    "cleaning":           "5220",
+    "garbage collection": "5220",
+    "security":           "5600",
+    "management fee":     "5100",
+    "insurance":          "6100",
+    "legal":              "5500",
+    "salaries":           "5910",
+}
+
 # ── Named codes used by posting logic (import these, never hardcode) ─────────
 RENT_RESIDENTIAL = "4110"
 RENT_COMMERCIAL = "4120"

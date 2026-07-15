@@ -19,7 +19,13 @@ is unmapped.
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
-from apps.expenses.coa import ACCOUNTS, CHART_CODES, HEADERS
+from apps.expenses.coa import (
+    ACCOUNTS,
+    CHART_CODES,
+    EXPENSE_CATEGORIES,
+    HEADERS,
+    LEGACY_CATEGORY_TO_CODE,
+)
 
 
 class Command(BaseCommand):
@@ -68,8 +74,15 @@ class Command(BaseCommand):
                 else:
                     unchanged += 1
 
+            cat_created, cat_repaired = self._seed_categories(Account, ExpenseCategory)
+
             if opts["dry_run"]:
                 transaction.set_rollback(True)
+
+        if cat_created or cat_repaired:
+            self.stdout.write(
+                f"\nCategories: {cat_created} created, {cat_repaired} legacy row(s) bound to a GL code."
+            )
 
         summary = f"\n{created} created, {updated} updated, {unchanged} unchanged."
         if opts["dry_run"]:
@@ -78,6 +91,40 @@ class Command(BaseCommand):
             self.stdout.write(self.style.SUCCESS(summary))
 
         self._audit(Account, ExpenseCategory, Expense)
+
+    # ── categories ───────────────────────────────────────────────────────────
+
+    def _seed_categories(self, Account, ExpenseCategory):
+        """Seed the locked category set and bind any legacy uncoded rows.
+
+        Every category must map to a GL code — an unmapped one silently drops
+        its expenses from the ledger.
+        """
+        by_code = {a.code: a for a in Account.objects.all()}
+        created = repaired = 0
+
+        for name, code in EXPENSE_CATEGORIES:
+            account = by_code.get(code)
+            if account is None:
+                continue
+            _cat, was_created = ExpenseCategory.objects.update_or_create(
+                name=name, defaults={"account": account},
+            )
+            if was_created:
+                created += 1
+                self.stdout.write(f"  + category {name} → {code}")
+
+        for cat in ExpenseCategory.objects.filter(account__isnull=True):
+            code = LEGACY_CATEGORY_TO_CODE.get(cat.name.strip().lower())
+            account = by_code.get(code) if code else None
+            if account is None:
+                continue
+            cat.account = account
+            cat.save(update_fields=["account"])
+            repaired += 1
+            self.stdout.write(f"  ~ category {cat.name} → {code} (was unmapped)")
+
+        return created, repaired
 
     # ── audit ────────────────────────────────────────────────────────────────
 
