@@ -35,6 +35,7 @@ from django.db import transaction
 from django.utils.dateparse import parse_date
 
 from apps.buildings.models import UnitClassification
+from apps.expenses.coa import RENT_RECEIVABLE, SERVICE_CHARGE_UTILITIES
 from apps.expenses.coa import (
     RENT_COMMERCIAL,
     RENT_RECEIVABLE,
@@ -406,6 +407,35 @@ def post_arrear(arrear) -> JournalEntry:
         building=building,
         source_type="arrear",
         source_id=arrear.pk,
+        kind="normal",
+        lines=lines,
+    )
+
+
+def post_utility_charge(charge) -> JournalEntry:
+    """
+    Post a water/utility charge billed to a tenant.
+
+    DR 1040 Accounts Receivable / CR 4150 Service Charge — Utilities Reimbursed
+
+    Utility charges appeared on the tenant statement as "Other Charges" but were
+    never posted to the general ledger, so recovered utility income was missing
+    from the books entirely.
+    """
+    amt = charge.amount
+    building = getattr(charge.tenant.unit, "building", None)
+
+    lines = [
+        (RENT_RECEIVABLE, amt, Decimal("0"), f"{charge.label} billed — {charge.tenant}"),
+        (SERVICE_CHARGE_UTILITIES, Decimal("0"), amt, "Service Charge / Utilities Reimbursed"),
+    ]
+
+    return _build_entry(
+        date=charge.posting_date,
+        memo=f"{charge.label}: {charge.tenant} {charge.period_month}/{charge.period_year}",
+        building=building,
+        source_type="utility_charge",
+        source_id=charge.pk,
         kind="normal",
         lines=lines,
     )

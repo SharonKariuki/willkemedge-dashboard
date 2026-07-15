@@ -1,7 +1,7 @@
 """Payment serializers."""
 from rest_framework import serializers
 
-from .models import Arrears, Payment, Transaction
+from .models import Arrears, Payment, Transaction, UtilityCharge
 
 
 class PaymentSerializer(serializers.ModelSerializer):
@@ -170,3 +170,32 @@ class ReceiptSerializer(serializers.Serializer):
     outstanding_balance = serializers.DecimalField(
         max_digits=10, decimal_places=2, allow_null=True
     )
+
+
+class MeterReadingSerializer(serializers.Serializer):
+    """Staff-entered water meter reading -> a priced UtilityCharge."""
+
+    tenant = serializers.IntegerField()
+    period_month = serializers.IntegerField(min_value=1, max_value=12)
+    period_year = serializers.IntegerField(min_value=2020, max_value=2100)
+    closing_reading = serializers.DecimalField(max_digits=10, decimal_places=2)
+    opening_reading = serializers.DecimalField(
+        max_digits=10, decimal_places=2, required=False, allow_null=True,
+        help_text="Optional — defaults to the previous reading on file.",
+    )
+    label = serializers.CharField(required=False, default="Water Usage")
+
+
+class UtilityChargeSerializer(serializers.ModelSerializer):
+    tenant_name = serializers.CharField(source="tenant.full_name", read_only=True)
+    unit_label = serializers.CharField(source="tenant.unit.label", read_only=True)
+    building_name = serializers.CharField(source="tenant.unit.building.name", read_only=True)
+
+    class Meta:
+        model = UtilityCharge
+        fields = [
+            "id", "tenant", "tenant_name", "unit_label", "building_name",
+            "posting_date", "period_month", "period_year", "label",
+            "opening_reading", "closing_reading", "units", "amount", "notes",
+        ]
+        read_only_fields = fields

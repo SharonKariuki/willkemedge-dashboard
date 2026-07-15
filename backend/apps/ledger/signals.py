@@ -78,3 +78,25 @@ def on_expense_saved(sender, instance, created, **kwargs):
 def on_expense_deleted(sender, instance, **kwargs):
     """Create a reversal entry when an Expense is deleted."""
     _reverse_expense_handler(instance)
+
+
+# ── Utility charge signals ───────────────────────────────────────────────────
+
+@receiver(post_save, sender="payments.UtilityCharge")
+def on_utility_charge_saved(sender, instance, created, **kwargs):
+    """Post a journal entry when a water/utility charge is billed.
+
+    These showed on the tenant statement as "Other Charges" but never reached
+    the general ledger, so recovered utility income was missing from the books.
+    """
+    if not created:
+        return
+    from .posting import post_utility_charge
+
+    try:
+        post_utility_charge(instance)
+    except Exception as exc:  # never break billing because the GL hiccuped
+        logger.error(
+            "ledger: post_utility_charge failed for UtilityCharge#%s: %s",
+            instance.pk, exc,
+        )

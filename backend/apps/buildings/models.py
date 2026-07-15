@@ -2,6 +2,8 @@
 Building and Unit models — updated with UNDER_MAINTENANCE status and
 MaintenanceRequest model for tracking repairs per unit.
 """
+from decimal import Decimal
+
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models.functions import Upper
@@ -47,6 +49,11 @@ class Building(models.Model):
     )
     contact_phone = models.CharField(max_length=80, blank=True)
     contact_email = models.EmailField(blank=True)
+
+    water_rate_per_unit = models.DecimalField(
+        max_digits=8, decimal_places=2, default=Decimal("150.00"),
+        help_text="Tariff charged per unit of water consumed (KES). Donholm bills at 150/unit.",
+    )
 
     paybill_number = models.CharField(
         max_length=20, blank=True,
