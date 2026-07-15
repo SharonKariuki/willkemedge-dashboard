@@ -58,16 +58,26 @@ class ExpensesAPITests(APITestCase):
         }, format="json")
         assert resp.status_code == status.HTTP_405_METHOD_NOT_ALLOWED
 
-    # --- Expense categories CRUD ---------------------------------------
+    # --- Expense categories are COA-locked (read-only) ------------------
 
-    def test_create_category(self):
+    def test_categories_are_read_only(self):
+        """Categories are a fixed, COA-locked set seeded by `seed_coa`.
+
+        They used to be creatable over the API, which let a caller add one with
+        no GL account — expenses booked under it were then silently dropped by
+        the ledger. Creation now returns 405; the set changes via seed_coa.
+        """
         resp = self.client.post("/api/expenses/categories/", {
             "name": "Electricity", "account": self.repairs_acct.id,
         }, format="json")
-        assert resp.status_code == status.HTTP_201_CREATED
-        body = resp.json()
-        assert body["account_code"] == "5200"
-        assert body["account_name"] == "Repairs & Maintenance"
+        assert resp.status_code == status.HTTP_405_METHOD_NOT_ALLOWED
+
+    def test_categories_list_exposes_their_gl_code(self):
+        resp = self.client.get("/api/expenses/categories/")
+        assert resp.status_code == status.HTTP_200_OK
+        row = next(r for r in resp.json() if r["id"] == self.category.id)
+        assert row["account_code"] == "5200"
+        assert row["account_name"] == "Repairs & Maintenance"
 
     # --- Expense CRUD + serializer validation --------------------------
 

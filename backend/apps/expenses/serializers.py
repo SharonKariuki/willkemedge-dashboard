@@ -63,3 +63,17 @@ class ExpenseSerializer(serializers.ModelSerializer):
         if value <= 0:
             raise serializers.ValidationError("Amount must be positive.")
         return value
+
+    def validate_category(self, category):
+        """Every expense must reconcile to a COA code.
+
+        A category with no GL account is skipped by the ledger posting signal,
+        so the expense would never appear in the general ledger. Reject it at
+        the door rather than losing it silently.
+        """
+        if category.account_id is None:
+            raise serializers.ValidationError(
+                f"Category '{category.name}' has no GL account. "
+                f"Run `manage.py seed_coa` to bind it to a Chart of Accounts code."
+            )
+        return category

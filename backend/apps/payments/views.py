@@ -3,6 +3,7 @@ import random
 import string
 
 from django.db import transaction as db_transaction
+from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
@@ -11,16 +12,26 @@ from rest_framework.response import Response
 
 from apps.tenants.models import Tenant
 
-from .models import Arrears, CoopIpnEvent, CoopIpnStatus, Payment, PaymentSource, Transaction
+from .models import (
+    Arrears,
+    CoopIpnEvent,
+    CoopIpnStatus,
+    Payment,
+    PaymentSource,
+    Transaction,
+    UtilityCharge,
+)
 from .pdf_service import render_to_pdf
 from .receipt_service import generate_receipt
 from .serializers import (
     ArrearsSerializer,
     CollectionProgressSerializer,
+    MeterReadingSerializer,
     PaymentCreateSerializer,
     PaymentSerializer,
     ReceiptSerializer,
     TransactionSerializer,
+    UtilityChargeSerializer,
 )
 from .services import get_collection_progress, process_payment
 from .tasks import generate_monthly_arrears, send_payment_confirmation
@@ -387,3 +398,72 @@ class UnmatchedCreditViewSet(viewsets.ReadOnlyModelViewSet):
             status=status.HTTP_200_OK,
         )
 
+
+
+class UtilityChargeViewSet(viewsets.ReadOnlyModelViewSet):
+    """Water/utility charges, plus the staff meter-reading entry point.
+
+    GET  /api/utility-charges/                  — list (filter ?tenant= &month= &year=)
+    GET  /api/utility-charges/previous-reading/?tenant=<id>
+    POST /api/utility-charges/reading/          — capture a reading, bill the charge
+    """
+
+    serializer_class = UtilityChargeSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        qs = UtilityCharge.objects.select_related(
+            "tenant", "tenant__unit", "tenant__unit__building"
+        ).order_by("-posting_date", "-id")
+        tenant = self.request.query_params.get("tenant")
+        if tenant:
+            qs = qs.filter(tenant_id=tenant)
+        month = self.request.query_params.get("month")
+        year = self.request.query_params.get("year")
+        if month and year:
+            qs = qs.filter(period_month=month, period_year=year)
+        return qs
+
+    @action(detail=False, methods=["get"], url_path="previous-reading")
+    def previous_reading(self, request):
+        """Pre-fill the form's 'previous reading' so the meter history stays continuous."""
+        from .meter_service import previous_reading_for
+
+        tenant = get_object_or_404(Tenant, pk=request.query_params.get("tenant"))
+        reading = previous_reading_for(tenant, label=request.query_params.get("label", "Water Usage"))
+        return Response({
+            "tenant": tenant.pk,
+            "previous_reading": reading,
+            "water_rate_per_unit": tenant.unit.building.water_rate_per_unit,
+        })
+
+    @action(detail=False, methods=["post"], url_path="reading")
+    def capture_reading(self, request):
+        """Capture a meter reading -> consumption x tariff -> billed UtilityCharge."""
+        from django.core.exceptions import ValidationError as DjangoValidationError
+
+        from .meter_service import bill_meter_reading
+
+        ser = MeterReadingSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        data = ser.validated_data
+
+        tenant = get_object_or_404(Tenant, pk=data["tenant"])
+        try:
+            charge = bill_meter_reading(
+                tenant=tenant,
+                period_month=data["period_month"],
+                period_year=data["period_year"],
+                closing_reading=data["closing_reading"],
+                opening_reading=data.get("opening_reading"),
+                label=data.get("label") or "Water Usage",
+            )
+        except DjangoValidationError as exc:
+            return Response(
+                {"detail": exc.messages[0] if exc.messages else str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response(
+            UtilityChargeSerializer(charge).data, status=status.HTTP_201_CREATED
+        )

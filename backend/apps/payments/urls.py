@@ -11,6 +11,7 @@ from .views import (
     PaymentViewSet,
     TransactionViewSet,
     UnmatchedCreditViewSet,
+    UtilityChargeViewSet,
 )
 
 router = DefaultRouter()
@@ -20,6 +21,7 @@ router.register("notifications", NotificationViewSet, basename="notification")
 router.register("transactions", TransactionViewSet, basename="transaction")
 # Distinct prefix (not "payments/…") so it doesn't collide with payments/<pk>/.
 router.register("unmatched-credits", UnmatchedCreditViewSet, basename="unmatched-credit")
+router.register("utility-charges", UtilityChargeViewSet, basename="utility-charge")
 
 app_name = "payments"
 

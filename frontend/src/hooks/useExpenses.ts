@@ -6,6 +6,9 @@ export interface ExpenseCategory {
   id: number;
   name: string;
   description: string;
+  /** GL code this category is locked to (Chart of Accounts). */
+  account_code: string | null;
+  account_name: string | null;
   created_at: string;
 }
 
@@ -36,18 +39,10 @@ export function useExpenseCategories() {
   });
 }
 
-export function useCreateExpenseCategory() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (payload: { name: string; description?: string }) => {
-      const { data } = await api.post("/expenses/categories/", payload);
-      return data;
-    },
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ["expense-categories"] });
-    },
-  });
-}
+// NOTE: expense categories are COA-locked and seeded by `manage.py seed_coa`.
+// They are deliberately not creatable from the app — an ad-hoc category could
+// carry no GL code, and expenses booked under it were silently dropped by the
+// ledger. The API returns 405 for writes.
 
 export function useExpenses(
   month?: number,

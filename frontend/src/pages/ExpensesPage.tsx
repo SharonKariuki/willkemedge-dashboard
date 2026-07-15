@@ -1,5 +1,5 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { PlusCircle, Tag, Trash2 } from "lucide-react";
+import { PlusCircle, Trash2 } from "lucide-react";
 
 import { cloneElement, isValidElement, useId, useState } from "react";
 import { useForm } from "react-hook-form";
@@ -12,7 +12,7 @@ import {
 } from "@/components/ui";
 import { useBuildings } from "@/hooks/useBuildings";
 import {
-  useCreateExpense, useCreateExpenseCategory,
+  useCreateExpense,
   useDeleteExpense, useExpenseCategories, useExpenses,
 } from "@/hooks/useExpenses";
 import { getErrorMessage } from "@/lib/apiError";
@@ -34,17 +34,11 @@ const expenseSchema = z.object({
 });
 type ExpenseFormData = z.infer<typeof expenseSchema>;
 
-const categorySchema = z.object({
-  name: z.string().min(1, "Category name is required"),
-  description: z.string().optional(),
-});
-type CategoryFormData = z.infer<typeof categorySchema>;
-
 const inputCls =
   "w-full rounded-md bg-surface-raised hairline px-3 py-2.5 text-sm text-ink-900 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-sage-500/40";
 
-function Field({ label, error, children, className }: {
-  label: string; error?: string; children: React.ReactNode; className?: string;
+function Field({ label, error, children, className, hint }: {
+  label: string; error?: string; children: React.ReactNode; className?: string; hint?: string;
 }) {
   const id = useId();
   const control = isValidElement(children)
@@ -58,7 +52,11 @@ function Field({ label, error, children, className }: {
         {label}
       </label>
       {control}
-      {error && <p className="mt-1 text-[11px] text-status-unpaid">{error}</p>}
+      {error ? (
+        <p className="mt-1 text-[11px] text-status-unpaid">{error}</p>
+      ) : hint ? (
+        <p className="mt-1 text-[11px] text-ink-400">{hint}</p>
+      ) : null}
     </div>
   );
 }
@@ -77,7 +75,6 @@ export default function ExpensesPage() {
   const [filterYear, setFilterYear] = useState(now.getFullYear());
   const [filterBuilding, setFilterBuilding] = useState<"" | "none" | string>("");
   const [showForm, setShowForm] = useState(false);
-  const [showCategoryForm, setShowCategoryForm] = useState(false);
 
   const buildingParam: number | "none" | null =
     filterBuilding === "" ? null : filterBuilding === "none" ? "none" : Number(filterBuilding);
@@ -87,7 +84,6 @@ export default function ExpensesPage() {
   const { data: buildings } = useBuildings();
   const createExpense = useCreateExpense();
   const deleteExpense = useDeleteExpense();
-  const createCategory = useCreateExpenseCategory();
 
   const form = useForm<ExpenseFormData>({
     resolver: zodResolver(expenseSchema),
@@ -98,7 +94,6 @@ export default function ExpensesPage() {
     },
   });
 
-  const catForm = useForm<CategoryFormData>({ resolver: zodResolver(categorySchema) });
 
   const onSubmitExpense = (values: ExpenseFormData) => {
     const { building, ...rest } = values;
@@ -124,20 +119,6 @@ export default function ExpensesPage() {
     );
   };
 
-  const onSubmitCategory = (values: CategoryFormData) => {
-    createCategory.mutate(
-      { name: values.name, description: values.description ?? "" },
-      {
-        onSuccess: () => {
-          toast.success(`Category "${values.name}" saved`);
-          catForm.reset();
-          setShowCategoryForm(false);
-        },
-        onError: (e) => toast.error(getErrorMessage(e, "Failed to save category. It may already exist.")),
-      },
-    );
-  };
-
   const total = expenses?.reduce((sum, e) => sum + parseFloat(e.amount), 0) ?? 0;
 
   return (
@@ -148,16 +129,10 @@ export default function ExpensesPage() {
         description="Record operating costs and access your full accounting suite."
         actions={
           mainTab === "expenses" ? (
-            <>
-              <Button variant="glass" onClick={() => setShowCategoryForm((v) => !v)}>
-                <Tag className="h-4 w-4" />
-                {showCategoryForm ? "Cancel" : "Add Category"}
-              </Button>
-              <Button onClick={() => setShowForm((v) => !v)}>
-                <PlusCircle className="h-4 w-4" />
-                {showForm ? "Cancel" : "Record Expense"}
-              </Button>
-            </>
+            <Button onClick={() => setShowForm((v) => !v)}>
+              <PlusCircle className="h-4 w-4" />
+              {showForm ? "Cancel" : "Record Expense"}
+            </Button>
           ) : null
         }
       />
@@ -236,37 +211,6 @@ export default function ExpensesPage() {
         </div>
       </Card>
 
-      {/* Category form */}
-      {showCategoryForm && (
-        <Card variant="glass" padding="md" className="animate-fade-up">
-          <p className="mb-4 font-display text-lg font-semibold text-ink-900">New expense category</p>
-          <form onSubmit={catForm.handleSubmit(onSubmitCategory)} className="flex flex-wrap gap-3">
-            <div className="min-w-[200px] flex-1">
-              <input
-                {...catForm.register("name")}
-                placeholder="Category name (e.g. Repairs, Utilities…)"
-                className={inputCls}
-              />
-              {catForm.formState.errors.name && (
-                <p className="mt-1 text-[11px] text-status-unpaid">
-                  {catForm.formState.errors.name.message}
-                </p>
-              )}
-            </div>
-            <div className="min-w-[200px] flex-1">
-              <input
-                {...catForm.register("description")}
-                placeholder="Short description (optional)"
-                className={inputCls}
-              />
-            </div>
-            <Button type="submit" loading={createCategory.isPending} variant="primary">
-              Save category
-            </Button>
-          </form>
-        </Card>
-      )}
-
       {/* Expense form */}
       {showForm && (
         <Card variant="glass" padding="md" className="animate-fade-up">
@@ -286,11 +230,17 @@ export default function ExpensesPage() {
                 ))}
               </select>
             </Field>
-            <Field label="Category *" error={form.formState.errors.category?.message}>
+            <Field
+              label="Category *"
+              error={form.formState.errors.category?.message}
+              hint="Each category posts to a fixed GL code from the Chart of Accounts."
+            >
               <select {...form.register("category")} disabled={!categories || categories.length === 0} className={inputCls}>
                 <option value="">Select category…</option>
                 {categories?.map((c) => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
+                  <option key={c.id} value={c.id}>
+                    {c.account_code ? `${c.account_code} · ${c.name}` : c.name}
+                  </option>
                 ))}
               </select>
               {categories && categories.length === 0 && (

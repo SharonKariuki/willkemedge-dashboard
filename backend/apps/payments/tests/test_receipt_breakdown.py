@@ -130,7 +130,8 @@ class TestReceiptChannels:
         st = build_statement(tenant, statement_date=AS_OF, as_of=AS_OF)
         html = payment_statement_email_html(tenant.full_name, Decimal("5000"), "REF1", st)
         assert "Receipt Breakdown" in html
-        assert "Security Deposit (held)" in html
+        assert "Security Deposit" in html
         assert "Arrears Brought Forward" in html
         assert "Other Charges" in html
+        assert "Rent + Arrears" in html
         assert "Unpaid Balance" in html
