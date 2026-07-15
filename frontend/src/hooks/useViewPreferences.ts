@@ -14,6 +14,7 @@ const DEFAULTS: ViewPreferences = {
   payments: true,
   reconciliation: true,
   expenses: true,
+  income: true,
   accounting: true,
   notifications: true,
   reports: true,
