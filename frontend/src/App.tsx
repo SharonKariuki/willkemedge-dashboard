@@ -6,6 +6,7 @@ import AccountingPage from "@/pages/AccountingPage";
 import BuildingsPage from "@/pages/BuildingsPage";
 import DashboardPage from "@/pages/DashboardPage";
 import ExpensesPage from "@/pages/ExpensesPage";
+import ManualIncomePage from "@/pages/ManualIncomePage";
 import LoginPage from "@/pages/LoginPage";
 import NotFoundPage from "@/pages/NotFoundPage";
 import NotificationsPage from "@/pages/NotificationsPage";
@@ -40,6 +41,7 @@ export default function App() {
         <Route path="/payments" element={<PaymentsPage />} />
         <Route path="/reconciliation" element={<ReconciliationPage />} />
         <Route path="/expenses" element={<ExpensesPage />} />
+        <Route path="/income" element={<ManualIncomePage />} />
         <Route path="/accounting" element={<AccountingPage />} />
         <Route path="/notifications" element={<NotificationsPage />} />
         <Route path="/reports" element={<ReportsPage />} />

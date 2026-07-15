@@ -130,3 +130,48 @@ class Expense(models.Model):
 
     def __str__(self) -> str:
         return f"{self.category.name} — KES {self.amount} ({self.period_month}/{self.period_year})"
+
+
+class ManualIncome(models.Model):
+    """Non-tenant income recorded by hand — e.g. farm produce sales.
+
+    Rent flows through Payment (which requires a tenant + unit). Income from
+    farms (FSE/FMM/FNN) has no tenant, so it is recorded here and posts to the
+    ledger against a chosen INCOME account. Expense-only properties (Baobab
+    Karen / KRN) may NOT record income — enforced in the serializer.
+    """
+
+    date = models.DateField(help_text="Date the income was received.")
+    building = models.ForeignKey(
+        "buildings.Building",
+        on_delete=models.PROTECT,
+        related_name="manual_income",
+        help_text="Property this income belongs to (a farm).",
+    )
+    account = models.ForeignKey(
+        Account,
+        on_delete=models.PROTECT,
+        related_name="manual_income",
+        limit_choices_to={"account_type": AccountType.INCOME, "is_header": False},
+        help_text="GL income account this posts to (4xxx).",
+    )
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    description = models.CharField(max_length=500)
+    reference = models.CharField(max_length=100, blank=True)
+    period_month = models.PositiveSmallIntegerField()
+    period_year = models.PositiveIntegerField()
+    notes = models.TextField(blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "expenses_manual_income"
+        ordering = ["-date", "-created_at"]
+        indexes = [
+            models.Index(fields=["period_year", "period_month"]),
+            models.Index(fields=["building"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.description} — KES {self.amount} ({self.period_month}/{self.period_year})"

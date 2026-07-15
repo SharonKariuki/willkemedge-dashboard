@@ -38,11 +38,17 @@ export interface Unit {
   updated_at: string;
 }
 
+export type PropertyType = "rental" | "farm" | "expense_only";
+
 export interface Building {
   id: number;
   name: string;
   address: string;
   total_floors: number;
+  property_type?: PropertyType;
+  property_type_display?: string;
+  /** False for expenses-only properties (e.g. Baobab Karen) — no income entry. */
+  allows_income?: boolean;
   notes: string;
   unit_count: number;
   occupied_count: number;

@@ -18,6 +18,20 @@ class UnitStatus(models.TextChoices):
     UNDER_MAINTENANCE = "under_maintenance", "Under Maintenance"
 
 
+class PropertyType(models.TextChoices):
+    """What kind of property this is — drives how income/expenses are handled.
+
+    RENTAL      : normal rental buildings (rent via tenants + payments).
+    FARM        : farms (FSE/FMM/FNN) — manual income + expenses, no tenants.
+    EXPENSE_ONLY: e.g. Baobab Karen (KRN) family home — expenses only, income
+                  entry is disabled.
+    """
+
+    RENTAL = "rental", "Rental Property"
+    FARM = "farm", "Farm (manual income + expenses)"
+    EXPENSE_ONLY = "expense_only", "Expenses Only (no income)"
+
+
 class UnitClassification(models.TextChoices):
     RESIDENTIAL = "RESIDENTIAL", "Residential"
     BUSINESS = "BUSINESS", "Business / Commercial"
@@ -34,7 +48,18 @@ class Building(models.Model):
     )
     address = models.TextField(blank=True)
     total_floors = models.PositiveSmallIntegerField(default=1)
+    property_type = models.CharField(
+        max_length=16,
+        choices=PropertyType.choices,
+        default=PropertyType.RENTAL,
+        help_text="Rental (tenant rent), Farm (manual income + expenses), or Expenses-only (e.g. Baobab Karen).",
+    )
     notes = models.TextField(blank=True)
+
+    @property
+    def allows_income(self) -> bool:
+        """Expense-only properties (e.g. Baobab Karen) cannot record income."""
+        return self.property_type != PropertyType.EXPENSE_ONLY
 
     # --- Statement / receipt header & payment options -----------------------
     # These appear verbatim on the rent statement PDF a tenant receives after

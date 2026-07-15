@@ -40,11 +40,15 @@ class UnitSerializer(serializers.ModelSerializer):
 class BuildingSerializer(serializers.ModelSerializer):
     unit_count = serializers.IntegerField(read_only=True)
     occupied_count = serializers.IntegerField(read_only=True)
+    allows_income = serializers.BooleanField(read_only=True)
+    property_type_display = serializers.CharField(source="get_property_type_display", read_only=True)
 
     class Meta:
         model = Building
         fields = [
             "id", "name", "code", "address", "total_floors", "notes",
+            "property_type", "property_type_display", "allows_income",
+            "water_rate_per_unit",
             "legal_name", "postal_address", "contact_phone", "contact_email",
             "paybill_number", "paybill_account_format",
             "bank_name", "bank_branch", "bank_account", "bank_account_name",

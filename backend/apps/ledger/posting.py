@@ -412,6 +412,48 @@ def post_arrear(arrear) -> JournalEntry:
     )
 
 
+def post_manual_income(income) -> JournalEntry:
+    """
+    Post non-tenant income (e.g. farm produce) received into the bank.
+
+    DR 1020 Operating Bank / CR <chosen income account>
+    """
+    amt = income.amount
+    lines = [
+        ("1020", amt, Decimal("0"), f"Income received — {income.description}"),
+        (income.account.code, Decimal("0"), amt, income.account.name),
+    ]
+    return _build_entry(
+        date=income.date,
+        memo=f"Manual income: {income.description} ({income.period_month}/{income.period_year})",
+        reference=income.reference,
+        building=income.building,
+        source_type="manual_income",
+        source_id=income.pk,
+        kind="normal",
+        lines=lines,
+    )
+
+
+def reverse_manual_income(income) -> JournalEntry:
+    """Reversal (mirror-image) for a deleted ManualIncome record."""
+    amt = income.amount
+    lines = [
+        ("1020", Decimal("0"), amt, f"REVERSAL — income — {income.description}"),
+        (income.account.code, amt, Decimal("0"), f"REVERSAL — {income.account.name}"),
+    ]
+    return _build_entry(
+        date=income.date,
+        memo=f"REVERSAL: manual income {income.description}",
+        reference=income.reference,
+        building=income.building,
+        source_type="manual_income",
+        source_id=income.pk,
+        kind="reversal",
+        lines=lines,
+    )
+
+
 def post_utility_charge(charge) -> JournalEntry:
     """
     Post a water/utility charge billed to a tenant.
