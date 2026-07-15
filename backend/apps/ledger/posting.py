@@ -35,11 +35,11 @@ from django.db import transaction
 from django.utils.dateparse import parse_date
 
 from apps.buildings.models import UnitClassification
-from apps.expenses.coa import RENT_RECEIVABLE, SERVICE_CHARGE_UTILITIES
 from apps.expenses.coa import (
     RENT_COMMERCIAL,
     RENT_RECEIVABLE,
     RENT_RESIDENTIAL,
+    SERVICE_CHARGE_UTILITIES,
     VAT_PAYABLE,
 )
 from apps.expenses.models import Account
