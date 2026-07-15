@@ -18,6 +18,7 @@ import ReportsPage from "@/pages/ReportsPage";
 import SettingsPage from "@/pages/SettingsPage";
 import TenantsPage from "@/pages/TenantsPage";
 import UnitsPage from "@/pages/UnitsPage";
+import WaterReadingsPage from "@/pages/WaterReadingsPage";
 
 export default function App() {
   return (
@@ -42,6 +43,7 @@ export default function App() {
         <Route path="/reconciliation" element={<ReconciliationPage />} />
         <Route path="/expenses" element={<ExpensesPage />} />
         <Route path="/income" element={<ManualIncomePage />} />
+        <Route path="/water" element={<WaterReadingsPage />} />
         <Route path="/accounting" element={<AccountingPage />} />
         <Route path="/notifications" element={<NotificationsPage />} />
         <Route path="/reports" element={<ReportsPage />} />
