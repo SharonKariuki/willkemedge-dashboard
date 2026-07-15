@@ -578,13 +578,16 @@ export default function TenantsPage() {
   const [statusFilter, setStatusFilter] = useState("");
   const [kycFilter, setKycFilter] = useState("");
   const [buildingFilter, setBuildingFilter] = useState<number | "">("");
-  const [payFilter, setPayFilter] = useState("");
+  // Seed the paid/arrears filter from the URL so the dashboard's Arrears tile
+  // drills straight into the in-arrears list.
+  const [payFilter, setPayFilter] = useState(searchParams.get("payment_status") ?? "");
   const [search, setSearch] = useState(searchParams.get("q") ?? "");
-  const [showForm, setShowForm] = useState(false);
+  const [showForm, setShowForm] = useState(searchParams.get("new") === "1");
   const [selectedTenantId, setSelectedTenantId] = useState<number | null>(null);
   const [exporting, setExporting] = useState(false);
 
   useEffect(() => { setSearch(searchParams.get("q") ?? ""); }, [searchParams]);
+  useEffect(() => { setPayFilter(searchParams.get("payment_status") ?? ""); }, [searchParams]);
 
   const filters: Record<string, string | number> = {};
   if (statusFilter) filters.status = statusFilter;

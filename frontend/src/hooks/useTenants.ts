@@ -21,6 +21,32 @@ export function useTenants(filters?: TenantFilters) {
   });
 }
 
+export interface TenantPaymentHistory {
+  total_paid: string;
+  total_arrears: string;
+  payments: {
+    id: number;
+    amount: string;
+    payment_date: string;
+    period_month: number;
+    period_year: number;
+    source: string;
+    reference: string;
+  }[];
+  arrears: { period: string; expected: string; paid: string; balance: string }[];
+}
+
+export function usePaymentHistory(id: number | string | null) {
+  return useQuery<TenantPaymentHistory>({
+    queryKey: ["tenants", id, "payment-history"],
+    queryFn: async () => {
+      const { data } = await api.get(`/tenants/${id}/payment-history/`);
+      return data;
+    },
+    enabled: !!id,
+  });
+}
+
 export function useTenant(id: number | string | null) {
   return useQuery<TenantDetail>({
     queryKey: ["tenants", id],

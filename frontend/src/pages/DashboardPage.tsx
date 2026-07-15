@@ -4,6 +4,7 @@ import {
   ArrowUpRight,
   Building2,
   CreditCard,
+  UserPlus,
   TrendingDown,
   TrendingUp,
   Wallet,
@@ -139,6 +140,12 @@ export default function DashboardPage() {
     <div className="space-y-10 lg:space-y-12">
       {/* ── Masthead with actions ─────────────────────────────────────────── */}
       <Masthead dateLine={dateLine} greeting={greeting}>
+        <Link to="/tenants?new=1">
+          <Button variant="outline" size="md">
+            <UserPlus className="h-4 w-4" />
+            Add tenant
+          </Button>
+        </Link>
         <Link to="/payments">
           <Button variant="outline" size="md">
             <CreditCard className="h-4 w-4" />
@@ -170,6 +177,7 @@ export default function DashboardPage() {
             value={KES(kpis.total_arrears)}
             caption={kpis.total_arrears > 0 ? undefined : "All settled"}
             compact
+            to="/tenants?payment_status=in_arrears"
           />
         </div>
         <Kpi
@@ -178,6 +186,7 @@ export default function DashboardPage() {
           label="Total units"
           value={kpis.total_units.toLocaleString()}
           caption={`${kpis.occupied} occupied · ${kpis.vacant} vacant`}
+          to="/units"
         />
         <Kpi
           icon={TrendingUp}
@@ -185,6 +194,7 @@ export default function DashboardPage() {
           label="Occupancy"
           value={`${occupancyPct}%`}
           progress={occupancyPct}
+          to="/buildings"
         />
       </section>
 
@@ -412,7 +422,7 @@ export default function DashboardPage() {
               return (
                 <Link
                   key={b.id}
-                  to="/buildings"
+                  to={b.id ? `/buildings/${b.id}` : "/buildings"}
                   className="group relative block overflow-hidden rounded-2xl bg-surface shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md dark:border dark:border-border"
                 >
                   <div className="relative h-44 w-full overflow-hidden">
@@ -520,7 +530,10 @@ interface CollectedHeroProps {
 
 function CollectedHero({ month, pct, received, expected }: CollectedHeroProps) {
   return (
-    <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-navy-600 via-navy-800 to-navy-900 p-4 text-white shadow-lg">
+    <Link
+      to="/payments"
+      aria-label={`Collected ${KES(received)} of ${KES(expected)} in ${month}`}
+      className="relative block overflow-hidden rounded-2xl bg-gradient-to-br from-navy-600 via-navy-800 to-navy-900 p-4 text-white shadow-lg transition-all hover:-translate-y-0.5 hover:shadow-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-400/50">
       {/* Soft teal glow — spatial depth */}
       <div
         aria-hidden
@@ -543,7 +556,7 @@ function CollectedHero({ month, pct, received, expected }: CollectedHeroProps) {
         </span>
       </div>
       <p className="relative mt-1.5 text-xs text-white/55">of {KES(expected)} expected</p>
-    </div>
+    </Link>
   );
 }
 
@@ -565,12 +578,17 @@ interface KpiProps {
   progress?: number;
   tone?: KpiTone;
   compact?: boolean;
+  /** When set, the tile becomes a link that drills down to the relevant list. */
+  to?: string;
 }
 
-function Kpi({ icon: Icon, label, value, caption, progress, tone = "neutral", compact }: KpiProps) {
+function Kpi({ icon: Icon, label, value, caption, progress, tone = "neutral", compact, to }: KpiProps) {
   const alert = tone === "alert";
-  return (
-    <Card padding="none" className={compact ? "p-4" : "p-5"}>
+  const interactive = to
+    ? "transition-all hover:-translate-y-0.5 hover:shadow-float focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/40"
+    : "";
+  const body = (
+    <Card padding="none" className={cn(compact ? "p-4" : "p-5", interactive)}>
       <div className="flex items-start justify-between gap-3">
         <p className="text-xs font-medium uppercase tracking-wider text-content-muted">
           {label}
@@ -615,6 +633,15 @@ function Kpi({ icon: Icon, label, value, caption, progress, tone = "neutral", co
       )}
     </Card>
   );
+
+  if (to) {
+    return (
+      <Link to={to} aria-label={`${label}: ${value}`} className="block">
+        {body}
+      </Link>
+    );
+  }
+  return body;
 }
 
 function AlertSeverityDot({ type }: { type: string }) {

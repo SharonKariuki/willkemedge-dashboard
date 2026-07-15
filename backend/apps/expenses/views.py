@@ -2,8 +2,13 @@
 from rest_framework import viewsets
 from rest_framework.permissions import IsAuthenticated
 
-from .models import Account, Expense, ExpenseCategory
-from .serializers import AccountSerializer, ExpenseCategorySerializer, ExpenseSerializer
+from .models import Account, Expense, ExpenseCategory, ManualIncome
+from .serializers import (
+    AccountSerializer,
+    ExpenseCategorySerializer,
+    ExpenseSerializer,
+    ManualIncomeSerializer,
+)
 
 
 class AccountViewSet(viewsets.ReadOnlyModelViewSet):
@@ -62,4 +67,26 @@ class ExpenseViewSet(viewsets.ModelViewSet):
         elif building:
             qs = qs.filter(building_id=building)
 
+        return qs
+
+
+class ManualIncomeViewSet(viewsets.ModelViewSet):
+    """Non-tenant income (e.g. farm produce). Posts to the ledger on create.
+
+    Income is rejected for expense-only properties (Baobab Karen / KRN) in the
+    serializer, so the 'expenses only' rule is enforced server-side.
+    """
+
+    serializer_class = ManualIncomeSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        qs = ManualIncome.objects.select_related("building", "account")
+        month = self.request.query_params.get("month")
+        year = self.request.query_params.get("year")
+        if month and year:
+            qs = qs.filter(period_month=month, period_year=year)
+        building = self.request.query_params.get("building")
+        if building:
+            qs = qs.filter(building_id=building)
         return qs

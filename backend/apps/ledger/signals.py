@@ -80,6 +80,32 @@ def on_expense_deleted(sender, instance, **kwargs):
     _reverse_expense_handler(instance)
 
 
+# ── Manual income signals ────────────────────────────────────────────────────
+
+@receiver(post_save, sender="expenses.ManualIncome")
+def on_manual_income_saved(sender, instance, created, **kwargs):
+    """Post a journal entry when non-tenant income (e.g. farm produce) is recorded."""
+    if not created:
+        return
+    from .posting import post_manual_income
+
+    try:
+        post_manual_income(instance)
+    except Exception as exc:
+        logger.error("ledger: post_manual_income failed for ManualIncome#%s: %s", instance.pk, exc)
+
+
+@receiver(post_delete, sender="expenses.ManualIncome")
+def on_manual_income_deleted(sender, instance, **kwargs):
+    """Create a reversal entry when a ManualIncome record is deleted."""
+    from .posting import reverse_manual_income
+
+    try:
+        reverse_manual_income(instance)
+    except Exception as exc:
+        logger.error("ledger: reverse_manual_income failed for ManualIncome#%s: %s", instance.pk, exc)
+
+
 # ── Utility charge signals ───────────────────────────────────────────────────
 
 @receiver(post_save, sender="payments.UtilityCharge")

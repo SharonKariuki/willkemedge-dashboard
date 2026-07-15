@@ -1,7 +1,7 @@
 """Expense serializers."""
 from rest_framework import serializers
 
-from .models import Account, Expense, ExpenseCategory
+from .models import Account, Expense, ExpenseCategory, ManualIncome
 
 
 class AccountSerializer(serializers.ModelSerializer):
@@ -77,3 +77,34 @@ class ExpenseSerializer(serializers.ModelSerializer):
                 f"Run `manage.py seed_coa` to bind it to a Chart of Accounts code."
             )
         return category
+
+
+class ManualIncomeSerializer(serializers.ModelSerializer):
+    building_name = serializers.CharField(source="building.name", read_only=True)
+    account_code = serializers.CharField(source="account.code", read_only=True)
+    account_name = serializers.CharField(source="account.name", read_only=True)
+
+    class Meta:
+        model = ManualIncome
+        fields = [
+            "id", "date", "building", "building_name",
+            "account", "account_code", "account_name",
+            "amount", "description", "reference",
+            "period_month", "period_year", "notes",
+            "created_at", "updated_at",
+        ]
+        read_only_fields = ["id", "building_name", "account_code", "account_name",
+                            "created_at", "updated_at"]
+
+    def validate_amount(self, value):
+        if value <= 0:
+            raise serializers.ValidationError("Amount must be positive.")
+        return value
+
+    def validate_building(self, building):
+        # Baobab Karen (KRN) and any expense-only property may not record income.
+        if not building.allows_income:
+            raise serializers.ValidationError(
+                f"{building.name} is an expenses-only property — income cannot be recorded here."
+            )
+        return building
