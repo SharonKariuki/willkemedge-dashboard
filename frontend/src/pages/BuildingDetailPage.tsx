@@ -36,8 +36,15 @@ export default function BuildingDetailPage() {
     );
   }
 
-  // Map each unit label to its active tenant (if any) for the drill-down link.
-  const tenantByUnit = new Map((tenants ?? []).map((t) => [t.unit_label, t]));
+  // Map each unit label to its CURRENT occupant. The tenants endpoint returns
+  // moved-out/archived tenants too, and a unit label is reused across tenancies,
+  // so exclude non-current tenants — otherwise a moved-out record can overwrite
+  // the active one (or make a vacated unit look occupied).
+  const tenantByUnit = new Map(
+    (tenants ?? [])
+      .filter((t) => t.status === "active" || t.status === "notice_given")
+      .map((t) => [t.unit_label, t]),
+  );
   const units = building.units ?? [];
   const occupied = units.filter((u) => tenantByUnit.has(u.label)).length;
 

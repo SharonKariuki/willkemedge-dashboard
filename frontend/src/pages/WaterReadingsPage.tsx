@@ -57,14 +57,17 @@ export default function WaterReadingsPage() {
     }
   }, [prev, form]);
 
+  // Watch the opening field so the preview updates when a unit with no prior
+  // reading has its opening typed in manually (not just on closing/prev change).
+  const opening = form.watch("opening_reading");
   const preview = useMemo(() => {
-    const open = Number(form.getValues("opening_reading"));
+    const open = Number(opening);
     const close = Number(closing);
     const rate = Number(prev?.water_rate_per_unit ?? 0);
     if (!close || Number.isNaN(open) || close < open) return null;
     const units = close - open;
     return { units, amount: units * rate, rate };
-  }, [closing, prev, form]);
+  }, [closing, opening, prev]);
 
   const onSubmit = (values: FormData) => {
     capture.mutate(
