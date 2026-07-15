@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import AuthLayout from "@/components/AuthLayout";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import AccountingPage from "@/pages/AccountingPage";
+import BuildingDetailPage from "@/pages/BuildingDetailPage";
 import BuildingsPage from "@/pages/BuildingsPage";
 import DashboardPage from "@/pages/DashboardPage";
 import ExpensesPage from "@/pages/ExpensesPage";
@@ -16,6 +17,7 @@ import PaymentsPage from "@/pages/PaymentsPage";
 import ReconciliationPage from "@/pages/ReconciliationPage";
 import ReportsPage from "@/pages/ReportsPage";
 import SettingsPage from "@/pages/SettingsPage";
+import TenantDetailPage from "@/pages/TenantDetailPage";
 import TenantsPage from "@/pages/TenantsPage";
 import UnitsPage from "@/pages/UnitsPage";
 import WaterReadingsPage from "@/pages/WaterReadingsPage";
@@ -37,8 +39,10 @@ export default function App() {
       >
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/buildings" element={<BuildingsPage />} />
+        <Route path="/buildings/:id" element={<BuildingDetailPage />} />
         <Route path="/units" element={<UnitsPage />} />
         <Route path="/tenants" element={<TenantsPage />} />
+        <Route path="/tenants/:id" element={<TenantDetailPage />} />
         <Route path="/payments" element={<PaymentsPage />} />
         <Route path="/reconciliation" element={<ReconciliationPage />} />
         <Route path="/expenses" element={<ExpensesPage />} />

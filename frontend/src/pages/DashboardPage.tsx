@@ -422,7 +422,7 @@ export default function DashboardPage() {
               return (
                 <Link
                   key={b.id}
-                  to="/buildings"
+                  to={b.id ? `/buildings/${b.id}` : "/buildings"}
                   className="group relative block overflow-hidden rounded-2xl bg-surface shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md dark:border dark:border-border"
                 >
                   <div className="relative h-44 w-full overflow-hidden">

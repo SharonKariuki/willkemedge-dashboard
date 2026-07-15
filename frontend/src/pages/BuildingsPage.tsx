@@ -1,6 +1,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
   AlertTriangle,
+  ArrowUpRight,
   Building2,
   Check,
   ChevronDown,
@@ -14,7 +15,7 @@ import {
 import { cloneElement, isValidElement, useEffect, useId, useState } from "react";
 import { useFieldArray, useForm } from "react-hook-form";
 import toast from "react-hot-toast";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { z } from "zod";
 
 import StatusBadge from "@/components/StatusBadge";
@@ -984,6 +985,14 @@ function BuildingCard({ building }: { building: Building & { units?: Unit[] } })
               onDeleted={() => setMode("view")}
             />
           )}
+
+          <Link
+            to={`/buildings/${building.id}`}
+            className="mt-4 flex items-center justify-center gap-1 rounded-md bg-gray-900 py-2 text-xs font-medium text-white transition-colors hover:bg-gray-800"
+          >
+            View property
+            <ArrowUpRight className="h-3.5 w-3.5" />
+          </Link>
         </div>
 
         {total > 0 && (
