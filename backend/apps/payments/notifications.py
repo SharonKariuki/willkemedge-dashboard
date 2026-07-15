@@ -138,6 +138,7 @@ def payment_sms_message(
             f"Arrears B/F {statement['arrears_bf']}, "
             f"Month Rent {statement['month_rent']}, "
             f"Other Charges {statement['other_charges']}, "
+            f"Rent + Arrears {statement['rent_plus_arrears']}, "
             f"Unpaid Balance {statement['unpaid_balance']}."
         )
     return msg + " Thank you - Wilkem Edge."
@@ -148,6 +149,16 @@ def _row(label: str, value: str, *, bold: bool = False) -> str:
     return (
         f'<tr><td style="padding:5px 8px;border:1px solid #c9c9c9;{weight}">{label}</td>'
         f'<td style="padding:5px 8px;border:1px solid #c9c9c9;text-align:right;{weight}">{value}</td></tr>'
+    )
+
+
+def _coded_row(label: str, value: str, coa_code: str, *, bold: bool = False) -> str:
+    """Statement summary row carrying the GL code it reconciles to."""
+    weight = "font-weight:bold;" if bold else ""
+    return (
+        f'<tr><td style="padding:5px 8px;border:1px solid #c9c9c9;{weight}">{_e(label)}</td>'
+        f'<td style="padding:5px 8px;border:1px solid #c9c9c9;text-align:center;color:#555;font-size:9px;{weight}">{_e(coa_code)}</td>'
+        f'<td style="padding:5px 8px;border:1px solid #c9c9c9;text-align:right;{weight}">{_e(value)}</td></tr>'
     )
 
 
@@ -185,13 +196,10 @@ def payment_statement_email_html(tenant_name: str, amount, reference: str, state
         summary_rows.append(_row("16% VAT on Rent", statement["vat_on_rent"]))
     summary_rows.append(_row("Total KES Due:", statement["total_due"], bold=True))
 
-    # ── Receipt breakdown (Feature 7) — the five named totals ──
+    # ── Receipt breakdown — each line itemised with its COA code ──
     breakdown_rows = [
-        _row("Security Deposit (held)", statement["security_deposit"]),
-        _row("Arrears Brought Forward", statement["arrears_bf"]),
-        _row("Month Rent", statement["month_rent"]),
-        _row("Other Charges", statement["other_charges"]),
-        _row("Unpaid Balance", statement["unpaid_balance"], bold=True),
+        _coded_row(label, amount, code, bold=(label == "Unpaid Balance"))
+        for label, amount, code, _name in statement.get("breakdown_lines", [])
     ]
 
     # ── Payment options ──
@@ -285,10 +293,17 @@ def payment_statement_email_html(tenant_name: str, amount, reference: str, state
     </tr>
   </table>
 
-  <!-- receipt breakdown (5 named totals) -->
+  <!-- receipt breakdown — itemised with COA codes -->
   <div style="margin-top:10px">
     <div style="font-weight:bold;margin-bottom:4px">Receipt Breakdown</div>
-    <table style="border-collapse:collapse;width:100%">{"".join(breakdown_rows)}</table>
+    <table style="border-collapse:collapse;width:100%">
+      <tr>
+        <th style="padding:4px 8px;border:1px solid #c9c9c9;background:#f3d9c8;text-align:left;font-size:9px">Item</th>
+        <th style="padding:4px 8px;border:1px solid #c9c9c9;background:#f3d9c8;text-align:center;font-size:9px">COA</th>
+        <th style="padding:4px 8px;border:1px solid #c9c9c9;background:#f3d9c8;text-align:right;font-size:9px">KES</th>
+      </tr>
+      {"".join(breakdown_rows)}
+    </table>
   </div>
 
   <!-- note -->

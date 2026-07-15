@@ -29,6 +29,13 @@ from decimal import Decimal
 from django.db.models import Q, Sum
 
 from apps.buildings.models import UnitClassification
+from apps.expenses.coa import (
+    DEPOSITS_HELD,
+    RENT_COMMERCIAL,
+    RENT_RECEIVABLE,
+    RENT_RESIDENTIAL,
+    SERVICE_CHARGE_UTILITIES,
+)
 
 from .tax_service import calculate_tax
 
@@ -217,6 +224,10 @@ def build_statement(tenant, *, statement_date: _dt.date | None = None, as_of: _d
         util_q = util_q.filter(posting_date__lte=as_of)
     other_charges = _money(util_q.aggregate(t=Sum("amount"))["t"])
 
+    #  Rent income code depends on the unit's tax classification.
+    rent_code = RENT_COMMERCIAL if is_business else RENT_RESIDENTIAL
+    rent_name = "Commercial Rental Income" if is_business else "Residential Rental Income"
+
     paybill_number = building.paybill_number or ""
     paybill_account = building.paybill_account_for(unit.label) if paybill_number else ""
 
@@ -250,12 +261,25 @@ def build_statement(tenant, *, statement_date: _dt.date | None = None, as_of: _d
         "total_due_value": total_due,
         "due_day_ordinal": _ordinal(tenant.due_day),
 
-        # --- receipt breakdown (Feature 7): the five named totals ---
+        # --- receipt breakdown: the named totals ---
         "security_deposit": _fmt_money(security_deposit),
         "arrears_bf": _fmt_money(arrears_bf),
         "month_rent": _fmt_money(current_base),
         "other_charges": _fmt_money(other_charges),
+        "rent_plus_arrears": _fmt_money(current_base + arrears_bf),
         "unpaid_balance": _fmt_money(total_due),
+
+        # Each receipt line itemised with the GL code it posts to, so the
+        # statement reconciles directly against the Chart of Accounts.
+        # (label, amount, coa_code, coa_name)
+        "breakdown_lines": [
+            ("Security Deposit", _fmt_money(security_deposit), DEPOSITS_HELD, "Tenant Security Deposits Held"),
+            ("Arrears Brought Forward", _fmt_money(arrears_bf), RENT_RECEIVABLE, "Accounts Receivable (Rent Arrears)"),
+            ("Month Rent", _fmt_money(current_base), rent_code, rent_name),
+            ("Other Charges", _fmt_money(other_charges), SERVICE_CHARGE_UTILITIES, "Service Charge / Utilities"),
+            ("Rent + Arrears", _fmt_money(current_base + arrears_bf), RENT_RECEIVABLE, "Accounts Receivable (Rent Arrears)"),
+            ("Unpaid Balance", _fmt_money(total_due), RENT_RECEIVABLE, "Accounts Receivable (Rent Arrears)"),
+        ],
 
         # --- payment options ---
         "paybill_number": paybill_number,
