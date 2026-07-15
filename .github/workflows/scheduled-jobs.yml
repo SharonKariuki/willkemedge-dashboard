@@ -1,0 +1,71 @@
+name: Scheduled jobs
+
+# Drives the app's recurring tasks by calling the token-gated cron endpoints
+# (/api/payments/cron/<job>/). There is no Celery beat in production, so this
+# workflow IS the scheduler.
+#
+# Requires, in the repo's Settings → Secrets and variables → Actions:
+#   - secret   CRON_TRIGGER_TOKEN  (must equal CRON_TRIGGER_TOKEN in Render)
+#   - variable API_BASE_URL        (e.g. https://<your-api-domain>/api)
+#
+# NOTE: scheduled workflows only run from the repository's DEFAULT branch, so
+# this must be merged to that branch (main) to start firing. Times are UTC;
+# EAT = UTC+3.
+
+on:
+  schedule:
+    - cron: "0 5 * * *"    # rent-reminders        08:00 EAT
+    - cron: "0 6 * * *"    # arrears-reminders      09:00 EAT
+    - cron: "0 22 * * *"   # recalculate-statuses   01:00 EAT (next day)
+    - cron: "0 15 * * *"   # daily-reconciliation   18:00 EAT
+    - cron: "0 0 1 * *"    # monthly-arrears        1st, 03:00 EAT
+  workflow_dispatch:
+    inputs:
+      job:
+        description: "Job slug to run now"
+        required: true
+        type: choice
+        options:
+          - rent-reminders
+          - arrears-reminders
+          - recalculate-statuses
+          - daily-reconciliation
+          - monthly-arrears
+
+concurrency:
+  group: scheduled-jobs
+  cancel-in-progress: false
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve job slug
+        id: resolve
+        run: |
+          case "${{ github.event.schedule }}" in
+            "0 5 * * *")  slug="rent-reminders" ;;
+            "0 6 * * *")  slug="arrears-reminders" ;;
+            "0 22 * * *") slug="recalculate-statuses" ;;
+            "0 15 * * *") slug="daily-reconciliation" ;;
+            "0 0 1 * *")  slug="monthly-arrears" ;;
+            *)            slug="${{ github.event.inputs.job }}" ;;
+          esac
+          if [ -z "$slug" ]; then echo "Could not resolve a job slug"; exit 1; fi
+          echo "slug=$slug" >> "$GITHUB_OUTPUT"
+          echo "Running job: $slug"
+
+      - name: Call cron endpoint
+        env:
+          TOKEN: ${{ secrets.CRON_TRIGGER_TOKEN }}
+          API_BASE_URL: ${{ vars.API_BASE_URL }}
+          SLUG: ${{ steps.resolve.outputs.slug }}
+        run: |
+          if [ -z "$TOKEN" ]; then echo "::error::CRON_TRIGGER_TOKEN secret is not set"; exit 1; fi
+          if [ -z "$API_BASE_URL" ]; then echo "::error::API_BASE_URL variable is not set"; exit 1; fi
+          code=$(curl -sS -o response.txt -w "%{http_code}" --max-time 120 -X POST \
+            -H "Authorization: Bearer $TOKEN" \
+            "${API_BASE_URL%/}/payments/cron/${SLUG}/")
+          echo "job=$SLUG http_status=$code"
+          echo "--- response ---"; cat response.txt || true; echo
+          if [ "$code" != "200" ]; then echo "::error::job $SLUG returned HTTP $code"; exit 1; fi
