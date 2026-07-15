@@ -15,6 +15,7 @@ Assets (debit-normal):
 
 Liabilities (credit-normal):
   2100  Tenant Security Deposits Held
+  2600  VAT Payable — 16% on COMMERCIAL rent only (see _split_vat)
 
 Income (credit-normal):
   4110  Residential Rental Income
@@ -27,15 +28,22 @@ Expenses (debit-normal):
   5xxx / 6xxx  — from expense.category.account
 """
 import datetime
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils.dateparse import parse_date
 
 from apps.buildings.models import UnitClassification
+from apps.expenses.coa import (
+    RENT_COMMERCIAL,
+    RENT_RECEIVABLE,
+    RENT_RESIDENTIAL,
+    VAT_PAYABLE,
+)
 from apps.expenses.models import Account
 from apps.payments.models import PaymentType
+from apps.payments.tax_service import TAX_RATE_BUSINESS, calculate_tax
 
 from .models import JournalEntry, JournalLine
 
@@ -85,6 +93,11 @@ def _build_entry(
     Uses update_or_create on the unique constraint so calling twice is safe.
     """
     date = _as_date(date)
+    # Drop no-op lines (e.g. a zero VAT leg on a zero-rated commercial charge).
+    lines = [
+        ln for ln in lines
+        if Decimal(str(ln[1])) != Decimal("0") or Decimal(str(ln[2])) != Decimal("0")
+    ]
     total_debit = sum(Decimal(str(d)) for _, d, _, _ in lines)
     total_credit = sum(Decimal(str(c)) for _, _, c, _ in lines)
     if total_debit != total_credit:
@@ -128,16 +141,41 @@ def _build_entry(
     return entry
 
 
+def _classification_of(tenant) -> str:
+    try:
+        return tenant.unit.classification
+    except AttributeError:
+        return UnitClassification.RESIDENTIAL
+
+
 def _income_account_for_payment(payment) -> str:
     """Return 4110 or 4120 based on unit classification."""
-    try:
-        classification = payment.tenant.unit.classification
-    except AttributeError:
-        classification = UnitClassification.RESIDENTIAL
+    if _classification_of(payment.tenant) == UnitClassification.BUSINESS:
+        return RENT_COMMERCIAL
+    return RENT_RESIDENTIAL
 
-    if classification == UnitClassification.BUSINESS:
-        return "4120"
-    return "4110"
+
+def _split_vat_inclusive(gross: Decimal) -> tuple[Decimal, Decimal]:
+    """Extract 16% VAT from a VAT-INCLUSIVE amount (cash actually received).
+
+    A commercial tenant pays rent + 16% VAT as one figure, so a receipt of
+    KES 27,840 is KES 24,000 income and KES 3,840 VAT owed to KRA.
+    Returns (net, vat); net + vat == gross exactly (VAT absorbs the rounding).
+    """
+    net = (gross / (Decimal("1") + TAX_RATE_BUSINESS)).quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_UP
+    )
+    return net, gross - net
+
+
+def _split_vat_exclusive(net: Decimal) -> tuple[Decimal, Decimal]:
+    """Add 16% VAT to a VAT-EXCLUSIVE base amount (rent as billed).
+
+    Unit.monthly_rent / Arrears.expected_rent hold the BASE rent for commercial
+    units (see import_matasia), so billing adds VAT on top.
+    Returns (net, vat).
+    """
+    return net, calculate_tax(net, UnitClassification.BUSINESS).tax_amount if net > 0 else Decimal("0")
 
 
 # ── Payment posting ─────────────────────────────────────────────────────────
@@ -158,11 +196,20 @@ def post_payment(payment) -> JournalEntry:
 
     if ptype == PaymentType.RENT:
         income_code = _income_account_for_payment(payment)
-        income_name = "Residential Rental Income" if income_code == "4110" else "Commercial Rental Income"
-        lines = [
-            ("1020", amt, Decimal("0"), f"Rent collected — {payment.tenant}"),
-            (income_code, Decimal("0"), amt, income_name),
-        ]
+        if income_code == RENT_COMMERCIAL:
+            # Commercial rent is received VAT-inclusive: split the 16% out to
+            # 2600 VAT Payable so only the net is recognised as income.
+            net, vat = _split_vat_inclusive(amt)
+            lines = [
+                ("1020", amt, Decimal("0"), f"Rent collected — {payment.tenant}"),
+                (income_code, Decimal("0"), net, "Commercial Rental Income"),
+                (VAT_PAYABLE, Decimal("0"), vat, "16% VAT on commercial rent"),
+            ]
+        else:
+            lines = [
+                ("1020", amt, Decimal("0"), f"Rent collected — {payment.tenant}"),
+                (income_code, Decimal("0"), amt, "Residential Rental Income"),
+            ]
         memo = f"Rent collected: {payment.tenant} {payment.period_month}/{payment.period_year}"
 
     elif ptype == PaymentType.LATE_FEE:
@@ -212,10 +259,18 @@ def reverse_payment(payment) -> JournalEntry:
 
     if ptype == PaymentType.RENT:
         income_code = _income_account_for_payment(payment)
-        lines = [
-            ("1020", Decimal("0"), amt, f"REVERSAL — rent — {payment.tenant}"),
-            (income_code, amt, Decimal("0"), "REVERSAL — rental income"),
-        ]
+        if income_code == RENT_COMMERCIAL:
+            net, vat = _split_vat_inclusive(amt)
+            lines = [
+                ("1020", Decimal("0"), amt, f"REVERSAL — rent — {payment.tenant}"),
+                (income_code, net, Decimal("0"), "REVERSAL — commercial rental income"),
+                (VAT_PAYABLE, vat, Decimal("0"), "REVERSAL — 16% VAT on commercial rent"),
+            ]
+        else:
+            lines = [
+                ("1020", Decimal("0"), amt, f"REVERSAL — rent — {payment.tenant}"),
+                (income_code, amt, Decimal("0"), "REVERSAL — rental income"),
+            ]
     elif ptype == PaymentType.LATE_FEE:
         lines = [
             ("1020", Decimal("0"), amt, f"REVERSAL — late fee — {payment.tenant}"),
@@ -326,19 +381,24 @@ def post_arrear(arrear) -> JournalEntry:
 
     DR 1040 Accounts Receivable / CR 4110 or 4120
     """
-    try:
-        classification = arrear.tenant.unit.classification
-    except AttributeError:
-        classification = UnitClassification.RESIDENTIAL
-
-    income_code = "4120" if classification == UnitClassification.BUSINESS else "4110"
+    classification = _classification_of(arrear.tenant)
     amt = arrear.balance
     building = getattr(arrear.tenant.unit, "building", None)
 
-    lines = [
-        ("1040", amt, Decimal("0"), f"Rent billed — {arrear.tenant}"),
-        (income_code, Decimal("0"), amt, "Rental Income (billed)"),
-    ]
+    if classification == UnitClassification.BUSINESS:
+        # Billed commercial rent is held VAT-exclusive, so the tenant owes
+        # rent + 16%: raise the receivable at gross and credit VAT to 2600.
+        net, vat = _split_vat_exclusive(amt)
+        lines = [
+            (RENT_RECEIVABLE, net + vat, Decimal("0"), f"Rent billed — {arrear.tenant}"),
+            (RENT_COMMERCIAL, Decimal("0"), net, "Commercial Rental Income (billed)"),
+            (VAT_PAYABLE, Decimal("0"), vat, "16% VAT on commercial rent (billed)"),
+        ]
+    else:
+        lines = [
+            (RENT_RECEIVABLE, amt, Decimal("0"), f"Rent billed — {arrear.tenant}"),
+            (RENT_RESIDENTIAL, Decimal("0"), amt, "Rental Income (billed)"),
+        ]
 
     return _build_entry(
         date=_period_to_date(arrear.period_month, arrear.period_year),

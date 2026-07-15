@@ -132,11 +132,14 @@ class ReportsTests(APITestCase):
         assert resp.status_code == 200
         body = resp.json()
         # All payments are RENT type by default; split by unit classification.
+        # Commercial rent is received VAT-inclusive, so the 12,000 collected is
+        # 10,344.83 of income + 1,655.17 of VAT owed to KRA. VAT is a liability,
+        # not revenue, so it is correctly excluded from the P&L.
         assert body["residential_income"] == 10000.0
-        assert body["commercial_income"] == 12000.0
-        assert body["rental_income"] == 22000.0
+        assert body["commercial_income"] == 10344.83
+        assert body["rental_income"] == 20344.83
         assert body["total_expenses"] == 4500.0
-        assert body["net_profit"] == 17500.0
+        assert body["net_profit"] == 15844.83
 
     # --- Trial balance -------------------------------------------------
 
@@ -152,9 +155,12 @@ class ReportsTests(APITestCase):
         # Operating bank: DR 22000 collected, CR 4500 paid out for expenses.
         assert accounts["1020 Operating Bank Account"]["debit"] == 22000.0
         assert accounts["1020 Operating Bank Account"]["credit"] == 4500.0
-        # Rental income is split by unit classification.
+        # Rental income is split by unit classification. Commercial rent arrives
+        # VAT-inclusive, so the 12,000 receipt is 10,344.83 income + 1,655.17 VAT
+        # owed to KRA — the cash is unchanged, only its split.
         assert accounts["4110 Residential Rental Income"]["credit"] == 10000.0
-        assert accounts["4120 Commercial Rental Income"]["credit"] == 12000.0
+        assert accounts["4120 Commercial Rental Income"]["credit"] == 10344.83
+        assert accounts["2600 VAT Payable"]["credit"] == 1655.17
         # Expense legs debit their GL accounts.
         assert accounts["5200 Repairs & Maintenance"]["debit"] == 3000.0
         assert accounts["5300 Utilities (Common Areas)"]["debit"] == 1500.0
