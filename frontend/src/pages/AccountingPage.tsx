@@ -4,7 +4,7 @@ import {
 import { useState } from "react";
 
 import {
-  Badge, Card, EmptyState, PageHeader, Skeleton,
+  Badge, Card, EmptyState, ErrorState, PageHeader, Skeleton,
   Table, TBody, TD, TH, THead, TR,
 } from "@/components/ui";
 import { useReportsAccounting } from "@/hooks/useReports";
@@ -314,7 +314,7 @@ export function AccountingSuite() {
   const [tab, setTab] = useState<TabKey>("balance_sheet");
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [year, setYear] = useState(now.getFullYear());
-  const { data, isLoading } = useReportsAccounting(tab, month, year);
+  const { data, isLoading, isError, refetch } = useReportsAccounting(tab, month, year);
 
   return (
     <Card variant="glass" padding="md">
@@ -359,6 +359,12 @@ export function AccountingSuite() {
 
         {isLoading ? (
           <div className="space-y-2">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-12" />)}</div>
+        ) : isError ? (
+          <ErrorState
+            title="Accounting data could not be loaded."
+            description="This is usually temporary — try again in a moment."
+            onRetry={() => refetch()}
+          />
         ) : !data ? (
           <EmptyState title="No data" description="No accounting data for this period." />
         ) : (

@@ -34,6 +34,7 @@ import { useBuildings } from "@/hooks/useBuildings";
 import { useUnits } from "@/hooks/useUnits";
 import { getErrorMessage } from "@/lib/apiError";
 import { cn } from "@/lib/cn";
+import { isNonNegativeAmountOrBlank, isPositiveAmount } from "@/lib/formValidators";
 import type { KycStatus, TenantDetail } from "@/lib/types";
 import { downloadCsv, downloadPdf } from "@/lib/downloadPdf";
 import { avatarFor } from "@/lib/images";
@@ -238,8 +239,14 @@ const createSchema = z.object({
   emergency_contact: z.string().optional(),
   emergency_phone: z.string().optional(),
   unit: z.coerce.number().min(1, "Select a unit"),
-  monthly_rent: z.string().min(1, "Required"),
-  deposit_paid: z.string().optional(),
+  monthly_rent: z
+    .string()
+    .min(1, "Required")
+    .refine(isPositiveAmount, "Enter an amount greater than 0"),
+  deposit_paid: z
+    .string()
+    .optional()
+    .refine(isNonNegativeAmountOrBlank, "Enter a valid amount"),
   due_day: z.coerce.number().int().min(1).max(31).optional(),
   move_in_date: z.string().min(1, "Required"),
   notes: z.string().optional(),
@@ -254,8 +261,14 @@ const editSchema = z.object({
   phone: z.string().min(1, "Required"),
   email: z.string().email("Enter a valid email").or(z.literal("")).optional(),
   care_of: z.string().optional(),
-  monthly_rent: z.string().min(1, "Required"),
-  deposit_paid: z.string().optional(),
+  monthly_rent: z
+    .string()
+    .min(1, "Required")
+    .refine(isPositiveAmount, "Enter an amount greater than 0"),
+  deposit_paid: z
+    .string()
+    .optional()
+    .refine(isNonNegativeAmountOrBlank, "Enter a valid amount"),
   due_day: z.coerce.number().int().min(1).max(31).optional(),
   deposit_refund_percentage: z.coerce
     .number({ invalid_type_error: "Enter a number between 0 and 100" })
