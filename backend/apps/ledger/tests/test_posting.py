@@ -381,3 +381,24 @@ def test_balance_sheet_assets_equal_liabilities_plus_equity(
         f"Balance sheet not balanced: assets={total_assets} "
         f"liabilities={total_liabilities} equity={equity}"
     )
+
+
+def test_rent_is_cash_basis_arrears_do_not_post(residential_tenant):
+    """Cash-basis policy: billing rent (creating an Arrears row) must NOT touch
+    the general ledger — only an actual payment posts income. post_arrear is
+    intentionally unwired, so no 'arrear' journal entry may ever appear."""
+    from apps.ledger.models import JournalEntry
+    from apps.payments.models import Arrears
+
+    JournalEntry.objects.all().delete()
+    Arrears.objects.create(
+        tenant=residential_tenant,
+        period_month=4,
+        period_year=2026,
+        expected_rent=Decimal("25000.00"),
+        amount_paid=Decimal("0"),
+        balance=Decimal("25000.00"),
+        is_cleared=False,
+    )
+    assert not JournalEntry.objects.filter(source_type="arrear").exists()
+    assert JournalEntry.objects.count() == 0

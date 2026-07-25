@@ -375,12 +375,31 @@ def reverse_expense(expense) -> JournalEntry:
 
 
 # ── Arrears posting ─────────────────────────────────────────────────────────
+#
+# ACCOUNTING POLICY — RENT IS RECOGNISED ON A CASH BASIS.
+#
+# Rent income hits the general ledger only when cash is received (post_payment),
+# never when it is billed. `post_arrear` below is therefore intentionally NOT
+# wired to any signal — no Arrears row ever posts to the GL. The tenant
+# statement and arrears report still show what a tenant *owes* (an operational
+# figure sourced from the Arrears model); that is a deliberately separate view
+# from the financial books and is not expected to reconcile with the GL.
+#
+# To switch to an accrual basis instead, connect post_arrear on Arrears
+# post_save AND relieve the receivable on payment (DR 1020 / CR 1040) rather
+# than crediting income a second time — otherwise rent would be double counted.
+# The function and its unit tests are retained as the ready-made building block
+# for that switch; they validate the helper, not live behaviour.
+
 
 def post_arrear(arrear) -> JournalEntry:
     """
-    Post a rent-billed-but-unpaid Arrears record.
+    Build the accrual entry for a rent-billed-but-unpaid Arrears record.
 
-    DR 1040 Accounts Receivable / CR 4110 or 4120
+    DR 1040 Accounts Receivable / CR 4110 or 4120 (+ CR 2600 VAT for commercial).
+
+    NOT wired to any signal by design — see the cash-basis policy note above.
+    Calling it directly posts an accrual entry; nothing in the app does.
     """
     classification = _classification_of(arrear.tenant)
     amt = arrear.balance
