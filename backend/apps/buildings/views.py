@@ -8,7 +8,13 @@ from rest_framework.response import Response
 
 from apps.expenses.models import Expense, ExpenseCategory
 
-from .models import Building, MaintenanceRequest, Unit, UnitStatus
+from .models import (
+    OCCUPIED_UNIT_STATUSES,
+    Building,
+    MaintenanceRequest,
+    Unit,
+    UnitStatus,
+)
 from .serializers import (
     BuildingDetailSerializer,
     BuildingSerializer,
@@ -24,7 +30,9 @@ class BuildingViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         return Building.objects.annotate(
             unit_count=Count("units"),
-            occupied_count=Count("units", filter=~Q(units__status=UnitStatus.VACANT)),
+            occupied_count=Count(
+                "units", filter=Q(units__status__in=OCCUPIED_UNIT_STATUSES)
+            ),
         ).order_by("name")
 
     def get_serializer_class(self):
