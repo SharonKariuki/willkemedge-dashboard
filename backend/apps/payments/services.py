@@ -17,7 +17,7 @@ from django.utils import timezone
 from apps.buildings.services import recalculate_unit_status
 
 from .models import Arrears, Payment, PaymentMode, Transaction
-from .tax_service import calculate_tax
+from .tax_service import split_tax_inclusive
 
 
 def _generate_transaction_id() -> str:
@@ -115,13 +115,19 @@ def _process_payment_atomic(
     unit = tenant.unit
     classification = unit.classification  # the trigger field
 
-    # --- Tax calculation (centralised) ---
-    tax_result = calculate_tax(Decimal(str(amount)), classification)
+    # --- Tax split (centralised) ---
+    # `amount` is the cash actually received. For commercial units that figure
+    # is VAT-INCLUSIVE (rent + 16% paid as one), so VAT is split OUT of it — the
+    # same treatment the ledger applies — never grossed up on top. Residential
+    # is exempt (net == gross). Payment.amount stays the gross received so the
+    # ledger and arrears (which read it) are consistent.
+    gross = Decimal(str(amount))
+    tax_result = split_tax_inclusive(gross, classification)
 
-    # --- Immutable Payment (base amount kept for backwards-compat) ---
+    # --- Immutable Payment (stores the gross cash received) ---
     payment = Payment.objects.create(
         tenant=tenant,
-        amount=tax_result.base_amount,
+        amount=gross,
         payment_date=payment_date,
         period_month=period_month,
         period_year=period_year,
@@ -131,15 +137,15 @@ def _process_payment_atomic(
         idempotency_key=idempotency_key,
     )
 
-    # --- Immutable Transaction (all fields stored at write time) ---
+    # --- Immutable Transaction (net / VAT / gross stored at write time) ---
     Transaction.objects.create(
         transaction_id=_generate_transaction_id(),
         tenant=tenant,
         payment=payment,
         unit_classification=tax_result.classification,
-        base_amount=tax_result.base_amount,
-        tax_amount=tax_result.tax_amount,
-        total_amount=tax_result.total_amount,
+        base_amount=tax_result.base_amount,   # net income
+        tax_amount=tax_result.tax_amount,     # 16% VAT (0 for residential)
+        total_amount=tax_result.total_amount,  # gross received (== payment.amount)
         payment_mode=_source_to_payment_mode(source),
         reference_code=reference,  # stored exactly as received
     )
