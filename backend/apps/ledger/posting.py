@@ -87,11 +87,20 @@ def _build_entry(
     source_id: int,
     kind: str = "normal",
     lines: list,  # list of (account_code, debit, credit, description)
+    replace: bool = False,
 ) -> JournalEntry:
     """
     Atomically create a JournalEntry + its JournalLines.
     Raises ValidationError if lines don't balance.
-    Uses update_or_create on the unique constraint so calling twice is safe.
+
+    Uses update_or_create on the (source_type, source_id, kind) unique
+    constraint. By default a second call for the same source is idempotent —
+    the existing entry is returned untouched (safe against double-fires).
+
+    When ``replace=True`` the entry's header AND lines are rebuilt to match the
+    current source row. This is how an *edit* to a Payment/Expense/UtilityCharge
+    flows through to the ledger: without it, correcting a mis-keyed amount would
+    leave the GL showing the original figure forever.
     """
     date = _as_date(date)
     # Drop no-op lines (e.g. a zero VAT leg on a zero-rated commercial charge).
@@ -120,7 +129,7 @@ def _build_entry(
                 "is_posted": True,
             },
         )
-        if not created:
+        if not created and not replace:
             # Already posted — idempotent, just return the existing entry
             return entry
 
@@ -128,6 +137,10 @@ def _build_entry(
         entry.period_month = date.month
         entry.period_year = date.year
         entry.save(update_fields=["period_month", "period_year"])
+
+        if not created:
+            # Re-posting an edited source: discard the stale legs and rebuild.
+            entry.lines.all().delete()
 
         for code, debit, credit, description in lines:
             account = _get_account(code)
@@ -181,7 +194,7 @@ def _split_vat_exclusive(net: Decimal) -> tuple[Decimal, Decimal]:
 
 # ── Payment posting ─────────────────────────────────────────────────────────
 
-def post_payment(payment) -> JournalEntry:
+def post_payment(payment, *, replace: bool = False) -> JournalEntry:
     """
     Post a single Payment to the ledger.
 
@@ -245,6 +258,7 @@ def post_payment(payment) -> JournalEntry:
         source_id=payment.pk,
         kind="normal",
         lines=lines,
+        replace=replace,
     )
 
 
@@ -309,7 +323,7 @@ def _expense_payment_method(expense) -> str:
     return getattr(expense, "payment_method", "bank") or "bank"
 
 
-def post_expense(expense) -> JournalEntry:
+def post_expense(expense, *, replace: bool = False) -> JournalEntry:
     """
     Post an Expense to the ledger.
 
@@ -342,6 +356,7 @@ def post_expense(expense) -> JournalEntry:
         source_id=expense.pk,
         kind="normal",
         lines=lines,
+        replace=replace,
     )
 
 
@@ -412,7 +427,7 @@ def post_arrear(arrear) -> JournalEntry:
     )
 
 
-def post_manual_income(income) -> JournalEntry:
+def post_manual_income(income, *, replace: bool = False) -> JournalEntry:
     """
     Post non-tenant income (e.g. farm produce) received into the bank.
 
@@ -432,6 +447,7 @@ def post_manual_income(income) -> JournalEntry:
         source_id=income.pk,
         kind="normal",
         lines=lines,
+        replace=replace,
     )
 
 
@@ -454,7 +470,7 @@ def reverse_manual_income(income) -> JournalEntry:
     )
 
 
-def post_utility_charge(charge) -> JournalEntry:
+def post_utility_charge(charge, *, replace: bool = False) -> JournalEntry:
     """
     Post a water/utility charge billed to a tenant.
 
@@ -480,6 +496,7 @@ def post_utility_charge(charge) -> JournalEntry:
         source_id=charge.pk,
         kind="normal",
         lines=lines,
+        replace=replace,
     )
 
 

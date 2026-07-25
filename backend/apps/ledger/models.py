@@ -132,6 +132,58 @@ class JournalLine(models.Model):
         return f"{self.account.code} {side}"
 
 
+class PostingFailure(models.Model):
+    """
+    A durable record that a source row (Payment/Expense/UtilityCharge/…) could
+    not be posted to the ledger.
+
+    The posting signals used to swallow exceptions with only a ``logger.error``,
+    so a Payment could commit while its journal entry silently never wrote —
+    cash present in the app but missing from the books, with nothing to detect
+    or retry it. Instead of blocking the source write (which would stop a tenant
+    payment from being recorded because the GL hiccuped), a failure is captured
+    here so it is visible and can be replayed by ``retry_posting_failures``.
+
+    One row per (source_type, source_id, kind); a later success resolves it.
+    """
+
+    source_type = models.CharField(max_length=30)
+    source_id = models.PositiveIntegerField()
+    kind = models.CharField(
+        max_length=10,
+        choices=[("normal", "Normal"), ("reversal", "Reversal")],
+        default="normal",
+    )
+    operation = models.CharField(
+        max_length=10,
+        choices=[("post", "Post"), ("reverse", "Reverse")],
+        default="post",
+    )
+    error = models.TextField(blank=True)
+    attempts = models.PositiveIntegerField(default=1)
+    resolved = models.BooleanField(default=False)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "ledger_posting_failure"
+        ordering = ["-updated_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["source_type", "source_id", "kind"],
+                name="unique_posting_failure_per_source_kind",
+            )
+        ]
+        indexes = [
+            models.Index(fields=["resolved"]),
+        ]
+
+    def __str__(self):
+        state = "resolved" if self.resolved else "OPEN"
+        return f"PostingFailure[{state}] {self.operation} {self.source_type}#{self.source_id}"
+
+
 class Budget(models.Model):
     """Per-account monthly budget for variance reporting."""
 
