@@ -268,3 +268,61 @@ class PaymentProcessingTests(APITestCase):
         anon = APIClient()
         resp = anon.get("/api/payments/")
         assert resp.status_code == 401
+
+    # --- Idempotency (double-processing guard) -------------------------
+
+    def test_idempotency_key_prevents_double_booking(self):
+        """A re-submitted payment with the same key returns the original and
+        does not double-reduce arrears."""
+        month, year = self._now()
+        kwargs = dict(
+            tenant=self.tenant,
+            amount=Decimal("10000"),
+            payment_date=timezone.now().date(),
+            period_month=month,
+            period_year=year,
+            source="mpesa",
+            reference="TXID-DUP-1",
+            idempotency_key="TXID-DUP-1",
+        )
+        first = process_payment(**kwargs)
+        second = process_payment(**kwargs)
+
+        assert first.id == second.id  # same row returned, not a new booking
+        assert Payment.objects.filter(tenant=self.tenant).count() == 1
+        arrears = Arrears.objects.get(tenant=self.tenant, period_month=month, period_year=year)
+        assert arrears.balance == Decimal("0")  # cleared exactly once
+
+    def test_blank_key_allows_shared_reference(self):
+        """FIFO splits one credit into several rows sharing a reference; a blank
+        idempotency key must never dedupe them."""
+        month, year = self._now()
+        for _ in range(2):
+            process_payment(
+                tenant=self.tenant,
+                amount=Decimal("2000"),
+                payment_date=timezone.now().date(),
+                period_month=month,
+                period_year=year,
+                source="bank",
+                reference="SHARED-REF",  # same ref, no idempotency_key
+            )
+        assert Payment.objects.filter(tenant=self.tenant, reference="SHARED-REF").count() == 2
+
+    def test_double_post_same_reference_is_idempotent(self):
+        """Double-submitting the create API with the same reference books once."""
+        month, year = self._now()
+        body = {
+            "tenant": self.tenant.id,
+            "amount": "10000.00",
+            "payment_date": timezone.now().date().isoformat(),
+            "period_month": month,
+            "period_year": year,
+            "source": "mpesa",
+            "reference": "TXID-API-1",
+        }
+        r1 = self.client.post("/api/payments/", body, format="json")
+        r2 = self.client.post("/api/payments/", body, format="json")
+        assert r1.status_code == status.HTTP_201_CREATED
+        assert r2.status_code in (status.HTTP_200_OK, status.HTTP_201_CREATED)
+        assert Payment.objects.filter(tenant=self.tenant, reference="TXID-API-1").count() == 1

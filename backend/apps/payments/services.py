@@ -11,7 +11,7 @@ rates or classification rules.
 import uuid
 from decimal import Decimal
 
-from django.db import models, transaction
+from django.db import IntegrityError, models, transaction
 from django.utils import timezone
 
 from apps.buildings.services import recalculate_unit_status
@@ -36,7 +36,6 @@ def _source_to_payment_mode(source: str) -> str:
     return mapping.get(source.lower(), PaymentMode.CASH)
 
 
-@transaction.atomic
 def process_payment(
     *,
     tenant,
@@ -47,6 +46,7 @@ def process_payment(
     source: str = "cash",
     reference: str = "",
     notes: str = "",
+    idempotency_key: str = "",
 ) -> Payment:
     """
     Record a payment, compute VAT, persist a Transaction, and update arrears.
@@ -61,7 +61,57 @@ def process_payment(
     6. Recalculate unit status.
 
     Returns the Payment instance (callers can follow .transaction for tax data).
+
+    Idempotency
+    -----------
+    When ``idempotency_key`` is non-blank, this call is treated as a single,
+    de-duplicated payment: a re-submission with the same key returns the
+    already-recorded Payment instead of double-booking (and double-reducing
+    arrears). The key is enforced by a partial unique constraint at the DB
+    level, so concurrent retries that both pass the pre-check are still caught
+    via IntegrityError. FIFO allocation intentionally leaves the key blank —
+    it splits one credit into several Payment rows that share a reference — so
+    it is never de-duplicated here.
     """
+    if idempotency_key:
+        existing = Payment.objects.filter(idempotency_key=idempotency_key).first()
+        if existing:
+            return existing
+    try:
+        return _process_payment_atomic(
+            tenant=tenant,
+            amount=amount,
+            payment_date=payment_date,
+            period_month=period_month,
+            period_year=period_year,
+            source=source,
+            reference=reference,
+            notes=notes,
+            idempotency_key=idempotency_key,
+        )
+    except IntegrityError:
+        # A concurrent retry won the race and inserted the row first; return it
+        # rather than surfacing the constraint violation.
+        if idempotency_key:
+            existing = Payment.objects.filter(idempotency_key=idempotency_key).first()
+            if existing:
+                return existing
+        raise
+
+
+@transaction.atomic
+def _process_payment_atomic(
+    *,
+    tenant,
+    amount: Decimal,
+    payment_date,
+    period_month: int,
+    period_year: int,
+    source: str,
+    reference: str,
+    notes: str,
+    idempotency_key: str,
+) -> Payment:
     unit = tenant.unit
     classification = unit.classification  # the trigger field
 
@@ -78,6 +128,7 @@ def process_payment(
         source=source,
         reference=reference,
         notes=notes,
+        idempotency_key=idempotency_key,
     )
 
     # --- Immutable Transaction (all fields stored at write time) ---

@@ -95,6 +95,7 @@ class PaymentViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         data = serializer.validated_data
+        reference = data.get("reference", "")
         payment = process_payment(
             tenant=data["tenant"],
             amount=data["amount"],
@@ -102,8 +103,12 @@ class PaymentViewSet(viewsets.ModelViewSet):
             period_month=data["period_month"],
             period_year=data["period_year"],
             source=data.get("source", "cash"),
-            reference=data.get("reference", ""),
+            reference=reference,
             notes=data.get("notes", ""),
+            # A referenced manual payment is a single event: dedupe double-submits
+            # (retry / double-click) on (its reference). Blank reference = no key,
+            # so unreferenced cash entries behave exactly as before.
+            idempotency_key=reference,
         )
         send_payment_confirmation.delay(payment.id)
 
@@ -141,6 +146,7 @@ class PaymentViewSet(viewsets.ModelViewSet):
 
         now = timezone.now()
         source = data["source"]
+        mock_reference = _mock_reference(source)
         payment = process_payment(
             tenant=tenant,
             amount=data["amount"],
@@ -148,8 +154,9 @@ class PaymentViewSet(viewsets.ModelViewSet):
             period_month=now.month,
             period_year=now.year,
             source=source,
-            reference=_mock_reference(source),
+            reference=mock_reference,
             notes=_mock_notes(source),
+            idempotency_key=mock_reference,
         )
         return Response(
             PaymentSerializer(payment).data,
