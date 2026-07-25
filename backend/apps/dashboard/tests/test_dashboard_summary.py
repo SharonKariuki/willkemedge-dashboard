@@ -147,3 +147,14 @@ class DashboardSummaryTests(APITestCase):
         building = resp.json()["buildings"][0]
         assert building["total"] == 5
         assert building["occupied"] == 3  # not 4 — maintenance unit is not occupied
+
+    def test_profit_loss_income_is_net_of_vat_and_excludes_deposit(self):
+        """Legacy P&L income must match the ledger basis: commercial rent net of
+        VAT, deposits excluded (F9)."""
+        resp = self.client.get(
+            "/api/reports/profit-loss/", {"month": self.month, "year": self.year}
+        )
+        assert resp.status_code == 200
+        # Commercial 23,200 gross -> 20,000 net + residential 10,000 = 30,000.
+        # The 15,000 deposit is excluded. (Was 33,200 gross before the fix.)
+        assert abs(resp.json()["income"] - 30000) < 0.5
