@@ -1,9 +1,15 @@
 """
 Account-related services: lockout policy and login auditing.
 
-Lockout policy: 5 failed attempts within 30 minutes locks the account
-(by email) until the rolling window clears. We track this against
+Lockout policy: 5 failed attempts within 30 minutes from the SAME source IP
+lock that email/IP pair until the rolling window clears. We track this against
 LoginAttempt rows so the audit log and the lockout share one source of truth.
+
+The lock is scoped to (email, IP) rather than email alone: keying on email
+only let an unauthenticated attacker lock any known admin email on demand by
+firing five bad passwords (a denial-of-service against the single operator).
+Scoping to the source IP still slows a single-source brute force while a real
+user signing in from a different IP is never locked out by someone else.
 """
 from datetime import timedelta
 
@@ -39,11 +45,18 @@ def record_login_attempt(*, email: str, request, successful: bool) -> LoginAttem
     )
 
 
-def is_locked_out(email: str) -> bool:
-    """Return True if there are >= LOCKOUT_THRESHOLD failed attempts in the window."""
+def is_locked_out(email: str, ip_address: str | None = None) -> bool:
+    """Return True if the (email, ip_address) pair has >= LOCKOUT_THRESHOLD failed
+    attempts in the window.
+
+    Scoping to the source IP prevents a lockout DoS: a bad actor at one IP can
+    no longer lock a victim's email for everyone else — only the requesting IP's
+    own failed attempts against that email are counted.
+    """
     cutoff = timezone.now() - LOCKOUT_WINDOW
     failed_count = LoginAttempt.objects.filter(
         email=email.lower().strip(),
+        ip_address=ip_address,
         successful=False,
         attempted_at__gte=cutoff,
     ).count()
