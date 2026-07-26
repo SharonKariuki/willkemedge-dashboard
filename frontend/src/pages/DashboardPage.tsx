@@ -298,8 +298,8 @@ export default function DashboardPage() {
 
       {/* ── This morning + Recent payments ────────────────────────────────── */}
       <section className="grid gap-6 lg:grid-cols-5">
-        <Card padding="none" className="lg:col-span-2">
-          <div className="flex items-center justify-between px-6 pt-6">
+        <div className="lg:col-span-2">
+          <div className="mb-4 flex items-baseline justify-between">
             <h2 className="text-lg font-semibold text-content">This morning</h2>
             <Badge tone={alerts.length === 0 ? "sage" : "coral"} withDot>
               {alerts.length === 0
@@ -308,28 +308,30 @@ export default function DashboardPage() {
             </Badge>
           </div>
           {alerts.length === 0 ? (
-            <div className="px-6 pb-6 pt-4">
+            <Card padding="lg">
               <p className="text-base font-medium leading-snug text-content">
                 Nothing demands your attention.
               </p>
               <p className="mt-1.5 text-sm text-content-muted">
                 Tenants are current and leases are running. Enjoy the morning.
               </p>
-            </div>
+            </Card>
           ) : (
-            <ul className="mt-2 px-6 pb-3">
-              {alerts.slice(0, 6).map((a, i) => (
-                <li key={i} className="flex items-start gap-3 py-3 text-sm">
-                  <AlertSeverityDot type={a.type} />
-                  <p className="leading-snug text-content-secondary">{a.message}</p>
-                </li>
-              ))}
-              {alerts.length > 6 && (
-                <li className="py-3 text-xs text-content-muted">+{alerts.length - 6} more items</li>
-              )}
-            </ul>
+            <Card padding="none">
+              <ul className="px-6 py-2">
+                {alerts.slice(0, 6).map((a, i) => (
+                  <li key={i} className="flex items-start gap-3 py-3 text-sm">
+                    <AlertSeverityDot type={a.type} />
+                    <p className="leading-snug text-content-secondary">{a.message}</p>
+                  </li>
+                ))}
+                {alerts.length > 6 && (
+                  <li className="py-3 text-xs text-content-muted">+{alerts.length - 6} more items</li>
+                )}
+              </ul>
+            </Card>
           )}
-        </Card>
+        </div>
 
         <div className="lg:col-span-3">
           <div className="mb-4 flex items-baseline justify-between">
