@@ -18,6 +18,17 @@ class UnitStatus(models.TextChoices):
     UNDER_MAINTENANCE = "under_maintenance", "Under Maintenance"
 
 
+# Statuses that count as a unit being occupied by a tenant. Deliberately
+# excludes VACANT *and* UNDER_MAINTENANCE — a unit under renovation has no
+# tenant and earns no rent, so counting it as occupied overstates occupancy.
+OCCUPIED_UNIT_STATUSES = (
+    UnitStatus.OCCUPIED_PAID,
+    UnitStatus.OCCUPIED_PARTIAL,
+    UnitStatus.OCCUPIED_UNPAID,
+    UnitStatus.ARREARS,
+)
+
+
 class PropertyType(models.TextChoices):
     """What kind of property this is — drives how income/expenses are handled.
 

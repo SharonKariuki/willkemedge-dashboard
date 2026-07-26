@@ -4,14 +4,21 @@ move-out alerts, maintenance alerts, and expiring-lease alerts.
 """
 from decimal import Decimal
 
-from django.db.models import Count, Q, Sum
+from django.db.models import Case, Count, DecimalField, F, Q, Sum, When
 from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.buildings.models import Building, Unit, UnitStatus
-from apps.payments.models import Arrears, Payment
+from apps.buildings.models import (
+    OCCUPIED_UNIT_STATUSES,
+    Building,
+    Unit,
+    UnitClassification,
+    UnitStatus,
+)
+from apps.payments.models import Arrears, Payment, PaymentType
+from apps.payments.tax_service import TAX_RATE_BUSINESS
 from apps.tenants.models import Tenant, TenantStatus
 
 
@@ -31,7 +38,12 @@ class DashboardSummaryView(APIView):
         # --- KPI cards ---
         total_units = Unit.objects.count()
         vacant = Unit.objects.filter(status=UnitStatus.VACANT).count()
-        occupied = total_units - vacant
+        under_maintenance = Unit.objects.filter(
+            status=UnitStatus.UNDER_MAINTENANCE
+        ).count()
+        # A unit under renovation has no tenant — it is neither vacant-available
+        # nor occupied, so count only genuinely tenanted units as occupied.
+        occupied = Unit.objects.filter(status__in=OCCUPIED_UNIT_STATUSES).count()
         active_tenants = Tenant.objects.filter(status=TenantStatus.ACTIVE).count()
 
         # Real-time arrears: sum all uncleared balances
@@ -39,12 +51,29 @@ class DashboardSummaryView(APIView):
             total=Sum("balance")
         )["total"] or Decimal("0")
 
-        # --- Monthly collection ---
+        # --- Monthly rent collection ---
+        # Expected rent is stored VAT-exclusive (base) for commercial units, but
+        # commercial tenants pay rent + 16% VAT as one figure. Gross the expected
+        # up so it shares the VAT-inclusive basis of the cash actually received —
+        # otherwise a fully-paying commercial portfolio reads above 100%.
+        vat_multiplier = Decimal("1") + TAX_RATE_BUSINESS
         expected = Tenant.objects.filter(status=TenantStatus.ACTIVE).aggregate(
-            total=Sum("monthly_rent")
+            total=Sum(
+                Case(
+                    When(
+                        unit__classification=UnitClassification.BUSINESS,
+                        then=F("monthly_rent") * vat_multiplier,
+                    ),
+                    default=F("monthly_rent"),
+                    output_field=DecimalField(max_digits=12, decimal_places=2),
+                )
+            )
         )["total"] or Decimal("0")
 
+        # Collection measures RENT against rent owed — deposits (a liability) and
+        # other payment types are not rent collection.
         collected = Payment.objects.filter(
+            payment_type=PaymentType.RENT,
             period_month=current_month,
             period_year=current_year,
         ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
@@ -57,10 +86,11 @@ class DashboardSummaryView(APIView):
         last_month = current_month - 1 if current_month > 1 else 12
         last_year = current_year if current_month > 1 else current_year - 1
         last_month_collected = Payment.objects.filter(
+            payment_type=PaymentType.RENT,
             period_month=last_month, period_year=last_year
         ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
 
-        # --- 12-month income trend ---
+        # --- 12-month income trend (income excludes refundable deposits) ---
         income_trend = []
         for i in range(11, -1, -1):
             total_months = current_year * 12 + (current_month - 1) - i
@@ -68,26 +98,31 @@ class DashboardSummaryView(APIView):
             m = m0 + 1
             month_total = Payment.objects.filter(
                 period_month=m, period_year=y
-            ).aggregate(total=Sum("amount"))["total"] or 0
+            ).exclude(payment_type=PaymentType.DEPOSIT).aggregate(
+                total=Sum("amount")
+            )["total"] or 0
             income_trend.append({
                 "month": f"{y}-{m:02d}",
                 "amount": float(month_total),
             })
 
-        # --- Occupancy breakdown ---
+        # --- Occupancy breakdown (slices sum to total_units) ---
         occupancy = {
             "vacant": vacant,
             "paid": Unit.objects.filter(status=UnitStatus.OCCUPIED_PAID).count(),
             "partial": Unit.objects.filter(status=UnitStatus.OCCUPIED_PARTIAL).count(),
             "unpaid": Unit.objects.filter(status=UnitStatus.OCCUPIED_UNPAID).count(),
             "arrears": Unit.objects.filter(status=UnitStatus.ARREARS).count(),
+            "under_maintenance": under_maintenance,
         }
 
         # --- Per-building breakdown ---
         buildings = []
         for b in Building.objects.annotate(
             unit_count=Count("units"),
-            occupied_count=Count("units", filter=~Q(units__status=UnitStatus.VACANT)),
+            occupied_count=Count(
+                "units", filter=Q(units__status__in=OCCUPIED_UNIT_STATUSES)
+            ),
         ).order_by("name"):
             buildings.append({
                 "id": b.id,
@@ -193,6 +228,7 @@ class DashboardSummaryView(APIView):
                 "total_units": total_units,
                 "occupied": occupied,
                 "vacant": vacant,
+                "under_maintenance": under_maintenance,
                 "active_tenants": active_tenants,
                 "total_arrears": float(total_arrears),
                 "collection_expected": float(expected),

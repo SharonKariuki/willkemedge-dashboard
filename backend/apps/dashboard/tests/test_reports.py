@@ -113,17 +113,20 @@ class ReportsTests(APITestCase):
         resp = self.client.get("/api/reports/profit-loss/", {"month": MONTH, "year": YEAR})
         assert resp.status_code == 200
         body = resp.json()
-        assert body["income"] == 22000.0
+        # Income is net of VAT (F9): commercial 12,000 gross -> 10,344.83 net +
+        # residential 10,000 = 20,344.83 — now reconciles with the ledger P&L
+        # (test_accounting_pnl_rent_split) instead of the old gross 22,000.
+        assert round(body["income"], 2) == 20344.83
         assert body["total_expenses"] == 4500.0  # 3000 + 1500
-        assert body["net_profit"] == 17500.0
+        assert round(body["net_profit"], 2) == 15844.83
 
     def test_profit_loss_annual_grand_net(self):
         resp = self.client.get("/api/reports/profit-loss/", {"mode": "annual", "year": YEAR})
         assert resp.status_code == 200
         body = resp.json()
-        assert body["grand_income"] == 22000.0
+        assert round(body["grand_income"], 2) == 20344.83
         assert body["grand_expenses"] == 4500.0
-        assert body["grand_net"] == 17500.0
+        assert round(body["grand_net"], 2) == 15844.83
 
     # --- Accounting P&L tab (rent split by classification) -------------
 
