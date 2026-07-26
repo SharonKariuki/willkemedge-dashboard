@@ -34,6 +34,9 @@ export interface Unit {
   status: UnitStatus;
   status_display: string;
   notes: string;
+  /** Active tenant occupying this unit, or null when vacant. */
+  current_tenant_id: number | null;
+  current_tenant_name: string | null;
   created_at: string;
   updated_at: string;
 }

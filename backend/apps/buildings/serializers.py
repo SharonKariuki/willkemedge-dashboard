@@ -8,6 +8,10 @@ class UnitSerializer(serializers.ModelSerializer):
     building_name = serializers.CharField(source="building.name", read_only=True)
     status_display = serializers.CharField(source="get_status_display", read_only=True)
     classification_display = serializers.CharField(source="get_classification_display", read_only=True)
+    # The active tenant occupying this unit (if any) — lets the UI link a unit
+    # card straight to its tenant. Null for vacant units.
+    current_tenant_id = serializers.SerializerMethodField()
+    current_tenant_name = serializers.SerializerMethodField()
 
     class Meta:
         model = Unit
@@ -15,9 +19,36 @@ class UnitSerializer(serializers.ModelSerializer):
             "id", "building", "building_name", "label", "floor", "unit_type",
             "classification", "classification_display", "monthly_rent",
             "status", "status_display", "statement_descriptor", "notes",
+            "current_tenant_id", "current_tenant_name",
             "created_at", "updated_at",
         ]
         read_only_fields = ["status", "created_at", "updated_at"]
+
+    def _active_tenant(self, obj):
+        """The current occupant. Uses the view's prefetched `active_tenants`
+        when present (list endpoint) to avoid an N+1; falls back to a query for
+        single-object contexts (e.g. set-status responses)."""
+        prefetched = getattr(obj, "active_tenants", None)
+        if prefetched is not None:
+            return prefetched[0] if prefetched else None
+        from apps.tenants.models import TenantStatus
+        return (
+            obj.tenants.filter(
+                status__in=[TenantStatus.ACTIVE, TenantStatus.NOTICE_GIVEN]
+            )
+            .order_by("-move_in_date")
+            .first()
+        )
+
+    def get_current_tenant_id(self, obj):
+        tenant = self._active_tenant(obj)
+        return tenant.id if tenant else None
+
+    def get_current_tenant_name(self, obj):
+        tenant = self._active_tenant(obj)
+        if not tenant:
+            return None
+        return f"{tenant.first_name} {tenant.last_name}".strip()
 
     def validate_label(self, value):
         """Labels must be unique across ALL buildings (case-insensitive) so every
