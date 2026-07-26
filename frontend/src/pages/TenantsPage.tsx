@@ -823,7 +823,7 @@ export default function TenantsPage() {
                   key={t.id}
                   variant="glass"
                   padding="sm"
-                  className="cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ochre-500/40"
+                  className="min-w-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ochre-500/40"
                   role="button"
                   tabIndex={0}
                   aria-label={`View ${t.full_name}`}
