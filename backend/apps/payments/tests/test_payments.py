@@ -191,6 +191,36 @@ class PaymentProcessingTests(APITestCase):
         assert arrears.balance == Decimal("4000")
         assert not arrears.is_cleared
 
+    def test_waive_endpoint_marks_current_unit_paid(self):
+        """Waiving the current-period balance must leave the unit PAID, not PARTIAL.
+
+        Previously the endpoint recalculated status from cash paid only, so a
+        partially-paid period that was then fully waived left the unit stuck at
+        OCCUPIED_PARTIAL. It must reflect paid + waived == rent → PAID.
+        """
+        month, year = self._now()
+        process_payment(
+            tenant=self.tenant,
+            amount=Decimal("4000"),
+            payment_date=timezone.now().date(),
+            period_month=month,
+            period_year=year,
+        )
+        arrears = Arrears.objects.get(tenant=self.tenant, period_month=month, period_year=year)
+        self.unit.refresh_from_db()
+        assert self.unit.status == UnitStatus.OCCUPIED_PARTIAL
+
+        resp = self.client.post(f"/api/arrears/{arrears.id}/waive/")
+        assert resp.status_code == status.HTTP_200_OK
+
+        arrears.refresh_from_db()
+        assert arrears.is_cleared
+        assert arrears.balance == Decimal("0")
+        assert arrears.waived_amount == Decimal("6000")
+
+        self.unit.refresh_from_db()
+        assert self.unit.status == UnitStatus.OCCUPIED_PAID
+
     # --- API-level tests -----------------------------------------------
 
     def test_create_payment_via_api(self):

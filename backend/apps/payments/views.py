@@ -1,6 +1,7 @@
 """Payment API views."""
 import random
 import string
+from decimal import Decimal
 
 from django.db import transaction as db_transaction
 from django.shortcuts import get_object_or_404
@@ -209,17 +210,26 @@ class ArrearsViewSet(viewsets.ReadOnlyModelViewSet):
             return Response({"detail": "Already cleared."}, status=400)
 
         notes = request.data.get("notes", "Waived by admin")
-        amount = arrears.balance
 
-        arrears.waived_amount = amount
-        arrears.balance = 0
-        arrears.is_cleared = True
-        arrears.waive_notes = notes
-        arrears.save()
+        with db_transaction.atomic():
+            # Fold the outstanding balance into any prior waiver rather than
+            # overwriting it, so a partial waiver already on record is not lost.
+            arrears.waived_amount = (arrears.waived_amount or Decimal("0")) + arrears.balance
+            arrears.balance = Decimal("0")
+            arrears.is_cleared = True
+            arrears.waive_notes = notes
+            arrears.save()
 
-        # Update unit status if cleared
-        from apps.buildings.services import recalculate_unit_status
-        recalculate_unit_status(arrears.tenant.unit, float(arrears.amount_paid))
+            # Reflect the waiver in unit status only for the current period —
+            # waiving an old period must not disturb the live unit. Feed the
+            # *covered* figure (cash paid + waived) as a Decimal so a full
+            # waiver reads as PAID instead of PARTIAL. (Passing cash-only, and
+            # as a float, was the previous bug.)
+            now = timezone.now()
+            if arrears.period_month == now.month and arrears.period_year == now.year:
+                from apps.buildings.services import recalculate_unit_status
+                covered = arrears.amount_paid + arrears.waived_amount
+                recalculate_unit_status(arrears.tenant.unit, covered)
 
         return Response(ArrearsSerializer(arrears).data)
 
