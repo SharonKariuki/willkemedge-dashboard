@@ -11,13 +11,13 @@ rates or classification rules.
 import uuid
 from decimal import Decimal
 
-from django.db import models, transaction
+from django.db import IntegrityError, models, transaction
 from django.utils import timezone
 
 from apps.buildings.services import recalculate_unit_status
 
 from .models import Arrears, Payment, PaymentMode, Transaction
-from .tax_service import calculate_tax
+from .tax_service import split_tax_inclusive
 
 
 def _generate_transaction_id() -> str:
@@ -36,7 +36,6 @@ def _source_to_payment_mode(source: str) -> str:
     return mapping.get(source.lower(), PaymentMode.CASH)
 
 
-@transaction.atomic
 def process_payment(
     *,
     tenant,
@@ -47,6 +46,7 @@ def process_payment(
     source: str = "cash",
     reference: str = "",
     notes: str = "",
+    idempotency_key: str = "",
 ) -> Payment:
     """
     Record a payment, compute VAT, persist a Transaction, and update arrears.
@@ -61,34 +61,91 @@ def process_payment(
     6. Recalculate unit status.
 
     Returns the Payment instance (callers can follow .transaction for tax data).
+
+    Idempotency
+    -----------
+    When ``idempotency_key`` is non-blank, this call is treated as a single,
+    de-duplicated payment: a re-submission with the same key returns the
+    already-recorded Payment instead of double-booking (and double-reducing
+    arrears). The key is enforced by a partial unique constraint at the DB
+    level, so concurrent retries that both pass the pre-check are still caught
+    via IntegrityError. FIFO allocation intentionally leaves the key blank —
+    it splits one credit into several Payment rows that share a reference — so
+    it is never de-duplicated here.
     """
+    if idempotency_key:
+        existing = Payment.objects.filter(idempotency_key=idempotency_key).first()
+        if existing:
+            return existing
+    try:
+        return _process_payment_atomic(
+            tenant=tenant,
+            amount=amount,
+            payment_date=payment_date,
+            period_month=period_month,
+            period_year=period_year,
+            source=source,
+            reference=reference,
+            notes=notes,
+            idempotency_key=idempotency_key,
+        )
+    except IntegrityError:
+        # A concurrent retry won the race and inserted the row first; return it
+        # rather than surfacing the constraint violation.
+        if idempotency_key:
+            existing = Payment.objects.filter(idempotency_key=idempotency_key).first()
+            if existing:
+                return existing
+        raise
+
+
+@transaction.atomic
+def _process_payment_atomic(
+    *,
+    tenant,
+    amount: Decimal,
+    payment_date,
+    period_month: int,
+    period_year: int,
+    source: str,
+    reference: str,
+    notes: str,
+    idempotency_key: str,
+) -> Payment:
     unit = tenant.unit
     classification = unit.classification  # the trigger field
 
-    # --- Tax calculation (centralised) ---
-    tax_result = calculate_tax(Decimal(str(amount)), classification)
+    # --- Tax split (centralised) ---
+    # `amount` is the cash actually received. For commercial units that figure
+    # is VAT-INCLUSIVE (rent + 16% paid as one), so VAT is split OUT of it — the
+    # same treatment the ledger applies — never grossed up on top. Residential
+    # is exempt (net == gross). Payment.amount stays the gross received so the
+    # ledger and arrears (which read it) are consistent.
+    gross = Decimal(str(amount))
+    tax_result = split_tax_inclusive(gross, classification)
 
-    # --- Immutable Payment (base amount kept for backwards-compat) ---
+    # --- Immutable Payment (stores the gross cash received) ---
     payment = Payment.objects.create(
         tenant=tenant,
-        amount=tax_result.base_amount,
+        amount=gross,
         payment_date=payment_date,
         period_month=period_month,
         period_year=period_year,
         source=source,
         reference=reference,
         notes=notes,
+        idempotency_key=idempotency_key,
     )
 
-    # --- Immutable Transaction (all fields stored at write time) ---
+    # --- Immutable Transaction (net / VAT / gross stored at write time) ---
     Transaction.objects.create(
         transaction_id=_generate_transaction_id(),
         tenant=tenant,
         payment=payment,
         unit_classification=tax_result.classification,
-        base_amount=tax_result.base_amount,
-        tax_amount=tax_result.tax_amount,
-        total_amount=tax_result.total_amount,
+        base_amount=tax_result.base_amount,   # net income
+        tax_amount=tax_result.tax_amount,     # 16% VAT (0 for residential)
+        total_amount=tax_result.total_amount,  # gross received (== payment.amount)
         payment_mode=_source_to_payment_mode(source),
         reference_code=reference,  # stored exactly as received
     )

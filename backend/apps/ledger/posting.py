@@ -28,7 +28,7 @@ Expenses (debit-normal):
   5xxx / 6xxx  — from expense.category.account
 """
 import datetime
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import Decimal
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
@@ -44,7 +44,7 @@ from apps.expenses.coa import (
 )
 from apps.expenses.models import Account
 from apps.payments.models import PaymentType
-from apps.payments.tax_service import TAX_RATE_BUSINESS, calculate_tax
+from apps.payments.tax_service import calculate_tax, split_tax_inclusive
 
 from .models import JournalEntry, JournalLine
 
@@ -162,11 +162,12 @@ def _split_vat_inclusive(gross: Decimal) -> tuple[Decimal, Decimal]:
     A commercial tenant pays rent + 16% VAT as one figure, so a receipt of
     KES 27,840 is KES 24,000 income and KES 3,840 VAT owed to KRA.
     Returns (net, vat); net + vat == gross exactly (VAT absorbs the rounding).
+
+    Delegates to tax_service so the ledger and the Transaction/receipt use one
+    identical split and cannot drift apart.
     """
-    net = (gross / (Decimal("1") + TAX_RATE_BUSINESS)).quantize(
-        Decimal("0.01"), rounding=ROUND_HALF_UP
-    )
-    return net, gross - net
+    r = split_tax_inclusive(gross, UnitClassification.BUSINESS)
+    return r.base_amount, r.tax_amount
 
 
 def _split_vat_exclusive(net: Decimal) -> tuple[Decimal, Decimal]:

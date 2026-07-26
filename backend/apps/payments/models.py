@@ -66,6 +66,17 @@ class Payment(models.Model):
         blank=True,
         help_text="M-Pesa TransID, bank ref, or receipt number.",
     )
+    idempotency_key = models.CharField(
+        max_length=100,
+        blank=True,
+        default="",
+        help_text=(
+            "Natural-key guard against double-booking a single payment. Set only "
+            "by single-payment ingestion (the manual create/mock paths); left "
+            "blank by FIFO allocation, which deliberately splits one credit into "
+            "several Payment rows that share a reference. Unique when non-blank."
+        ),
+    )
     notes = models.TextField(blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -77,6 +88,13 @@ class Payment(models.Model):
             models.Index(fields=["tenant", "period_year", "period_month"]),
             models.Index(fields=["period_year", "period_month"]),
             models.Index(fields=["reference"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["idempotency_key"],
+                condition=~models.Q(idempotency_key=""),
+                name="unique_payment_idempotency_key",
+            ),
         ]
 
     def __str__(self) -> str:
