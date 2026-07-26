@@ -27,6 +27,31 @@ def _e(value) -> str:
 # SMS — Africa's Talking
 # ---------------------------------------------------------------------------
 
+def to_intl_phone(phone: str) -> str:
+    """Normalise a Kenyan phone number to +254… international format for AT.
+
+    Africa's Talking requires E.164 (`+2547XXXXXXXX`). Tenants loaded from the
+    rent roll are already normalised, but a number typed into the UI may arrive
+    as `07XXXXXXXX`, a bare `7XXXXXXXX`, or `2547XXXXXXXX` — coerce them all so
+    a live send doesn't silently fail on format. Non-Kenyan numbers already in
+    `+CC…` form are passed through unchanged.
+    """
+    raw = str(phone or "").strip()
+    if raw.startswith("+"):
+        return "+" + "".join(c for c in raw[1:] if c.isdigit())
+    digits = "".join(c for c in raw if c.isdigit())
+    if not digits:
+        return ""
+    if digits.startswith("0"):
+        digits = "254" + digits[1:]
+    elif digits.startswith("254"):
+        pass
+    elif digits.startswith(("7", "1")) and len(digits) == 9:
+        # Bare local subscriber number (Safaricom/Airtel 7…, newer 1… ranges).
+        digits = "254" + digits
+    return "+" + digits
+
+
 def send_sms(phone: str, message: str) -> dict | None:
     """
     Send an SMS via Africa's Talking REST API (using httpx).
@@ -35,7 +60,10 @@ def send_sms(phone: str, message: str) -> dict | None:
     the SDK's `requests` dependency hits an SSL error on Windows with
     urllib3 2.x.  httpx works reliably.
 
-    Phone should be in international format: +2547XXXXXXXX
+    The phone is normalised to +254… international format before sending;
+    when AT_SENDER_ID is configured (an approved alphanumeric sender ID or
+    short code) it is passed as the `from` field so tenants see the branded
+    sender instead of a shared masked number.
 
     Returns the parsed Africa's Talking response (the delivery receipt — it
     carries the per-recipient status, cost, and messageId) on success, or
@@ -46,13 +74,19 @@ def send_sms(phone: str, message: str) -> dict | None:
 
     api_key = getattr(settings, "AT_API_KEY", "")
     username = getattr(settings, "AT_USERNAME", "sandbox")
+    sender_id = getattr(settings, "AT_SENDER_ID", "")
 
     if not api_key:
         logger.warning("SMS skipped (AT_API_KEY not set): to=%s msg=%s", phone, message)
         return None
 
+    to = to_intl_phone(phone)
     env = "sandbox" if username == "sandbox" else "live"
     base = f"https://api.{env}.africastalking.com" if env == "sandbox" else "https://api.africastalking.com"
+
+    payload = {"username": username, "to": to, "message": message}
+    if sender_id:
+        payload["from"] = sender_id
 
     try:
         resp = httpx.post(
@@ -62,15 +96,15 @@ def send_sms(phone: str, message: str) -> dict | None:
                 "Accept": "application/json",
                 "Content-Type": "application/x-www-form-urlencoded",
             },
-            data={"username": username, "to": phone, "message": message},
+            data=payload,
             timeout=15,
         )
         resp.raise_for_status()
         data = resp.json()
-        logger.info("SMS sent to %s: %s", phone, data)
+        logger.info("SMS sent to %s: %s", to, data)
         return data
     except Exception as exc:
-        logger.error("SMS failed to %s: %s", phone, exc)
+        logger.error("SMS failed to %s: %s", to, exc)
         raise
 
 

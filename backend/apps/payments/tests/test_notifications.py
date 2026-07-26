@@ -115,6 +115,61 @@ class TestSendSmsSkippedWithoutApiKey:
         assert "AT_API_KEY not set" in caplog.text
 
 
+class TestToIntlPhone:
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            ("0712345678", "+254712345678"),   # local 07…
+            ("712345678", "+254712345678"),    # bare subscriber number
+            ("254712345678", "+254712345678"), # missing leading +
+            ("+254712345678", "+254712345678"),# already E.164
+            ("+254 712 345 678", "+254712345678"),  # spaced
+            ("0110123456", "+254110123456"),   # newer 01… range
+            ("", ""),                          # empty stays empty
+        ],
+    )
+    def test_normalises_kenyan_numbers(self, raw, expected):
+        from apps.payments.notifications import to_intl_phone
+        assert to_intl_phone(raw) == expected
+
+
+class TestSendSmsWiring:
+    """When a key IS set, the AT payload is well-formed: normalised `to`,
+    and a `from` sender ID only when one is configured."""
+
+    @patch("httpx.post")
+    @patch("apps.payments.notifications.settings")
+    def test_sends_normalised_phone_and_sender_id(self, mock_settings, mock_post):
+        mock_settings.AT_API_KEY = "live-key"
+        mock_settings.AT_USERNAME = "wilkem"
+        mock_settings.AT_SENDER_ID = "WILKEM"
+        mock_post.return_value.json.return_value = {"ok": True}
+
+        from apps.payments.notifications import send_sms
+        send_sms("0712345678", "Hi")
+
+        _, kwargs = mock_post.call_args
+        assert kwargs["data"]["to"] == "+254712345678"
+        assert kwargs["data"]["from"] == "WILKEM"
+        # Live username → live host, not sandbox.
+        assert mock_post.call_args[0][0] == \
+            "https://api.africastalking.com/version1/messaging"
+
+    @patch("httpx.post")
+    @patch("apps.payments.notifications.settings")
+    def test_omits_from_when_no_sender_id(self, mock_settings, mock_post):
+        mock_settings.AT_API_KEY = "live-key"
+        mock_settings.AT_USERNAME = "wilkem"
+        mock_settings.AT_SENDER_ID = ""
+        mock_post.return_value.json.return_value = {"ok": True}
+
+        from apps.payments.notifications import send_sms
+        send_sms("+254712345678", "Hi")
+
+        _, kwargs = mock_post.call_args
+        assert "from" not in kwargs["data"]
+
+
 class TestSendEmailSkippedWithoutCredentials:
     @patch("apps.payments.notifications.settings")
     def test_logs_warning_when_no_credentials(self, mock_settings, caplog):
