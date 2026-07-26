@@ -52,6 +52,7 @@ ACCOUNTS = [
     ("4150", "Service Charge / Utilities Reimbursed by Tenants", "income", "4000", "Utility and service costs recovered from tenants."),
     ("4200", "Late Payment Fees / Penalties",       "income", "4000", "Penalties charged on overdue rent."),
     ("4250", "Parking Fees",                        "income", "4000", "Income from parking allocations."),
+    ("4300", "Farm / Agricultural Income",          "income", "4000", "Farm produce and agricultural income (non-tenant, e.g. Nyamira/Soy farms). Recorded via Manual Income."),
     # ── Operating Expenses (5000) ────────────────────────────────────────────
     ("5100", "Property Management Fees",            "expense", "5000", "Fees paid to property managers."),
     ("5200", "Repairs & Maintenance",               "expense", "5000", "Routine upkeep and repairs."),
@@ -69,6 +70,7 @@ ACCOUNTS = [
     ("5920", "Office Expenses",                     "expense", "5000", "General office running costs."),
     ("5930", "Commissions",                         "expense", "5000", "Letting and agent commissions."),
     ("5940", "Bank Fees",                           "expense", "5000", "Bank charges and transaction fees."),
+    ("5950", "Farm Inputs / Operating Costs",       "expense", "5000", "Seeds, fertiliser, feed, and other farm operating inputs."),
     # ── Fixed and Non-Operating Costs (6000) ─────────────────────────────────
     ("6100", "Insurance",                           "expense", "6000", "Property and liability insurance."),
     ("6200", "Property Taxes - Land Rates",         "expense", "6000", "Land rates paid to County Government."),
@@ -101,6 +103,7 @@ EXPENSE_CATEGORIES = [
     ("Office Expenses",                 "5920"),
     ("Commissions",                     "5930"),
     ("Bank Fees",                       "5940"),
+    ("Farm Inputs / Operating Costs",   "5950"),
     ("Insurance",                       "6100"),
     ("Property Taxes - Land Rates",     "6200"),
     ("Property Taxes - Land Rent",      "6300"),
@@ -132,6 +135,7 @@ LEGACY_CATEGORY_TO_CODE = {
 RENT_RESIDENTIAL = "4110"
 RENT_COMMERCIAL = "4120"
 SERVICE_CHARGE_UTILITIES = "4150"   # water / "Other Charges" recovered from tenants
+FARM_INCOME = "4300"                # farm / agricultural produce (non-tenant manual income)
 LATE_FEES = "4200"
 PARKING = "4250"
 VAT_PAYABLE = "2600"                # 16% VAT collected on commercial rent
