@@ -10,8 +10,8 @@
  */
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
-  AlertTriangle, CheckCircle2, ChevronDown, Download, FileText, LogOut,
-  Pencil, Phone, Plus, Search, ShieldCheck, Upload, UserPlus, X, XCircle,
+  AlertTriangle, BellRing, CheckCircle2, ChevronDown, Download, FileText, LogOut,
+  Pencil, Phone, Plus, Search, Send, ShieldCheck, Upload, UserPlus, X, XCircle,
 } from "lucide-react";
 
 
@@ -31,11 +31,12 @@ import {
   useUploadDocument, useVerifyKyc,
 } from "@/hooks/useTenants";
 import { useBuildings } from "@/hooks/useBuildings";
+import { useNotificationTemplates, useSendNotification } from "@/hooks/useNotifications";
 import { useUnits } from "@/hooks/useUnits";
 import { getErrorMessage } from "@/lib/apiError";
 import { cn } from "@/lib/cn";
 import { isNonNegativeAmountOrBlank, isPositiveAmount } from "@/lib/formValidators";
-import type { KycStatus, TenantDetail } from "@/lib/types";
+import type { KycStatus, TenantDetail, TenantListItem } from "@/lib/types";
 import { downloadCsv, downloadPdf } from "@/lib/downloadPdf";
 import { avatarFor } from "@/lib/images";
 
@@ -615,6 +616,140 @@ function FilterSelect({
   );
 }
 
+// ─── Rent reminder (SMS) ─────────────────────────────────────────────────────
+// Fill the template's {placeholders} from the tenant so Osoro previews the exact
+// message. The backend also resolves placeholders on send, but we send the
+// already-resolved text so what he sees is what goes out (WYSIWYG).
+function fillPlaceholders(text: string, t: TenantListItem): string {
+  const now = new Date();
+  const month = now.getMonth() + 1;
+  const year = now.getFullYear();
+  const dueDay = t.due_day || 5;
+  const dueDate = `${year}-${String(month).padStart(2, "0")}-${String(dueDay).padStart(2, "0")}`;
+  const first = t.first_name || t.full_name.split(" ")[0] || "";
+  return text
+    .replaceAll("{tenant_name}", t.full_name)
+    .replaceAll("{first_name}", first)
+    .replaceAll("{unit_label}", t.unit_label)
+    .replaceAll("{building_name}", t.building_name)
+    .replaceAll("{month}", String(month))
+    .replaceAll("{year}", String(year))
+    .replaceAll("{amount}", Number(t.monthly_rent).toLocaleString())
+    .replaceAll("{balance}", Number(t.balance).toLocaleString())
+    .replaceAll("{due_date}", dueDate);
+}
+
+// Rent-related templates, most-relevant first for an arrears reminder.
+const REMINDER_TEMPLATE_KEYS = ["rent_overdue", "rent_reminder"];
+
+function RemindModal({ tenant, onClose }: { tenant: TenantListItem; onClose: () => void }) {
+  const { data: templates } = useNotificationTemplates();
+  const send = useSendNotification();
+  const [templateKey, setTemplateKey] = useState(REMINDER_TEMPLATE_KEYS[0]);
+  const [body, setBody] = useState("");
+
+  const reminderTemplates = useMemo(
+    () => (templates ?? []).filter((t) => REMINDER_TEMPLATE_KEYS.includes(t.key)),
+    [templates],
+  );
+
+  // Reset the editable body whenever the chosen template (or its data) loads.
+  useEffect(() => {
+    const tpl = reminderTemplates.find((t) => t.key === templateKey);
+    if (tpl) setBody(fillPlaceholders(tpl.body, tenant));
+  }, [templateKey, reminderTemplates, tenant]);
+
+  const hasPhone = Boolean(tenant.phone);
+  const canSend = hasPhone && body.trim().length > 0 && !send.isPending;
+
+  const handleSend = async () => {
+    try {
+      const res = await send.mutateAsync({
+        audience: "tenant",
+        tenant_ids: [tenant.id],
+        channel: "sms",
+        template_key: templateKey,
+        subject: "",
+        body: body.trim(),
+      });
+      if (res.sent > 0) {
+        toast.success(`Reminder sent to ${tenant.full_name}`);
+        onClose();
+      } else {
+        const err = res.notifications?.[0]?.error;
+        toast.error(err ? `Could not send: ${err}` : "The SMS could not be sent.");
+      }
+    } catch (e) {
+      toast.error(getErrorMessage(e, "Failed to send the reminder"));
+    }
+  };
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      size="md"
+      eyebrow={`${tenant.building_name} · ${tenant.unit_label}`}
+      title="Send rent reminder"
+    >
+      <div className="space-y-4">
+        <div className="flex items-center justify-between gap-3 rounded-md bg-ink-50 px-3 py-2.5 text-sm dark:bg-ink-800">
+          <div className="min-w-0">
+            <p className="truncate font-medium text-ink-900 dark:text-white">{tenant.full_name}</p>
+            <p className="flex items-center gap-1 text-[11px] text-ink-500">
+              <Phone className="h-3 w-3" /> {tenant.phone || "No phone on file"}
+            </p>
+          </div>
+          <div className="text-right">
+            <p className="font-display text-lg font-semibold text-status-unpaid tabular-nums">
+              KES {Number(tenant.balance).toLocaleString()}
+            </p>
+            <p className="text-[11px] text-ink-500">Outstanding</p>
+          </div>
+        </div>
+
+        <Field label="Template">
+          <select
+            value={templateKey}
+            onChange={(e) => setTemplateKey(e.target.value)}
+            className={inputCls}
+          >
+            {reminderTemplates.map((t) => (
+              <option key={t.key} value={t.key}>{t.label}</option>
+            ))}
+          </select>
+        </Field>
+
+        <Field label="Message (SMS)">
+          <textarea
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+            rows={5}
+            className={inputCls}
+          />
+        </Field>
+        <p className="-mt-2 text-[11px] text-ink-500">
+          {body.length} characters · {Math.max(1, Math.ceil(body.length / 160))} SMS. Sent to the tenant's phone via M-Pesa Paybill instructions.
+        </p>
+
+        {!hasPhone && (
+          <div className="rounded-md bg-status-unpaid/8 p-3 text-sm text-status-unpaid flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+            This tenant has no phone number on file, so an SMS can't be sent. Add one on their profile first.
+          </div>
+        )}
+
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button type="button" onClick={handleSend} loading={send.isPending} disabled={!canSend}>
+            <Send className="h-4 w-4" /> Send SMS
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 // ─── Main Page ───────────────────────────────────────────────────────────────
 export default function TenantsPage() {
   const [searchParams] = useSearchParams();
@@ -627,6 +762,7 @@ export default function TenantsPage() {
   const [search, setSearch] = useState(searchParams.get("q") ?? "");
   const [showForm, setShowForm] = useState(searchParams.get("new") === "1");
   const [selectedTenantId, setSelectedTenantId] = useState<number | null>(null);
+  const [remindTenant, setRemindTenant] = useState<TenantListItem | null>(null);
   const [exporting, setExporting] = useState(false);
 
   useEffect(() => { setSearch(searchParams.get("q") ?? ""); }, [searchParams]);
@@ -784,6 +920,7 @@ export default function TenantsPage() {
                     <TH>Move-in</TH>
                     <TH>Status</TH>
                     <TH>KYC</TH>
+                    <TH className="text-right">Actions</TH>
                   </TR>
                 </THead>
                 <TBody>
@@ -825,6 +962,23 @@ export default function TenantsPage() {
                       </TD>
                       <TD>
                         <Badge tone={KYC_TONE[t.kyc_status]} withDot>{t.kyc_status_display}</Badge>
+                      </TD>
+                      <TD className="text-right">
+                        {t.payment_status === "in_arrears" && t.status !== "moved_out" ? (
+                          <Button
+                            size="sm"
+                            variant="glass"
+                            aria-label={`Send rent reminder to ${t.full_name}`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setRemindTenant(t);
+                            }}
+                          >
+                            <BellRing className="h-3.5 w-3.5" /> Remind
+                          </Button>
+                        ) : (
+                          <span className="text-ink-300">—</span>
+                        )}
                       </TD>
                     </TR>
                   ))}
@@ -871,6 +1025,21 @@ export default function TenantsPage() {
                           {t.payment_status === "in_arrears" ? `KES ${Number(t.balance).toLocaleString()} due` : "Paid up"}
                         </p>
                       </div>
+                      {t.payment_status === "in_arrears" && t.status !== "moved_out" && (
+                        <div className="mt-2 flex justify-end">
+                          <Button
+                            size="sm"
+                            variant="glass"
+                            aria-label={`Send rent reminder to ${t.full_name}`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setRemindTenant(t);
+                            }}
+                          >
+                            <BellRing className="h-3.5 w-3.5" /> Remind
+                          </Button>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </Card>
@@ -882,6 +1051,10 @@ export default function TenantsPage() {
 
       {selectedTenantId && (
         <TenantDetailModal tenantId={selectedTenantId} onClose={() => setSelectedTenantId(null)} />
+      )}
+
+      {remindTenant && (
+        <RemindModal tenant={remindTenant} onClose={() => setRemindTenant(null)} />
       )}
     </>
   );
