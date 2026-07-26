@@ -60,7 +60,7 @@
         .ledger { margin-top: 10px; }
         .ledger th {
             background-color: #f3d9c8; border: 1px solid #b8b8b8;
-            padding: 5px 6px; font-size: 9.5px; text-align: center;
+            padding: 5px 4px; font-size: 9px; font-weight: bold; text-align: center;
         }
         .ledger td { border: 1px solid #cdcdcd; padding: 4px 6px; }
         .ledger .money { text-align: right; }
@@ -156,30 +156,30 @@
     </div>
 
     <!-- ===== ledger ===== -->
-    <table class="ledger">
+    <table class="ledger" style="width: 515px;">
         <thead>
             <tr>
-                <th width="5%">#</th>
-                <th width="14%">Posting Date</th>
-                <th width="43%">Description</th>
-                <th width="12%">Invoice Amount</th>
-                <th width="12%">Payments</th>
-                <th width="14%">Balance</th>
+                <th style="width: 24px;">#</th>
+                <th style="width: 82px;">Posting Date</th>
+                <th style="width: 157px;">Description</th>
+                <th style="width: 86px;">Invoice Amount</th>
+                <th style="width: 78px;">Payments</th>
+                <th style="width: 88px;">Balance</th>
             </tr>
         </thead>
         <tbody>
             {% for row in rows %}
             <tr>
-                <td class="center">{{ row.index }}</td>
-                <td>{{ row.date }}</td>
-                <td>
+                <td class="center" style="width: 24px;">{{ row.index }}</td>
+                <td style="width: 82px;">{{ row.date }}</td>
+                <td style="width: 157px;">
                     {% for line in row.description_lines %}
                         {% if forloop.first %}{{ line }}{% else %}<span class="desc-extra">{{ line }}</span>{% endif %}
                     {% endfor %}
                 </td>
-                <td class="money">{{ row.invoice_amount }}</td>
-                <td class="money">{{ row.payments }}</td>
-                <td class="money bal {% if row.balance_negative %}neg{% endif %}">{{ row.balance }}</td>
+                <td class="money" style="width: 86px;">{{ row.invoice_amount }}</td>
+                <td class="money" style="width: 78px;">{{ row.payments }}</td>
+                <td class="money bal {% if row.balance_negative %}neg{% endif %}" style="width: 88px;">{{ row.balance }}</td>
             </tr>
             {% empty %}
             <tr><td colspan="6" class="center">No transactions on record.</td></tr>

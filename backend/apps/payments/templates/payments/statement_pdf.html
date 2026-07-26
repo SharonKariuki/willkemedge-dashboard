@@ -1,71 +1,72 @@
+{% load static %}
 <!DOCTYPE html>
 <html>
 <head>
     <meta charset="utf-8">
     <title>Rent Statement — {{ tenant_name }}</title>
     <style>
-        @page { size: a4; margin: 1.4cm; }
-        body { font-family: Helvetica, Arial, sans-serif; color: #1a1a1a; font-size: 9.5px; line-height: 1.35; }
+        @page { size: a4; margin: 1.2cm 1.3cm; }
+        body { font-family: "Times New Roman", Times, serif; color: #000000; font-size: 10px; line-height: 1.3; }
 
         table { border-collapse: collapse; width: 100%; }
         td, th { vertical-align: top; }
 
         /* ── masthead ──────────────────────────────────────────────────── */
+        .masthead { border: 1px solid #000000; }
         .masthead td { padding: 0; vertical-align: middle; }
-        .logo-box {
-            background-color: #e11d2e; color: #ffffff; text-align: center;
-            padding: 14px 10px; width: 210px;
-        }
-        .logo-box .logo-main { font-size: 26px; font-weight: bold; letter-spacing: 1px; }
-        .logo-box .logo-sub  { font-size: 11px; letter-spacing: 4px; }
-        .entity-box { padding-left: 16px; }
-        .entity-box .entity-name { font-size: 15px; font-weight: bold; }
-        .entity-box .entity-line { font-size: 9px; color: #1a1a1a; }
-        .entity-box .entity-contact { font-size: 9px; color: #1d4ed8; }
+        .logo-cell { width: 232px; padding: 6px 8px; border-right: 1px solid #000000; text-align: center; }
+        .logo-cell img { width: 216px; }
+        .entity-cell { padding: 6px 10px; }
+        .entity-cell .entity-name { font-size: 15px; font-weight: bold; }
+        .entity-cell .entity-line { font-size: 9.5px; line-height: 1.45; }
+        .entity-cell .entity-strong { font-size: 9.5px; font-weight: bold; line-height: 1.45; }
+        .entity-cell .entity-contact { font-size: 9.5px; color: #1d4ed8; line-height: 1.45; }
 
         /* ── title bar ────────────────────────────────────────────────── */
-        .titlebar { border-top: 1px solid #999; border-bottom: 1px solid #999; padding: 6px 0; margin-top: 12px; }
+        .titlebar { border-top: 1px solid #999999; border-bottom: 1px solid #999999; padding: 5px 0; margin-top: 10px; }
         .titlebar .label { color: #1d4ed8; font-weight: bold; font-size: 12px; }
         .titlebar .date  { text-align: right; color: #1d4ed8; font-weight: bold; font-size: 12px; }
 
         /* ── customer + balance ───────────────────────────────────────── */
-        .who td { border: 1px solid #b8b8b8; padding: 8px 10px; }
-        .who .cust-name  { font-weight: bold; font-size: 11px; }
-        .who .unit-cell  { font-weight: bold; font-size: 11px; }
-        .who .balance-row td { border: 1px solid #b8b8b8; padding: 6px 10px; }
+        .who td { border: 1px solid #000000; padding: 6px 9px; }
+        .who .cust-name  { font-weight: bold; }
+        .who .cust-line  { font-weight: bold; }
+        .who .unit-cell  { font-weight: bold; }
+        .who .balance-row td { border: 1px solid #000000; padding: 5px 9px; }
         .who .balance-label { text-align: right; font-weight: bold; font-size: 11px; }
-        .who .balance-amt   { text-align: right; font-weight: bold; font-size: 14px; }
+        .who .balance-amt   { text-align: right; font-weight: bold; font-size: 13px; }
 
         /* ── summary + payment options ────────────────────────────────── */
-        .panels { margin-top: 10px; }
-        .panels > tr > td { padding-right: 12px; width: 50%; }
-        .panels > tr > td:last-child { padding-right: 0; }
+        .panels { margin-top: 8px; }
+        .panels td { vertical-align: top; }
+        .panels .p-gap { width: 76px; }   /* ~2cm gap between the two columns */
         .panel-title { font-weight: bold; font-size: 11px; margin-bottom: 4px; }
         .panel-title.blue { color: #1d4ed8; font-style: italic; }
 
-        .summary-tbl td { border: 1px solid #c9c9c9; padding: 5px 8px; }
+        .summary-tbl td { border: 1px solid #000000; padding: 4px 8px; font-weight: bold; }
         .summary-tbl .amt { text-align: right; }
-        .summary-tbl .coa { text-align: center; color: #555; font-size: 8.5px; }
         .summary-tbl .grand td { font-weight: bold; }
 
-        .pay-tbl td { padding: 3px 6px; font-size: 9.5px; }
-        .pay-tbl .k { font-style: italic; color: #333; width: 110px; }
+        .pay-tbl td { border: 1px solid #000000; padding: 4px 8px; font-size: 9.5px; }
+        .pay-tbl .k { font-style: italic; width: 100px; }
         .pay-tbl .v { font-weight: bold; }
+        .pay-tbl .full b { font-weight: bold; }
 
-        .note { border: 1px solid #c9c9c9; padding: 6px 8px; margin-top: 10px; font-size: 8.5px; font-style: italic; color: #333; }
+        .note { border: 1px solid #000000; padding: 5px 8px; margin-top: 8px; font-size: 8.5px; font-style: italic; }
 
-        /* ── ledger ───────────────────────────────────────────────────── */
-        .ledger { margin-top: 12px; }
+        /* ── ledger ────────────────────────────────────────────────────── */
+        .ledger { margin-top: 10px; border: 1px solid #000000; }
         .ledger th {
-            background-color: #f3d9c8; border: 1px solid #b8b8b8;
-            padding: 5px 6px; font-size: 9.5px; text-align: center;
+            background-color: #f3d9c8; border: 1px solid #000000;
+            padding: 4px 5px; font-size: 10px; font-weight: bold; text-align: center;
         }
-        .ledger td { border: 1px solid #cdcdcd; padding: 4px 6px; }
-        .ledger .money { text-align: right; }
+        .ledger td {
+            border-left: 1px solid #000000; border-right: 1px solid #000000;
+            border-bottom: 1px dotted #808080; padding: 3px 6px;
+        }
+        .ledger .money { text-align: center; }
         .ledger .center { text-align: center; }
-        .ledger .bal { font-weight: bold; }
-        .ledger .neg { color: #c20000; }
-        .ledger .desc-extra { display: block; font-size: 8.5px; color: #444; }
+        .ledger .desc-extra { display: block; font-size: 8.5px; }
     </style>
 </head>
 <body>
@@ -73,16 +74,15 @@
     <!-- ===== masthead ===== -->
     <table class="masthead">
         <tr>
-            <td class="logo-box">
-                <div class="logo-main">WILKEM</div>
-                <div class="logo-sub">EDGE</div>
+            <td class="logo-cell">
+                <img src="{% static 'payments/wilkem_logo.png' %}" alt="Wilkem Edge Business Arcade">
             </td>
-            <td class="entity-box">
+            <td class="entity-cell">
                 <div class="entity-name">{{ entity_name }}</div>
                 {% if building_address %}<div class="entity-line">{{ building_address }}</div>{% endif %}
                 <div class="entity-line">{{ postal_address }}</div>
-                <div class="entity-line">Tel: {{ contact_phone }}</div>
                 <div class="entity-contact">Email: {{ contact_email }}</div>
+                <div class="entity-line">Tel: {{ contact_phone }}</div>
             </td>
         </tr>
     </table>
@@ -98,14 +98,14 @@
     <!-- ===== customer + balance ===== -->
     <table class="who">
         <tr>
-            <td width="55%">
+            <td width="60%">
                 <div class="cust-name">{{ tenant_name }}</div>
-                {% if care_of %}<div>c/o {{ care_of }}</div>{% endif %}
-                {% if kra_pin %}<div>PIN: {{ kra_pin }}</div>{% endif %}
-                {% if id_number %}<div>ID Card: {{ id_number }}</div>{% endif %}
-                {% if tenant_phone %}<div>Tel: {{ tenant_phone }}</div>{% endif %}
+                {% if care_of %}<div class="cust-line">c/o {{ care_of }}</div>{% endif %}
+                {% if kra_pin %}<div class="cust-line">PIN: {{ kra_pin }}</div>{% endif %}
+                {% if id_number %}<div class="cust-line">ID Card: {{ id_number }}</div>{% endif %}
+                {% if tenant_phone %}<div class="cust-line">Tel: {{ tenant_phone }}</div>{% endif %}
             </td>
-            <td width="45%" class="unit-cell">{{ unit_descriptor }}</td>
+            <td width="40%" class="unit-cell">{{ unit_descriptor }}</td>
         </tr>
         <tr class="balance-row">
             <td class="balance-label">TOTAL BALANCE DUE</td>
@@ -114,9 +114,9 @@
     </table>
 
     <!-- ===== summary + payment options ===== -->
-    <table class="panels">
+    <table class="panels" style="width: 700px;">
         <tr>
-            <td>
+            <td class="p-left" style="width: 312px;">
                 <div class="panel-title">Statement Summary</div>
                 <table class="summary-tbl">
                     <tr>
@@ -139,51 +139,28 @@
                     </tr>
                 </table>
             </td>
-            <td>
-                <div class="panel-title blue">Payment options</div>
+            <td class="p-gap"></td>
+            <td class="p-right" style="width: 312px;">
+                <div class="panel-title">Payment options</div>
                 <table class="pay-tbl">
                     {% if has_bank %}
                     <tr><td class="k">Bank &amp; Branch:</td>
                         <td class="v">{{ bank_name }}{% if bank_branch %}, {{ bank_branch }}{% endif %}</td></tr>
                     <tr><td class="k">Account Number:</td><td class="v">{{ bank_account }}</td></tr>
                     {% if bank_account_name %}
-                    <tr><td class="k">Account Name:</td><td class="v">{{ bank_account_name }}</td></tr>
+                    <tr><td class="k">Account Name:</td><td class="v">{{ bank_account_name }} .</td></tr>
                     {% endif %}
                     {% endif %}
                     {% if has_paybill %}
-                    <tr><td colspan="2">
-                        Or through Paybill No. <b>{{ paybill_number }}</b>{% if paybill_account %} Account: <b>{{ paybill_account }}</b>{% endif %} ;
+                    <tr><td class="full" colspan="2">
+                        Or through Paybill No. <b>{{ paybill_number }}{% if paybill_account %} Account: {{ paybill_account }}{% endif %}</b> ;
                     </td></tr>
                     {% endif %}
                     {% if not has_paybill and not has_bank %}
-                    <tr><td colspan="2">Please contact the management office for payment details.</td></tr>
+                    <tr><td class="full" colspan="2">Please contact the management office for payment details.</td></tr>
                     {% endif %}
                 </table>
             </td>
-        </tr>
-    </table>
-
-    <!-- ===== receipt breakdown (5 named totals) ===== -->
-    <table class="panels">
-        <tr>
-            <td>
-                <div class="panel-title">Receipt Breakdown</div>
-                <table class="summary-tbl">
-                    <tr>
-                        <th style="background:#f3d9c8;border:1px solid #c9c9c9;padding:4px 6px;text-align:left;font-size:9px">Item</th>
-                        <th style="background:#f3d9c8;border:1px solid #c9c9c9;padding:4px 6px;text-align:center;font-size:9px">COA</th>
-                        <th style="background:#f3d9c8;border:1px solid #c9c9c9;padding:4px 6px;text-align:right;font-size:9px">KES</th>
-                    </tr>
-                    {% for label, amount, code, name in breakdown_lines %}
-                    <tr {% if label == "Unpaid Balance" %}class="grand"{% endif %}>
-                        <td>{{ label }}</td>
-                        <td class="coa" title="{{ name }}">{{ code }}</td>
-                        <td class="amt">{{ amount }}</td>
-                    </tr>
-                    {% endfor %}
-                </table>
-            </td>
-            <td></td>
         </tr>
     </table>
 
@@ -193,30 +170,30 @@
     </div>
 
     <!-- ===== ledger ===== -->
-    <table class="ledger">
+    <table class="ledger" style="width: 700px;">
         <thead>
             <tr>
-                <th width="5%">#</th>
-                <th width="14%">Posting Date</th>
-                <th width="43%">Description</th>
-                <th width="12%">Invoice Amount</th>
-                <th width="12%">Payments</th>
-                <th width="14%">Balance</th>
+                <th style="width: 32px;">#</th>
+                <th style="width: 104px;">Posting Date</th>
+                <th style="width: 220px;">Description</th>
+                <th style="width: 118px;">Invoice Amount</th>
+                <th style="width: 106px;">Payments</th>
+                <th style="width: 120px;">Balance</th>
             </tr>
         </thead>
         <tbody>
             {% for row in rows %}
             <tr>
-                <td class="center">{{ row.index }}</td>
-                <td>{{ row.posting_date }}</td>
-                <td>
+                <td class="center" style="width: 32px;">{{ row.index }}</td>
+                <td style="width: 104px;">{{ row.posting_date }}</td>
+                <td style="width: 220px;">
                     {% for line in row.description_lines %}
                         {% if forloop.first %}{{ line }}{% else %}<span class="desc-extra">{{ line }}</span>{% endif %}
                     {% endfor %}
                 </td>
-                <td class="money">{{ row.invoice_amount }}</td>
-                <td class="money">{{ row.payment }}</td>
-                <td class="money bal {% if row.balance_negative %}neg{% endif %}">{{ row.balance }}</td>
+                <td class="money" style="width: 118px;">{{ row.invoice_amount }}</td>
+                <td class="money" style="width: 106px;">{{ row.payment }}</td>
+                <td class="money" style="width: 120px;">{{ row.balance }}</td>
             </tr>
             {% empty %}
             <tr><td colspan="6" class="center">No transactions on record.</td></tr>

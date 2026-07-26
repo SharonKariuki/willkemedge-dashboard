@@ -9,6 +9,7 @@ care_of, descriptor, building address) into an SSRF + data-exfiltration sink.
 import io
 import logging
 import os
+import re
 
 from django.conf import settings
 from django.contrib.staticfiles import finders
@@ -40,7 +41,17 @@ def _safe_link_callback(uri: str, rel):
     media_url = (getattr(settings, "MEDIA_URL", "/media/") or "/media/").rstrip("/")
 
     if static_url and uri.startswith(static_url + "/"):
-        match = finders.find(uri[len(static_url) + 1:])
+        rel = uri[len(static_url) + 1:]
+        match = finders.find(rel)
+        if not match:
+            # Under ManifestStaticFilesStorage (production/WhiteNoise) {% static %}
+            # emits a hashed name like "logo.a1b2c3d4.png"; the PDF renderer
+            # resolves against SOURCE files, which only know the un-hashed name.
+            # Strip the hash and retry so the asset (e.g. the letterhead logo)
+            # still embeds instead of silently disappearing.
+            stripped = re.sub(r"\.[0-9a-f]{8,}(\.\w+)$", r"\1", rel)
+            if stripped != rel:
+                match = finders.find(stripped)
         if match and os.path.exists(match):
             return match
 
