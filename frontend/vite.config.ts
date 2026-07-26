@@ -1,8 +1,8 @@
-/// <reference types="vitest/config" />
 import react from "@vitejs/plugin-react";
 import path from "node:path";
-import { defineConfig } from "vite";
-import { configDefaults } from "vitest/config";
+// defineConfig from vitest/config carries the `test` types, so no triple-slash
+// reference directive is needed (and the lint rule forbids one alongside this import).
+import { configDefaults, defineConfig } from "vitest/config";
 
 export default defineConfig({
   plugins: [react()],
