@@ -17,6 +17,25 @@ import { useUnitStatusSummary, useUnits } from "@/hooks/useUnits";
 import { cn } from "@/lib/cn";
 import type { UnitStatus } from "@/lib/types";
 
+/** Short, card-friendly property label. Every property shares the
+ *  "Wilkem Edge/Ventures" brand and generic type words, so we strip those and
+ *  keep the distinguishing location (e.g. "Donholm", "Arcade Matasia"). Falls
+ *  back to the original name if stripping leaves nothing. */
+function shortBuilding(name: string): string {
+  const short = name
+    .replace(/\bwilkem(\s+edge|\s+ventures)?\b/gi, "")
+    .replace(/\bbusiness\s+arcade\b/gi, "Arcade")
+    .replace(/\bcommercial\s*&?\s*residential\s+properties\b/gi, "")
+    .replace(/\b(residential\s+)?apartments?\b/gi, "")
+    .replace(/\bproperties\b/gi, "")
+    .replace(/\bestate\b/gi, "")
+    .replace(/[,–—]/g, " ")
+    .replace(/\s*-\s*/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return short || name;
+}
+
 const STATUS_FILTERS = [
   { value: "", label: "All statuses", tone: "neutral" as const },
   { value: "vacant", label: "Vacant", tone: "vacant" as const },
@@ -203,8 +222,8 @@ export default function UnitsPage() {
                   <p className="truncate font-display text-xl font-semibold text-ink-900">
                     {unit.label}
                   </p>
-                  <p className="mt-0.5 truncate text-[11px] text-ink-400">
-                    {unit.building_name}
+                  <p className="mt-0.5 truncate text-[11px] text-ink-400" title={unit.building_name}>
+                    {shortBuilding(unit.building_name)}
                   </p>
                 </div>
                 <StatusBadge status={unit.status as UnitStatus} />
