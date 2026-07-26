@@ -1,4 +1,4 @@
-import { Home, Search, Sparkles, User } from "lucide-react";
+import { ChevronDown, Home, Search, User } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
@@ -18,13 +18,42 @@ import { cn } from "@/lib/cn";
 import type { UnitStatus } from "@/lib/types";
 
 const STATUS_FILTERS = [
-  { value: "", label: "All", tone: "neutral" as const },
+  { value: "", label: "All statuses", tone: "neutral" as const },
   { value: "vacant", label: "Vacant", tone: "vacant" as const },
   { value: "occupied_paid", label: "Paid", tone: "paid" as const },
   { value: "occupied_partial", label: "Partial", tone: "partial" as const },
   { value: "occupied_unpaid", label: "Unpaid", tone: "unpaid" as const },
   { value: "arrears", label: "Arrears", tone: "unpaid" as const },
 ];
+
+function FilterSelect({
+  label, value, onChange, options,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  options: { value: string; label: string }[];
+}) {
+  return (
+    <div className="relative">
+      <select
+        aria-label={label}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className={cn(
+          "h-full w-full appearance-none rounded-md border border-border bg-surface py-2.5 pl-3.5 pr-9 text-sm transition-colors",
+          "focus:border-teal-600 focus:outline-none focus:ring-2 focus:ring-ring/25",
+          value ? "font-medium text-content" : "text-content-muted",
+        )}
+      >
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>{o.label}</option>
+        ))}
+      </select>
+      <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-content-muted" />
+    </div>
+  );
+}
 
 const STATUS_RAIL: Record<UnitStatus, string> = {
   vacant: "bg-status-vacant",
@@ -68,75 +97,42 @@ export default function UnitsPage() {
 
       {/* Summary strip */}
       {summary ? (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-7">
+          {/* Total — gradient hero, matching the dashboard "Collected" card */}
+          <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-navy-600 via-navy-800 to-navy-900 px-3 py-2 text-center text-white shadow-lg">
+            <div aria-hidden className="pointer-events-none absolute -right-8 -top-10 h-24 w-24 rounded-full bg-teal-500/25 blur-2xl" />
+            <p className="relative text-[9px] font-medium uppercase tracking-[0.14em] text-white/60">
+              Total
+            </p>
+            <p className="relative mt-0.5 font-display text-lg font-semibold tabular-nums">
+              {summary.total}
+            </p>
+          </div>
+          {/* Status counts + occupancy — glass cards, value coloured by status */}
           {[
-            { label: "Total", value: summary.total, tone: "peri" as const },
-            { label: "Vacant", value: summary.vacant, tone: "vacant" as const },
-            { label: "Paid", value: summary.occupied_paid, tone: "paid" as const },
-            { label: "Partial", value: summary.occupied_partial, tone: "partial" as const },
-            { label: "Unpaid", value: summary.occupied_unpaid, tone: "unpaid" as const },
-            { label: "Arrears", value: summary.arrears, tone: "unpaid" as const },
+            { label: "Vacant", value: summary.vacant, valueCls: "text-ink-600 dark:text-ink-300" },
+            { label: "Paid", value: summary.occupied_paid, valueCls: "text-status-paid" },
+            { label: "Partial", value: summary.occupied_partial, valueCls: "text-status-partial" },
+            { label: "Unpaid", value: summary.occupied_unpaid, valueCls: "text-status-unpaid" },
+            { label: "Arrears", value: summary.arrears, valueCls: "text-status-unpaid" },
+            { label: "Occupancy", value: `${occupancyPct}%`, valueCls: "text-teal-700 dark:text-teal-400" },
           ].map((c) => (
             <Card key={c.label} variant="glass" padding="none" className="px-3 py-2 text-center">
               <p className="text-[9px] font-medium uppercase tracking-[0.14em] text-ink-500">
                 {c.label}
               </p>
-              <p className="mt-0.5 font-display text-lg font-semibold text-ink-900 tabular-nums">
+              <p className={cn("mt-0.5 font-display text-lg font-semibold tabular-nums", c.valueCls)}>
                 {c.value}
               </p>
             </Card>
           ))}
         </div>
       ) : (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-          {Array.from({ length: 6 }).map((_, i) => (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-7">
+          {Array.from({ length: 7 }).map((_, i) => (
             <Skeleton key={i} className="h-12" />
           ))}
         </div>
-      )}
-
-      {summary && (
-        <Card variant="glass" padding="md" className="relative overflow-hidden">
-          <div className="pointer-events-none absolute -right-20 -top-20 h-64 w-64 rounded-full bg-sage-400/20 blur-3xl" />
-          <div className="relative flex flex-wrap items-center gap-6">
-            <div>
-              <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-ink-500">
-                Occupancy rate
-              </p>
-              <p className="mt-1 font-display text-4xl font-semibold text-ink-900">{occupancyPct}%</p>
-            </div>
-            <div className="flex-1 min-w-[200px]">
-              <div className="flex h-3 w-full overflow-hidden rounded-full bg-ink-100/60">
-                <div
-                  className="bg-status-paid transition-all"
-                  style={{ width: `${(summary.occupied_paid / Math.max(summary.total, 1)) * 100}%` }}
-                />
-                <div
-                  className="bg-status-partial transition-all"
-                  style={{ width: `${(summary.occupied_partial / Math.max(summary.total, 1)) * 100}%` }}
-                />
-                <div
-                  className="bg-status-unpaid transition-all"
-                  style={{ width: `${((summary.occupied_unpaid + summary.arrears) / Math.max(summary.total, 1)) * 100}%` }}
-                />
-              </div>
-              <div className="mt-2 flex flex-wrap gap-3 text-[11px]">
-                <span className="flex items-center gap-1.5">
-                  <span className="h-1.5 w-1.5 rounded-full bg-status-paid" />
-                  <span className="text-ink-500">Paid</span>
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <span className="h-1.5 w-1.5 rounded-full bg-status-partial" />
-                  <span className="text-ink-500">Partial</span>
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <span className="h-1.5 w-1.5 rounded-full bg-status-unpaid" />
-                  <span className="text-ink-500">Unpaid / Arrears</span>
-                </span>
-              </div>
-            </div>
-          </div>
-        </Card>
       )}
 
       {/* Filters */}
@@ -149,38 +145,23 @@ export default function UnitsPage() {
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
-        <select
-          value={buildingFilter}
-          onChange={(e) => setBuildingFilter(e.target.value)}
-          className="glass rounded-md px-3 py-2.5 text-sm text-ink-900 focus:outline-none"
-        >
-          <option value="">All buildings</option>
-          {buildings?.map((b) => (
-            <option key={b.id} value={b.id}>
-              {b.name}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      <div className="flex flex-wrap gap-1.5">
-        {STATUS_FILTERS.map((f) => {
-          const active = statusFilter === f.value;
-          return (
-            <button
-              key={f.value || "all"}
-              onClick={() => setStatusFilter(f.value)}
-              className={cn(
-                "rounded-full px-3 py-1.5 text-xs font-medium transition-all",
-                active
-                  ? "bg-ink-900 text-canvas shadow-float dark:bg-ink-100 dark:text-canvas"
-                  : "glass text-ink-700 hover:shadow-glass"
-              )}
-            >
-              {f.label}
-            </button>
-          );
-        })}
+        <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+          <FilterSelect
+            label="Filter by status"
+            value={statusFilter}
+            onChange={setStatusFilter}
+            options={STATUS_FILTERS.map((f) => ({ value: f.value, label: f.label }))}
+          />
+          <FilterSelect
+            label="Filter by building"
+            value={buildingFilter}
+            onChange={setBuildingFilter}
+            options={[
+              { value: "", label: "All buildings" },
+              ...(buildings ?? []).map((b) => ({ value: String(b.id), label: b.name })),
+            ]}
+          />
+        </div>
       </div>
 
       {/* Grid */}
@@ -257,20 +238,14 @@ export default function UnitsPage() {
                   </Badge>
                 </div>
 
-                <div className="mt-3 flex items-center justify-between gap-2 text-[11px] text-ink-500">
-                  {unit.floor !== undefined && (
-                    <span className="flex items-center gap-1">
-                      <Sparkles className="h-3 w-3" />
-                      Floor {unit.floor}
-                    </span>
-                  )}
-                  {unit.current_tenant_name && (
+                {unit.current_tenant_name && (
+                  <div className="mt-3 flex items-center gap-2 text-[11px] text-ink-500">
                     <span className="flex min-w-0 items-center gap-1 text-ink-600">
                       <User className="h-3 w-3 shrink-0" />
                       <span className="truncate">{unit.current_tenant_name}</span>
                     </span>
-                  )}
-                </div>
+                  </div>
+                )}
               </div>
             </Card>
             );
