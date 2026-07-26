@@ -1,4 +1,9 @@
 
+# Secrets — never commit (live credentials live here)
+.env
+.env.*
+!.env.example
+
 # Real tenant PII — never commit
 property_roll.csv
 tmp_verify.db*

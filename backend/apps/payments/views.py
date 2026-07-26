@@ -1,6 +1,7 @@
 """Payment API views."""
 import random
 import string
+from decimal import Decimal
 
 from django.db import transaction as db_transaction
 from django.shortcuts import get_object_or_404
@@ -95,6 +96,7 @@ class PaymentViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         data = serializer.validated_data
+        reference = data.get("reference", "")
         payment = process_payment(
             tenant=data["tenant"],
             amount=data["amount"],
@@ -102,8 +104,12 @@ class PaymentViewSet(viewsets.ModelViewSet):
             period_month=data["period_month"],
             period_year=data["period_year"],
             source=data.get("source", "cash"),
-            reference=data.get("reference", ""),
+            reference=reference,
             notes=data.get("notes", ""),
+            # A referenced manual payment is a single event: dedupe double-submits
+            # (retry / double-click) on (its reference). Blank reference = no key,
+            # so unreferenced cash entries behave exactly as before.
+            idempotency_key=reference,
         )
         send_payment_confirmation.delay(payment.id)
 
@@ -141,6 +147,7 @@ class PaymentViewSet(viewsets.ModelViewSet):
 
         now = timezone.now()
         source = data["source"]
+        mock_reference = _mock_reference(source)
         payment = process_payment(
             tenant=tenant,
             amount=data["amount"],
@@ -148,8 +155,9 @@ class PaymentViewSet(viewsets.ModelViewSet):
             period_month=now.month,
             period_year=now.year,
             source=source,
-            reference=_mock_reference(source),
+            reference=mock_reference,
             notes=_mock_notes(source),
+            idempotency_key=mock_reference,
         )
         return Response(
             PaymentSerializer(payment).data,
@@ -202,17 +210,26 @@ class ArrearsViewSet(viewsets.ReadOnlyModelViewSet):
             return Response({"detail": "Already cleared."}, status=400)
 
         notes = request.data.get("notes", "Waived by admin")
-        amount = arrears.balance
 
-        arrears.waived_amount = amount
-        arrears.balance = 0
-        arrears.is_cleared = True
-        arrears.waive_notes = notes
-        arrears.save()
+        with db_transaction.atomic():
+            # Fold the outstanding balance into any prior waiver rather than
+            # overwriting it, so a partial waiver already on record is not lost.
+            arrears.waived_amount = (arrears.waived_amount or Decimal("0")) + arrears.balance
+            arrears.balance = Decimal("0")
+            arrears.is_cleared = True
+            arrears.waive_notes = notes
+            arrears.save()
 
-        # Update unit status if cleared
-        from apps.buildings.services import recalculate_unit_status
-        recalculate_unit_status(arrears.tenant.unit, float(arrears.amount_paid))
+            # Reflect the waiver in unit status only for the current period —
+            # waiving an old period must not disturb the live unit. Feed the
+            # *covered* figure (cash paid + waived) as a Decimal so a full
+            # waiver reads as PAID instead of PARTIAL. (Passing cash-only, and
+            # as a float, was the previous bug.)
+            now = timezone.now()
+            if arrears.period_month == now.month and arrears.period_year == now.year:
+                from apps.buildings.services import recalculate_unit_status
+                covered = arrears.amount_paid + arrears.waived_amount
+                recalculate_unit_status(arrears.tenant.unit, covered)
 
         return Response(ArrearsSerializer(arrears).data)
 

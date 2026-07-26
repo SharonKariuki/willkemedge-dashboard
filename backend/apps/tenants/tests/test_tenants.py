@@ -192,6 +192,23 @@ class TenantLifecycleTests(APITestCase):
         )
         assert resp.status_code == status.HTTP_400_BAD_REQUEST
 
+    def test_upload_rejects_spoofed_content(self):
+        """A payload disguised with a valid MIME + extension but wrong magic
+        bytes must be rejected by the content sniff."""
+        create_resp = self.client.post("/api/tenants/", self._tenant_payload(), format="json")
+        tid = create_resp.json()["id"]
+
+        # Declares image/png + .png, but the bytes are HTML — not a real PNG.
+        spoof = SimpleUploadedFile(
+            "id.png", b"<html><script>alert(1)</script></html>", content_type="image/png"
+        )
+        resp = self.client.post(
+            f"/api/tenants/{tid}/documents/",
+            {"file": spoof, "doc_type": "id_front"},
+            format="multipart",
+        )
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+
     def test_list_documents(self):
         create_resp = self.client.post("/api/tenants/", self._tenant_payload(), format="json")
         tid = create_resp.json()["id"]

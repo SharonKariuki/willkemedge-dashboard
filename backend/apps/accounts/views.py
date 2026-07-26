@@ -11,7 +11,12 @@ from .serializers import (
     PasswordResetConfirmSerializer,
     UserSerializer,
 )
-from .services import clear_failed_attempts, is_locked_out, record_login_attempt
+from .services import (
+    clear_failed_attempts,
+    get_client_ip,
+    is_locked_out,
+    record_login_attempt,
+)
 
 
 class HealthView(APIView):
@@ -27,8 +32,9 @@ class LoginView(APIView):
 
     def post(self, request, *args, **kwargs):
         email = (request.data.get("email") or "").lower().strip()
+        ip_address = get_client_ip(request)
 
-        if email and is_locked_out(email):
+        if email and is_locked_out(email, ip_address):
             record_login_attempt(email=email, request=request, successful=False)
             return Response(
                 {"detail": "Account temporarily locked. Try again in 30 minutes."},

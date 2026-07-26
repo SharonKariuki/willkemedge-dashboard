@@ -10,6 +10,7 @@ import {
   CardHeader,
   CardTitle,
   EmptyState,
+  ErrorState,
   PageHeader,
   Skeleton,
   Switch,
@@ -53,7 +54,7 @@ export default function SettingsPage() {
   const { user: rawUser, logout } = useAuth();
   const user = rawUser as StoredUser | null;
   const qc = useQueryClient();
-  const { data: audit, isLoading } = useLoginAudit();
+  const { data: audit, isLoading, isError, refetch } = useLoginAudit();
   const { prefs, setView, resetViews } = useViewPreferences();
   const togglableItems = NAV_ITEMS.filter((i) => i.togglable);
   const hiddenCount = togglableItems.filter((i) => !prefs[i.key]).length;
@@ -361,6 +362,12 @@ export default function SettingsPage() {
               <Skeleton key={i} className="h-14" />
             ))}
           </div>
+        ) : isError ? (
+          <ErrorState
+            title="Login activity could not be loaded."
+            description="This is a security view — try again to see recent sign-in attempts."
+            onRetry={() => refetch()}
+          />
         ) : !audit?.length ? (
           <EmptyState
             icon={<Shield className="h-5 w-5" />}

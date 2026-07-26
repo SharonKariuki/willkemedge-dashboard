@@ -6,9 +6,10 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APIClient, APITestCase
 
-from apps.buildings.models import Building, Unit, UnitStatus
-from apps.payments.models import Arrears, Payment
+from apps.buildings.models import Building, Unit, UnitClassification, UnitStatus
+from apps.payments.models import Arrears, Payment, Transaction
 from apps.payments.services import process_payment
+from apps.payments.tax_service import split_tax_inclusive
 from apps.tenants.models import Tenant
 
 User = get_user_model()
@@ -190,6 +191,36 @@ class PaymentProcessingTests(APITestCase):
         assert arrears.balance == Decimal("4000")
         assert not arrears.is_cleared
 
+    def test_waive_endpoint_marks_current_unit_paid(self):
+        """Waiving the current-period balance must leave the unit PAID, not PARTIAL.
+
+        Previously the endpoint recalculated status from cash paid only, so a
+        partially-paid period that was then fully waived left the unit stuck at
+        OCCUPIED_PARTIAL. It must reflect paid + waived == rent → PAID.
+        """
+        month, year = self._now()
+        process_payment(
+            tenant=self.tenant,
+            amount=Decimal("4000"),
+            payment_date=timezone.now().date(),
+            period_month=month,
+            period_year=year,
+        )
+        arrears = Arrears.objects.get(tenant=self.tenant, period_month=month, period_year=year)
+        self.unit.refresh_from_db()
+        assert self.unit.status == UnitStatus.OCCUPIED_PARTIAL
+
+        resp = self.client.post(f"/api/arrears/{arrears.id}/waive/")
+        assert resp.status_code == status.HTTP_200_OK
+
+        arrears.refresh_from_db()
+        assert arrears.is_cleared
+        assert arrears.balance == Decimal("0")
+        assert arrears.waived_amount == Decimal("6000")
+
+        self.unit.refresh_from_db()
+        assert self.unit.status == UnitStatus.OCCUPIED_PAID
+
     # --- API-level tests -----------------------------------------------
 
     def test_create_payment_via_api(self):
@@ -268,3 +299,133 @@ class PaymentProcessingTests(APITestCase):
         anon = APIClient()
         resp = anon.get("/api/payments/")
         assert resp.status_code == 401
+
+    # --- Idempotency (double-processing guard) -------------------------
+
+    def test_idempotency_key_prevents_double_booking(self):
+        """A re-submitted payment with the same key returns the original and
+        does not double-reduce arrears."""
+        month, year = self._now()
+        kwargs = dict(
+            tenant=self.tenant,
+            amount=Decimal("10000"),
+            payment_date=timezone.now().date(),
+            period_month=month,
+            period_year=year,
+            source="mpesa",
+            reference="TXID-DUP-1",
+            idempotency_key="TXID-DUP-1",
+        )
+        first = process_payment(**kwargs)
+        second = process_payment(**kwargs)
+
+        assert first.id == second.id  # same row returned, not a new booking
+        assert Payment.objects.filter(tenant=self.tenant).count() == 1
+        arrears = Arrears.objects.get(tenant=self.tenant, period_month=month, period_year=year)
+        assert arrears.balance == Decimal("0")  # cleared exactly once
+
+    def test_blank_key_allows_shared_reference(self):
+        """FIFO splits one credit into several rows sharing a reference; a blank
+        idempotency key must never dedupe them."""
+        month, year = self._now()
+        for _ in range(2):
+            process_payment(
+                tenant=self.tenant,
+                amount=Decimal("2000"),
+                payment_date=timezone.now().date(),
+                period_month=month,
+                period_year=year,
+                source="bank",
+                reference="SHARED-REF",  # same ref, no idempotency_key
+            )
+        assert Payment.objects.filter(tenant=self.tenant, reference="SHARED-REF").count() == 2
+
+    def test_double_post_same_reference_is_idempotent(self):
+        """Double-submitting the create API with the same reference books once."""
+        month, year = self._now()
+        body = {
+            "tenant": self.tenant.id,
+            "amount": "10000.00",
+            "payment_date": timezone.now().date().isoformat(),
+            "period_month": month,
+            "period_year": year,
+            "source": "mpesa",
+            "reference": "TXID-API-1",
+        }
+        r1 = self.client.post("/api/payments/", body, format="json")
+        r2 = self.client.post("/api/payments/", body, format="json")
+        assert r1.status_code == status.HTTP_201_CREATED
+        assert r2.status_code in (status.HTTP_200_OK, status.HTTP_201_CREATED)
+        assert Payment.objects.filter(tenant=self.tenant, reference="TXID-API-1").count() == 1
+
+
+class CommercialVatTransactionTests(APITestCase):
+    """process_payment must split VAT OUT of a commercial gross receipt for the
+    Transaction/receipt — matching the ledger — never gross it up on top."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.building = Building.objects.create(name="MC Arcade", code="MCG", total_floors=1)
+        cls.unit = Unit.objects.create(
+            building=cls.building,
+            label="MCG01",
+            monthly_rent=Decimal("24000"),  # base (ex-VAT) per import_matasia
+            classification=UnitClassification.BUSINESS,
+            status=UnitStatus.OCCUPIED_UNPAID,
+        )
+        cls.tenant = Tenant.objects.create(
+            first_name="Comm", last_name="Tenant", id_number="MC001",
+            phone="+254700000900", unit=cls.unit,
+            monthly_rent=Decimal("24000"), move_in_date="2026-01-01",
+        )
+
+    def test_commercial_transaction_splits_vat_out_of_gross(self):
+        now = timezone.now()
+        # Tenant pays the gross figure: 24,000 rent + 3,840 VAT = 27,840.
+        payment = process_payment(
+            tenant=self.tenant,
+            amount=Decimal("27840.00"),
+            payment_date=now.date(),
+            period_month=now.month,
+            period_year=now.year,
+            source="mpesa",
+            reference="MC-TXN-1",
+        )
+        # Payment.amount stays the gross received (the ledger + arrears read it).
+        assert payment.amount == Decimal("27840.00")
+
+        txn = Transaction.objects.get(payment=payment)
+        assert txn.base_amount == Decimal("24000.00")   # net income
+        assert txn.tax_amount == Decimal("3840.00")     # 16% VAT
+        assert txn.total_amount == Decimal("27840.00")  # gross == payment.amount
+        # net + vat reconciles to the gross exactly.
+        assert txn.base_amount + txn.tax_amount == payment.amount
+
+    def test_residential_transaction_has_no_vat(self):
+        res_unit = Unit.objects.create(
+            building=self.building, label="DON1A",
+            monthly_rent=Decimal("20000"),
+            classification=UnitClassification.RESIDENTIAL,
+            status=UnitStatus.OCCUPIED_UNPAID,
+        )
+        res_tenant = Tenant.objects.create(
+            first_name="Res", last_name="Tenant", id_number="RES001",
+            phone="+254700000901", unit=res_unit,
+            monthly_rent=Decimal("20000"), move_in_date="2026-01-01",
+        )
+        now = timezone.now()
+        payment = process_payment(
+            tenant=res_tenant, amount=Decimal("20000.00"),
+            payment_date=now.date(), period_month=now.month, period_year=now.year,
+        )
+        txn = Transaction.objects.get(payment=payment)
+        assert txn.base_amount == Decimal("20000.00")
+        assert txn.tax_amount == Decimal("0.00")
+        assert txn.total_amount == Decimal("20000.00")
+
+    def test_split_tax_inclusive_reconciles(self):
+        r = split_tax_inclusive(Decimal("27840.00"), UnitClassification.BUSINESS)
+        assert r.base_amount == Decimal("24000.00")
+        assert r.tax_amount == Decimal("3840.00")
+        assert r.total_amount == Decimal("27840.00")
+        assert r.base_amount + r.tax_amount == r.total_amount

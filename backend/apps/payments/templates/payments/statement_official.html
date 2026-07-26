@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Rent Statement — {{ tenant_name }}</title>
+    <style>
+        @page { size: a4; margin: 1.4cm; }
+        body { font-family: Helvetica, Arial, sans-serif; color: #1a1a1a; font-size: 9.5px; line-height: 1.35; }
+
+        table { border-collapse: collapse; width: 100%; }
+        td, th { vertical-align: top; }
+
+        /* ── masthead ──────────────────────────────────────────────────── */
+        .masthead td { padding: 0; vertical-align: middle; }
+        .logo-box {
+            background-color: #e11d2e; color: #ffffff; text-align: center;
+            padding: 12px 10px; width: 210px;
+        }
+        .logo-box .logo-main { font-size: 26px; font-weight: bold; letter-spacing: 1px; }
+        .logo-box .logo-edge { font-size: 15px; font-weight: bold; font-style: italic; }
+        .logo-box .logo-sub  { font-size: 9px; letter-spacing: 3px; }
+        .entity-box { padding-left: 16px; }
+        .entity-box .entity-name { font-size: 16px; font-weight: bold; }
+        .entity-box .entity-line { font-size: 9.5px; color: #1a1a1a; }
+        .entity-box .entity-contact { font-size: 9px; color: #1d4ed8; }
+
+        /* ── title bar ────────────────────────────────────────────────── */
+        .titlebar { border-top: 1px solid #999; border-bottom: 1px solid #999; padding: 6px 0; margin-top: 12px; }
+        .titlebar .label { color: #1d4ed8; font-weight: bold; font-size: 12px; }
+        .titlebar .date  { text-align: right; color: #1d4ed8; font-weight: bold; font-size: 12px; }
+
+        /* ── customer + balance ───────────────────────────────────────── */
+        .who td { border: 1px solid #b8b8b8; padding: 8px 10px; }
+        .who .cust-name  { font-weight: bold; font-size: 11px; }
+        .who .unit-cell  { font-weight: bold; font-size: 11px; }
+        .who .balance-row td { border: 1px solid #b8b8b8; padding: 6px 10px; }
+        .who .balance-label { text-align: right; font-weight: bold; font-size: 12px; }
+        .who .balance-amt   { text-align: right; font-weight: bold; font-size: 15px; }
+
+        /* ── summary + payment options ────────────────────────────────── */
+        .panels { margin-top: 8px; }
+        .panels > tr > td { padding-right: 12px; width: 50%; }
+        .panels > tr > td:last-child { padding-right: 0; }
+        .panel-title { font-weight: bold; font-size: 11px; margin-bottom: 4px; }
+        .panel-title.blue { color: #1d4ed8; font-style: italic; }
+
+        .summary-tbl td { border: 1px solid #c9c9c9; padding: 5px 8px; }
+        .summary-tbl .amt { text-align: right; }
+        .summary-tbl .grand td { font-weight: bold; }
+
+        .pay-tbl td { padding: 3px 6px; font-size: 9.5px; }
+        .pay-tbl .k { font-style: italic; color: #333; width: 130px; }
+        .pay-tbl .v { font-weight: bold; }
+
+        .note { border: 1px solid #c9c9c9; padding: 6px 8px; margin-top: 6px; font-size: 8.5px; font-style: italic; color: #333; }
+        .terms { border: 1px solid #c9c9c9; padding: 6px 8px; margin-top: 8px; font-size: 9px; }
+        .terms b { font-style: italic; }
+
+        /* ── ledger ───────────────────────────────────────────────────── */
+        .ledger { margin-top: 10px; }
+        .ledger th {
+            background-color: #f3d9c8; border: 1px solid #b8b8b8;
+            padding: 5px 6px; font-size: 9.5px; text-align: center;
+        }
+        .ledger td { border: 1px solid #cdcdcd; padding: 4px 6px; }
+        .ledger .money { text-align: right; }
+        .ledger .center { text-align: center; }
+        .ledger .bal { font-weight: bold; }
+        .ledger .neg { color: #c20000; }
+        .ledger .desc-extra { display: block; font-size: 8.5px; color: #444; }
+    </style>
+</head>
+<body>
+
+    <!-- ===== masthead ===== -->
+    <table class="masthead">
+        <tr>
+            <td class="logo-box">
+                <div class="logo-main">WILKEM <span class="logo-edge">edge</span></div>
+                <div class="logo-sub">BUSINESS ARCADE</div>
+            </td>
+            <td class="entity-box">
+                <div class="entity-name">{{ entity_name }}</div>
+                <div class="entity-line">{{ entity_location }}</div>
+                <div class="entity-line">{{ postal_address }}</div>
+                <div class="entity-line">Tel: {{ contact_phone }}</div>
+                <div class="entity-contact">{{ contact_email }}</div>
+            </td>
+        </tr>
+    </table>
+
+    <!-- ===== title bar ===== -->
+    <table class="titlebar">
+        <tr>
+            <td class="label">CUSTOMER RENT STATEMENT AT</td>
+            <td class="date">{{ statement_date }}</td>
+        </tr>
+    </table>
+
+    <!-- ===== customer + balance ===== -->
+    <table class="who">
+        <tr>
+            <td width="55%">
+                <div class="cust-name">{{ tenant_name }}</div>
+                {% if pin %}<div>PIN: {{ pin }}</div>{% endif %}
+                {% if id_number %}<div>ID Card: {{ id_number }}</div>{% endif %}
+                {% if phone %}<div>Tel: {{ phone }}</div>{% endif %}
+            </td>
+            <td width="45%" class="unit-cell">{{ unit_descriptor }}</td>
+        </tr>
+        <tr class="balance-row">
+            <td class="balance-label">TOTAL BALANCE DUE</td>
+            <td class="balance-amt">Ksh{{ total_due_whole }}</td>
+        </tr>
+    </table>
+
+    <!-- ===== summary + payment options ===== -->
+    <table class="panels">
+        <tr>
+            <td>
+                <div class="panel-title">Statement Summary</div>
+                <table class="summary-tbl">
+                    <tr>
+                        <td>Arrears/ Others</td>
+                        <td class="amt">{{ arrears_others }}</td>
+                    </tr>
+                    <tr>
+                        <td>Current Month</td>
+                        <td class="amt">{{ current_month }}</td>
+                    </tr>
+                    <tr class="grand">
+                        <td>Total KES Due:</td>
+                        <td class="amt">Ksh{{ total_due }}</td>
+                    </tr>
+                </table>
+                <div class="note">
+                    ** Kindly note that ALL PAYMENTS should made to the Paybill / Bank account
+                    given in the Payment Options
+                </div>
+            </td>
+            <td>
+                <div class="panel-title blue">Payment options</div>
+                <table class="pay-tbl">
+                    <tr><td class="k">M-Pesa:</td><td class="v">Pay Bill no. {{ paybill_number }}</td></tr>
+                    <tr><td class="k">Account No.:</td><td class="v">{{ paybill_account }}</td></tr>
+                    <tr><td class="k">Cooperative Bank:</td><td class="v">A/C No. {{ bank_account }}</td></tr>
+                    <tr><td class="k">Branch:</td><td class="v">{{ bank_branch }}</td></tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+
+    <div class="terms">
+        <b>Payment Terms:</b> The total amount payable is due on or before the
+        {{ due_day_ordinal }} day of the Billing Month.
+    </div>
+
+    <!-- ===== ledger ===== -->
+    <table class="ledger">
+        <thead>
+            <tr>
+                <th width="5%">#</th>
+                <th width="14%">Posting Date</th>
+                <th width="43%">Description</th>
+                <th width="12%">Invoice Amount</th>
+                <th width="12%">Payments</th>
+                <th width="14%">Balance</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in rows %}
+            <tr>
+                <td class="center">{{ row.index }}</td>
+                <td>{{ row.date }}</td>
+                <td>
+                    {% for line in row.description_lines %}
+                        {% if forloop.first %}{{ line }}{% else %}<span class="desc-extra">{{ line }}</span>{% endif %}
+                    {% endfor %}
+                </td>
+                <td class="money">{{ row.invoice_amount }}</td>
+                <td class="money">{{ row.payments }}</td>
+                <td class="money bal {% if row.balance_negative %}neg{% endif %}">{{ row.balance }}</td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="6" class="center">No transactions on record.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+</body>
+</html>

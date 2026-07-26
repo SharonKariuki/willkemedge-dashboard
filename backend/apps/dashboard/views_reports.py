@@ -2,16 +2,47 @@
 from collections import defaultdict
 from decimal import Decimal
 
-from django.db.models import Count, Q, Sum
+from django.db.models import Case, Count, DecimalField, F, Q, Sum, When
 from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.buildings.models import Building, Unit, UnitStatus
+from apps.buildings.models import OCCUPIED_UNIT_STATUSES, Building, Unit, UnitClassification
 from apps.expenses.models import Account, AccountType, Expense
-from apps.payments.models import Arrears, Payment
+from apps.payments.models import Arrears, Payment, PaymentType
+from apps.payments.tax_service import TAX_RATE_BUSINESS
 from apps.tenants.models import Tenant
+
+# Security deposits are a liability (refundable), not income — never count them
+# toward rental income or collection. Late fees and other income legitimately
+# are income, so we exclude only DEPOSIT rather than restrict to RENT.
+INCOME_PAYMENT_FILTER = ~Q(payment_type=PaymentType.DEPOSIT)
+
+_VAT_MULTIPLIER = Decimal("1") + TAX_RATE_BUSINESS
+
+
+def _net_income_sum():
+    """Sum of payments recognised as income, net of VAT.
+
+    Commercial rent is received VAT-inclusive, but the 16% is a liability owed
+    to KRA (booked to 2600 by the ledger), not income. The legacy P&L summed
+    the gross, overstating commercial income by 16% and disagreeing with the
+    ledger-based P&L. Strip the VAT out of commercial RENT so the two match;
+    residential rent, late fees, and other income pass through unchanged.
+    Callers must still apply INCOME_PAYMENT_FILTER to exclude deposits.
+    """
+    return Sum(
+        Case(
+            When(
+                Q(payment_type=PaymentType.RENT)
+                & Q(tenant__unit__classification=UnitClassification.BUSINESS),
+                then=F("amount") / _VAT_MULTIPLIER,
+            ),
+            default=F("amount"),
+            output_field=DecimalField(max_digits=14, decimal_places=2),
+        )
+    )
 
 
 class MonthlyCollectionReportView(APIView):
@@ -24,7 +55,7 @@ class MonthlyCollectionReportView(APIView):
         year = int(request.query_params.get("year", now.year))
 
         payments = Payment.objects.filter(
-            period_month=month, period_year=year
+            INCOME_PAYMENT_FILTER, period_month=month, period_year=year
         ).select_related("tenant", "tenant__unit", "tenant__unit__building").order_by(
             "tenant__unit__building__name", "tenant__unit__label"
         )
@@ -53,7 +84,9 @@ class AnnualIncomeSummaryView(APIView):
         monthly = []
         grand_total = Decimal("0")
         for m in range(1, 13):
-            total = Payment.objects.filter(period_month=m, period_year=year).aggregate(total=Sum("amount"))["total"] or Decimal("0")
+            total = Payment.objects.filter(
+                INCOME_PAYMENT_FILTER, period_month=m, period_year=year
+            ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
             monthly.append({"month": m, "total": float(total)})
             grand_total += total
         return Response({"year": year, "grand_total": float(grand_total), "monthly": monthly})
@@ -122,7 +155,7 @@ class OccupancyHistoryView(APIView):
         buildings = []
         for b in Building.objects.annotate(
             total=Count("units"),
-            occ=Count("units", filter=~Q(units__status=UnitStatus.VACANT)),
+            occ=Count("units", filter=Q(units__status__in=OCCUPIED_UNIT_STATUSES)),
         ).order_by("name"):
             buildings.append({
                 "name": b.name,
@@ -172,7 +205,7 @@ class ProfitLossReportView(APIView):
             grand_income = Decimal("0")
             grand_expenses = Decimal("0")
             for m in range(1, 13):
-                income = payments_qs.filter(period_month=m, period_year=year).aggregate(total=Sum("amount"))["total"] or Decimal("0")
+                income = payments_qs.filter(INCOME_PAYMENT_FILTER, period_month=m, period_year=year).aggregate(total=_net_income_sum())["total"] or Decimal("0")
                 exp_total = expenses_qs_all.filter(period_month=m, period_year=year).aggregate(total=Sum("amount"))["total"] or Decimal("0")
                 rows.append({"month": m, "income": float(income), "expenses": float(exp_total), "net": float(income - exp_total)})
                 grand_income += income
@@ -186,7 +219,7 @@ class ProfitLossReportView(APIView):
 
         month = int(request.query_params.get("month", now.month))
         year = int(request.query_params.get("year", now.year))
-        income = payments_qs.filter(period_month=month, period_year=year).aggregate(total=Sum("amount"))["total"] or Decimal("0")
+        income = payments_qs.filter(INCOME_PAYMENT_FILTER, period_month=month, period_year=year).aggregate(total=_net_income_sum())["total"] or Decimal("0")
         expenses_qs = expenses_qs_all.filter(period_month=month, period_year=year).values("category__name").annotate(total=Sum("amount")).order_by("-total")
         expense_rows = [{"category": row["category__name"], "amount": float(row["total"])} for row in expenses_qs]
         total_expenses = sum(r["amount"] for r in expense_rows)
@@ -653,7 +686,7 @@ class ExpenseBreakdownReportView(APIView):
         for r in rows:
             r["percentage"] = round(r["total"] / grand_total * 100, 1) if grand_total else 0.0
 
-        income = payments_qs.aggregate(total=Sum("amount"))["total"] or Decimal("0")
+        income = payments_qs.filter(INCOME_PAYMENT_FILTER).aggregate(total=Sum("amount"))["total"] or Decimal("0")
         return Response({
             "period": f"{month}/{year}",
             "building": int(building_id) if building_id else None,
