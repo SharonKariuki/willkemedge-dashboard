@@ -1,6 +1,6 @@
-import { Home, Search, Sparkles } from "lucide-react";
+import { Home, Search, Sparkles, User } from "lucide-react";
 import { useEffect, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 
 import StatusBadge from "@/components/StatusBadge";
 import {
@@ -35,6 +35,7 @@ const STATUS_RAIL: Record<UnitStatus, string> = {
 };
 
 export default function UnitsPage() {
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [statusFilter, setStatusFilter] = useState("");
   const [buildingFilter, setBuildingFilter] = useState("");
@@ -63,11 +64,7 @@ export default function UnitsPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        eyebrow="Inventory"
-        title="Units"
-        description="Every unit across your buildings, colour-coded by rent status."
-      />
+      <PageHeader title="Units" />
 
       {/* Summary strip */}
       {summary ? (
@@ -80,11 +77,11 @@ export default function UnitsPage() {
             { label: "Unpaid", value: summary.occupied_unpaid, tone: "unpaid" as const },
             { label: "Arrears", value: summary.arrears, tone: "unpaid" as const },
           ].map((c) => (
-            <Card key={c.label} variant="glass" padding="sm" className="text-center">
-              <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-ink-500">
+            <Card key={c.label} variant="glass" padding="none" className="px-3 py-2 text-center">
+              <p className="text-[9px] font-medium uppercase tracking-[0.14em] text-ink-500">
                 {c.label}
               </p>
-              <p className="mt-1 font-display text-2xl font-semibold text-ink-900 tabular-nums">
+              <p className="mt-0.5 font-display text-lg font-semibold text-ink-900 tabular-nums">
                 {c.value}
               </p>
             </Card>
@@ -93,7 +90,7 @@ export default function UnitsPage() {
       ) : (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
           {Array.from({ length: 6 }).map((_, i) => (
-            <Skeleton key={i} className="h-16" />
+            <Skeleton key={i} className="h-12" />
           ))}
         </div>
       )}
@@ -207,13 +204,25 @@ export default function UnitsPage() {
         />
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {filtered.map((unit) => (
+          {filtered.map((unit) => {
+            const hasTenant = unit.current_tenant_id != null;
+            return (
             <Card
               key={unit.id}
               variant="glass"
               padding="none"
-              interactive
-              className="relative overflow-hidden"
+              interactive={hasTenant}
+              onClick={
+                hasTenant
+                  ? () => navigate(`/tenants/${unit.current_tenant_id}`)
+                  : undefined
+              }
+              role={hasTenant ? "button" : undefined}
+              title={hasTenant ? `View ${unit.current_tenant_name}` : undefined}
+              className={cn(
+                "relative overflow-hidden",
+                hasTenant && "cursor-pointer"
+              )}
             >
               <span
                 className={cn(
@@ -248,15 +257,24 @@ export default function UnitsPage() {
                   </Badge>
                 </div>
 
-                {unit.floor !== undefined && (
-                  <p className="mt-3 flex items-center gap-1 text-[11px] text-ink-500">
-                    <Sparkles className="h-3 w-3" />
-                    Floor {unit.floor}
-                  </p>
-                )}
+                <div className="mt-3 flex items-center justify-between gap-2 text-[11px] text-ink-500">
+                  {unit.floor !== undefined && (
+                    <span className="flex items-center gap-1">
+                      <Sparkles className="h-3 w-3" />
+                      Floor {unit.floor}
+                    </span>
+                  )}
+                  {unit.current_tenant_name && (
+                    <span className="flex min-w-0 items-center gap-1 text-ink-600">
+                      <User className="h-3 w-3 shrink-0" />
+                      <span className="truncate">{unit.current_tenant_name}</span>
+                    </span>
+                  )}
+                </div>
               </div>
             </Card>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

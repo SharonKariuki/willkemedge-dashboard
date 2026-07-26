@@ -111,7 +111,21 @@ class UnitViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        qs = Unit.objects.select_related("building").order_by("building__name", "floor", "label")
+        from django.db.models import Prefetch
+
+        from apps.tenants.models import Tenant, TenantStatus
+
+        active_tenants = Tenant.objects.filter(
+            status__in=[TenantStatus.ACTIVE, TenantStatus.NOTICE_GIVEN]
+        ).order_by("-move_in_date")
+
+        qs = (
+            Unit.objects.select_related("building")
+            .prefetch_related(
+                Prefetch("tenants", queryset=active_tenants, to_attr="active_tenants")
+            )
+            .order_by("building__name", "floor", "label")
+        )
         building_id = self.request.query_params.get("building")
         if building_id:
             qs = qs.filter(building_id=building_id)

@@ -10,7 +10,7 @@
  */
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
-  AlertTriangle, CheckCircle2, Download, FileText, LogOut,
+  AlertTriangle, CheckCircle2, ChevronDown, Download, FileText, LogOut,
   Pencil, Phone, Plus, Search, ShieldCheck, Upload, UserPlus, X, XCircle,
 } from "lucide-react";
 
@@ -585,6 +585,36 @@ function TenantDetailModal({ tenantId, onClose }: { tenantId: number; onClose: (
   );
 }
 
+// ─── Filter dropdown ─────────────────────────────────────────────────────────
+function FilterSelect({
+  label, value, onChange, options,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  options: { value: string; label: string }[];
+}) {
+  return (
+    <div className="relative">
+      <select
+        aria-label={label}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className={cn(
+          "h-full w-full appearance-none rounded-md border border-border bg-surface py-2.5 pl-3.5 pr-9 text-sm transition-colors",
+          "focus:border-teal-600 focus:outline-none focus:ring-2 focus:ring-ring/25",
+          value ? "font-medium text-content" : "text-content-muted",
+        )}
+      >
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>{o.label}</option>
+        ))}
+      </select>
+      <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-content-muted" />
+    </div>
+  );
+}
+
 // ─── Main Page ───────────────────────────────────────────────────────────────
 export default function TenantsPage() {
   const [searchParams] = useSearchParams();
@@ -625,19 +655,19 @@ export default function TenantsPage() {
 
   // Build building filter tabs from actual buildings
   const buildingTabs = useMemo(() => [
-    { id: "" as "" | number, name: "All" },
+    { id: "" as "" | number, name: "All buildings" },
     ...(buildings ?? []).map((b) => ({ id: b.id as "" | number, name: b.name })),
   ], [buildings]);
 
   const STATUSES = [
-    { value: "", label: "All" },
+    { value: "", label: "All statuses" },
     { value: "active", label: "Active" },
     { value: "notice_given", label: "Notice Given" },
     { value: "moved_out", label: "Moved Out" },
   ];
 
   const PAY_FILTERS = [
-    { value: "", label: "All" },
+    { value: "", label: "All payments" },
     { value: "paid", label: "Paid" },
     { value: "in_arrears", label: "In Arrears" },
   ];
@@ -687,59 +717,44 @@ export default function TenantsPage() {
         )}
 
         {/* Search + filters */}
-        <div className="flex flex-col gap-3">
-          <Input leftIcon={<Search className="h-4 w-4" />} placeholder="Search by name, ID, phone…" value={search} onChange={(e) => setSearch(e.target.value)} />
-          {/* Building tabs */}
-          <div className="flex flex-wrap gap-1.5" role="group" aria-label="Filter by building">
-            {buildingTabs.map((b) => (
-              <button key={String(b.id)} onClick={() => setBuildingFilter(b.id as "" | number)}
-                aria-pressed={buildingFilter === b.id}
-                className={cn("rounded-full px-3 py-1.5 text-xs font-medium transition-all",
-                  buildingFilter === b.id ? "bg-ink-900 text-canvas shadow-float" : "glass text-ink-700")}>
-                {b.name}
-              </button>
-            ))}
-          </div>
-          {/* Status tabs */}
-          <div className="flex flex-wrap gap-1.5" role="group" aria-label="Filter by status">
-            {STATUSES.map((s) => (
-              <button key={s.value} onClick={() => setStatusFilter(s.value)}
-                aria-pressed={statusFilter === s.value}
-                className={cn("rounded-full px-3 py-1.5 text-xs font-medium transition-all",
-                  statusFilter === s.value ? "bg-ochre-500 text-ink-900 shadow-float" : "glass text-ink-700")}>
-                {s.label}
-              </button>
-            ))}
-          </div>
-          {/* Payment status toggle */}
-          <div className="flex flex-wrap gap-1.5" role="group" aria-label="Filter by payment status">
-            {PAY_FILTERS.map((s) => (
-              <button key={s.value} onClick={() => setPayFilter(s.value)}
-                aria-pressed={payFilter === s.value}
-                className={cn("rounded-full px-3 py-1.5 text-xs font-medium transition-all",
-                  payFilter === s.value
-                    ? s.value === "in_arrears"
-                      ? "bg-coral-500 text-white shadow-float"
-                      : "bg-sage-500 text-white shadow-float"
-                    : "glass text-ink-700")}>
-                {s.label}
-              </button>
-            ))}
-          </div>
-          {/* KYC tabs */}
-          <div className="flex flex-wrap gap-1.5" role="group" aria-label="Filter by KYC status">
-            {KYC_FILTERS.map((s) => (
-              <button key={s.value} onClick={() => setKycFilter(s.value)}
-                aria-pressed={kycFilter === s.value}
-                className={cn("flex items-center gap-1 rounded-full px-3 py-1.5 text-xs font-medium transition-all",
-                  kycFilter === s.value ? "bg-ink-900 text-canvas shadow-float" : "glass text-ink-700")}>
-                {s.value === "pending" && <ShieldCheck className="h-3 w-3" />}
-                {s.label}
-                {s.value === "pending" && pendingKycCount > 0 && (
-                  <span className="ml-0.5 rounded-full bg-ochre-500 px-1.5 text-[10px] font-semibold text-ink-900">{pendingKycCount}</span>
-                )}
-              </button>
-            ))}
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+          <Input
+            className="lg:flex-1"
+            leftIcon={<Search className="h-4 w-4" />}
+            placeholder="Search by name, ID, phone…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:flex lg:flex-wrap">
+            <FilterSelect
+              label="Filter by building"
+              value={String(buildingFilter)}
+              onChange={(v) => setBuildingFilter(v === "" ? "" : Number(v))}
+              options={buildingTabs.map((b) => ({ value: String(b.id), label: b.name }))}
+            />
+            <FilterSelect
+              label="Filter by status"
+              value={statusFilter}
+              onChange={setStatusFilter}
+              options={STATUSES}
+            />
+            <FilterSelect
+              label="Filter by payment status"
+              value={payFilter}
+              onChange={setPayFilter}
+              options={PAY_FILTERS}
+            />
+            <FilterSelect
+              label="Filter by KYC status"
+              value={kycFilter}
+              onChange={setKycFilter}
+              options={KYC_FILTERS.map((s) => ({
+                value: s.value,
+                label: s.value === "pending" && pendingKycCount > 0
+                  ? `${s.label} (${pendingKycCount})`
+                  : s.label,
+              }))}
+            />
           </div>
         </div>
 
