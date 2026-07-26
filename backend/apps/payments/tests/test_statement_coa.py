@@ -134,11 +134,16 @@ class TestChannelsAgree:
         assert "Rent + Arrears 20,000.00" in sms
         assert "Unpaid Balance" in sms
 
-    def test_pdf_template_renders_the_coded_table(self, residential):
+    def test_pdf_hides_internal_coa_codes(self, residential):
+        """Customer-facing PDF must NOT expose the internal Chart-of-Accounts
+        breakdown; the coded lines remain available to the SMS/email channels."""
         from django.template.loader import render_to_string
 
         st = build_statement(residential, statement_date=AS_OF, as_of=AS_OF)
         html = render_to_string("payments/statement_pdf.html", st)
-        for label in EXPECTED_LINES:
-            assert label in html
-        assert "2100" in html and "4110" in html
+        assert "Receipt Breakdown" not in html
+        assert "COA" not in html
+        for _label, _amount, code, _name in st["breakdown_lines"]:
+            assert f">{code}<" not in html, f"COA code {code} leaked into the customer PDF"
+        # The ledger and customer identity still render.
+        assert residential.full_name in html

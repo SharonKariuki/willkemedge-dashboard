@@ -47,6 +47,16 @@ DEFAULT_POSTAL_ADDRESS = "PO Box 66741 - 00800, Nairobi, Kenya"
 DEFAULT_CONTACT_PHONE = "+254 722 527234 / +254 732 527234"
 DEFAULT_CONTACT_EMAIL = "wilkem.ventures@gmail.com"
 
+# Payment-option fallbacks (Wilkem Ventures production details). Used so the
+# statement always shows real payment instructions instead of the
+# "contact the management office" placeholder when a Building hasn't had its
+# bank/paybill fields filled in yet.
+DEFAULT_BANK_NAME = "Cooperative Bank"
+DEFAULT_BANK_BRANCH = "Karen Branch"
+DEFAULT_BANK_ACCOUNT = "01136069098300"
+DEFAULT_BANK_ACCOUNT_NAME = "Wilkem Ventures Company Ltd"
+DEFAULT_PAYBILL_NUMBER = "400222"
+
 
 def _money(value) -> Decimal:
     return (Decimal(value) if value is not None else ZERO).quantize(Decimal("0.01"))
@@ -168,6 +178,13 @@ def build_statement(tenant, *, statement_date: _dt.date | None = None, as_of: _d
     building = unit.building
     is_business = unit.classification == UnitClassification.BUSINESS
 
+    # Due date: the tenant's due-day in the month following the statement,
+    # e.g. a statement dated 26 Jul 2026 is due "5th August 2026".
+    import calendar
+    _dy, _dm = (statement_date.year + 1, 1) if statement_date.month == 12 else (statement_date.year, statement_date.month + 1)
+    _dday = min(int(tenant.due_day), calendar.monthrange(_dy, _dm)[1])
+    due_date = f"{_ordinal(_dday)} {_dt.date(_dy, _dm, _dday).strftime('%B %Y')}"
+
     rows, balance = _build_ledger(tenant, is_business=is_business, as_of=as_of)
 
     # "Current month" = the most recent rent obligation on/before the statement date.
@@ -228,8 +245,16 @@ def build_statement(tenant, *, statement_date: _dt.date | None = None, as_of: _d
     rent_code = RENT_COMMERCIAL if is_business else RENT_RESIDENTIAL
     rent_name = "Commercial Rental Income" if is_business else "Residential Rental Income"
 
-    paybill_number = building.paybill_number or ""
-    paybill_account = building.paybill_account_for(unit.label) if paybill_number else ""
+    # Payment options: prefer per-building values, fall back to the Wilkem
+    # Ventures defaults so the statement never shows the placeholder text.
+    paybill_number = building.paybill_number or DEFAULT_PAYBILL_NUMBER
+    paybill_account = (
+        building.paybill_account_for(unit.label) if building.paybill_number else ""
+    )
+    bank_name = building.bank_name or DEFAULT_BANK_NAME
+    bank_branch = building.bank_branch or DEFAULT_BANK_BRANCH
+    bank_account = building.bank_account or DEFAULT_BANK_ACCOUNT
+    bank_account_name = building.bank_account_name or DEFAULT_BANK_ACCOUNT_NAME
 
     return {
         # --- header ---
@@ -240,6 +265,7 @@ def build_statement(tenant, *, statement_date: _dt.date | None = None, as_of: _d
         "contact_phone": building.contact_phone or DEFAULT_CONTACT_PHONE,
         "contact_email": building.contact_email or DEFAULT_CONTACT_EMAIL,
         "statement_date": _fmt_date(statement_date),
+        "due_date": due_date,
 
         # --- customer ---
         "tenant_name": tenant.full_name,
@@ -285,11 +311,11 @@ def build_statement(tenant, *, statement_date: _dt.date | None = None, as_of: _d
         "paybill_number": paybill_number,
         "paybill_account": paybill_account,
         "has_paybill": bool(paybill_number),
-        "bank_name": building.bank_name or "",
-        "bank_branch": building.bank_branch or "",
-        "bank_account": building.bank_account or "",
-        "bank_account_name": building.bank_account_name or "",
-        "has_bank": bool(building.bank_account),
+        "bank_name": bank_name,
+        "bank_branch": bank_branch,
+        "bank_account": bank_account,
+        "bank_account_name": bank_account_name,
+        "has_bank": bool(bank_account),
 
         # --- ledger ---
         "rows": rows,

@@ -170,6 +170,83 @@ class TestSendSmsWiring:
         assert "from" not in kwargs["data"]
 
 
+class TestAtDeliveryError:
+    """A blocked recipient comes back inside an HTTP-200 body — at_delivery_error
+    must flag it so the caller records a real failure, not a false 'sent'."""
+
+    def _receipt(self, status, code):
+        return {"SMSMessageData": {"Recipients": [{"status": status, "statusCode": code}]}}
+
+    @pytest.mark.parametrize("status,code", [("Success", 101), ("Sent", 100), ("Success", 102)])
+    def test_accepted_statuses_return_none(self, status, code):
+        from apps.payments.notifications import at_delivery_error
+        assert at_delivery_error(self._receipt(status, code)) is None
+
+    def test_blacklist_returns_optout_message(self):
+        from apps.payments.notifications import at_delivery_error
+        msg = at_delivery_error(self._receipt("UserInBlacklist", 406))
+        assert msg is not None
+        assert "*456*9#" in msg  # actionable opt-in guidance
+
+    def test_unknown_status_falls_back_to_raw(self):
+        from apps.payments.notifications import at_delivery_error
+        assert at_delivery_error(self._receipt("SomethingNew", 499)) == "Not delivered (SomethingNew)"
+
+    def test_empty_recipients_is_failure(self):
+        from apps.payments.notifications import at_delivery_error
+        receipt = {"SMSMessageData": {"Message": "Sent to 0/1", "Recipients": []}}
+        assert at_delivery_error(receipt) == "Not delivered: Sent to 0/1"
+
+    def test_none_receipt_is_not_an_error(self):
+        # send_sms returns None when no API key is set — that's 'skipped', not failed.
+        from apps.payments.notifications import at_delivery_error
+        assert at_delivery_error(None) is None
+
+
+@pytest.mark.django_db
+class TestDispatchSurfacesDeliveryFailure:
+    """dispatch_notification must not report a carrier-blocked SMS as 'sent'."""
+
+    def _note(self, tenant, channel="sms"):
+        from apps.payments.models import NotificationChannel, TenantNotification
+        return TenantNotification.objects.create(
+            tenant=tenant,
+            channel=NotificationChannel.SMS if channel == "sms" else channel,
+            subject="",
+            body="Test reminder",
+        )
+
+    @patch("apps.payments.notification_services.send_sms")
+    def test_blacklisted_recipient_marked_failed(self, mock_send, tenant_with_email):
+        mock_send.return_value = {
+            "SMSMessageData": {
+                "Recipients": [
+                    {"number": "+254712345678", "status": "UserInBlacklist", "statusCode": 406}
+                ]
+            }
+        }
+        from apps.payments.notification_services import dispatch_notification
+        note = dispatch_notification(self._note(tenant_with_email))
+        assert note.status == "failed"
+        assert "*456*9#" in note.error
+        # Receipt is still persisted for auditing even though it failed.
+        assert "UserInBlacklist" in note.provider_response
+
+    @patch("apps.payments.notification_services.send_sms")
+    def test_successful_recipient_marked_sent(self, mock_send, tenant_with_email):
+        mock_send.return_value = {
+            "SMSMessageData": {
+                "Recipients": [
+                    {"number": "+254712345678", "status": "Success", "statusCode": 101}
+                ]
+            }
+        }
+        from apps.payments.notification_services import dispatch_notification
+        note = dispatch_notification(self._note(tenant_with_email))
+        assert note.status == "sent"
+        assert note.error == ""
+
+
 class TestSendEmailSkippedWithoutCredentials:
     @patch("apps.payments.notifications.settings")
     def test_logs_warning_when_no_credentials(self, mock_settings, caplog):
