@@ -198,7 +198,7 @@ export default function DashboardPage() {
       {/* ── Income trend + Rent status ────────────────────────────────────── */}
       <section className="grid gap-6 lg:grid-cols-3">
         <Card padding="none" className="lg:col-span-2">
-          <div className="flex items-center justify-between px-6 pt-6">
+          <div className="flex items-center justify-between px-6 pt-4">
             <div>
               <h2 className="text-lg font-semibold text-content">Income</h2>
               <p className="mt-0.5 text-sm text-content-muted">Last 6 months</p>
@@ -216,7 +216,7 @@ export default function DashboardPage() {
               <Badge tone="neutral">First month on record</Badge>
             )}
           </div>
-          <div className="h-[176px] px-3 pb-4 pt-4">
+          <div className="h-[150px] px-3 pb-3 pt-3">
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart
                 data={income_trend}
@@ -248,18 +248,18 @@ export default function DashboardPage() {
         </Card>
 
         <Card padding="none">
-          <div className="px-6 pt-6">
+          <div className="px-6 pt-4">
             <h2 className="text-lg font-semibold text-content">Rent status</h2>
           </div>
-          <div className="p-5">
-            <div className="relative mx-auto flex h-[132px] w-full items-center justify-center">
+          <div className="p-4">
+            <div className="relative mx-auto flex h-[112px] w-full items-center justify-center">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie
                     data={occData}
                     dataKey="value"
-                    innerRadius={46}
-                    outerRadius={64}
+                    innerRadius={38}
+                    outerRadius={54}
                     paddingAngle={2}
                     stroke="none"
                   >
@@ -271,11 +271,11 @@ export default function DashboardPage() {
                 </PieChart>
               </ResponsiveContainer>
               <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-                <p className="text-3xl font-bold tabular-nums tracking-tight text-content">
+                <p className="text-2xl font-bold tabular-nums tracking-tight text-content">
                   {occupancyPct}
-                  <span className="text-lg font-semibold text-content-muted">%</span>
+                  <span className="text-base font-semibold text-content-muted">%</span>
                 </p>
-                <p className="mt-1 text-xs uppercase tracking-wider text-content-muted">
+                <p className="mt-0.5 text-[10px] uppercase tracking-wider text-content-muted">
                   occupied
                 </p>
               </div>
