@@ -161,25 +161,22 @@ export default function DashboardPage() {
       </Masthead>
 
       {/* ── KPI tiles — glanceable ────────────────────────────────────────── */}
-      <section className="-mt-4 grid gap-5 sm:grid-cols-2 lg:-mt-6 lg:grid-cols-[0.72fr_1fr_1fr] lg:items-start lg:gap-6">
-        {/* Featured collections widget — dark navy hero + arrears, on the LEFT */}
-        <div className="flex flex-col gap-5 lg:gap-6">
-          <CollectedHero
-            month={monthLabel}
-            pct={collectionPct}
-            received={kpis.collection_received}
-            expected={kpis.collection_expected}
-          />
-          <Kpi
-            icon={AlertTriangle}
-            tone={kpis.total_arrears > 0 ? "alert" : "neutral"}
-            label="Arrears"
-            value={KES(kpis.total_arrears)}
-            caption={kpis.total_arrears > 0 ? undefined : "All settled"}
-            compact
-            to="/tenants?payment_status=in_arrears"
-          />
-        </div>
+      <section className="-mt-4 grid gap-5 sm:grid-cols-2 lg:-mt-6 lg:grid-cols-4 lg:items-stretch lg:gap-6">
+        {/* Featured collections widget — dark navy hero, on the LEFT */}
+        <CollectedHero
+          month={monthLabel}
+          pct={collectionPct}
+          received={kpis.collection_received}
+          expected={kpis.collection_expected}
+        />
+        <Kpi
+          icon={AlertTriangle}
+          tone={kpis.total_arrears > 0 ? "alert" : "neutral"}
+          label="Arrears"
+          value={KES(kpis.total_arrears)}
+          caption={kpis.total_arrears > 0 ? undefined : "All settled"}
+          to="/tenants?payment_status=in_arrears"
+        />
         <Kpi
           icon={Building2}
           tone="navy"
@@ -201,7 +198,7 @@ export default function DashboardPage() {
       {/* ── Income trend + Rent status ────────────────────────────────────── */}
       <section className="grid gap-6 lg:grid-cols-3">
         <Card padding="none" className="lg:col-span-2">
-          <div className="flex items-center justify-between px-6 pt-6">
+          <div className="flex items-center justify-between px-6 pt-4">
             <div>
               <h2 className="text-lg font-semibold text-content">Income</h2>
               <p className="mt-0.5 text-sm text-content-muted">Last 6 months</p>
@@ -219,7 +216,7 @@ export default function DashboardPage() {
               <Badge tone="neutral">First month on record</Badge>
             )}
           </div>
-          <div className="h-[240px] px-3 pb-4 pt-6">
+          <div className="h-[150px] px-3 pb-3 pt-3">
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart
                 data={income_trend}
@@ -251,18 +248,18 @@ export default function DashboardPage() {
         </Card>
 
         <Card padding="none">
-          <div className="px-6 pt-6">
+          <div className="px-6 pt-4">
             <h2 className="text-lg font-semibold text-content">Rent status</h2>
           </div>
-          <div className="p-6">
-            <div className="relative mx-auto flex h-[168px] w-full items-center justify-center">
+          <div className="p-4">
+            <div className="relative mx-auto flex h-[112px] w-full items-center justify-center">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie
                     data={occData}
                     dataKey="value"
-                    innerRadius={56}
-                    outerRadius={80}
+                    innerRadius={38}
+                    outerRadius={54}
                     paddingAngle={2}
                     stroke="none"
                   >
@@ -274,16 +271,16 @@ export default function DashboardPage() {
                 </PieChart>
               </ResponsiveContainer>
               <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-                <p className="text-4xl font-bold tabular-nums tracking-tight text-content">
+                <p className="text-2xl font-bold tabular-nums tracking-tight text-content">
                   {occupancyPct}
-                  <span className="text-xl font-semibold text-content-muted">%</span>
+                  <span className="text-base font-semibold text-content-muted">%</span>
                 </p>
-                <p className="mt-1 text-xs uppercase tracking-wider text-content-muted">
+                <p className="mt-0.5 text-[10px] uppercase tracking-wider text-content-muted">
                   occupied
                 </p>
               </div>
             </div>
-            <ul className="mt-6 space-y-2.5 text-sm">
+            <ul className="mt-4 space-y-2 text-sm">
               {occData.map((d, i) => (
                 <li key={d.name} className="flex items-center gap-3">
                   <span
@@ -533,7 +530,7 @@ function CollectedHero({ month, pct, received, expected }: CollectedHeroProps) {
     <Link
       to="/payments"
       aria-label={`Collected ${KES(received)} of ${KES(expected)} in ${month}`}
-      className="relative block overflow-hidden rounded-2xl bg-gradient-to-br from-navy-600 via-navy-800 to-navy-900 p-4 text-white shadow-lg transition-all hover:-translate-y-0.5 hover:shadow-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-400/50">
+      className="relative flex h-full flex-col overflow-hidden rounded-2xl bg-gradient-to-br from-navy-600 via-navy-800 to-navy-900 p-4 text-white shadow-lg transition-all hover:-translate-y-0.5 hover:shadow-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-400/50">
       {/* Soft teal glow — spatial depth */}
       <div
         aria-hidden
@@ -588,7 +585,7 @@ function Kpi({ icon: Icon, label, value, caption, progress, tone = "neutral", co
     ? "transition-all hover:-translate-y-0.5 hover:shadow-float focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/40"
     : "";
   const body = (
-    <Card padding="none" className={cn(compact ? "p-4" : "p-5", interactive)}>
+    <Card padding="none" className={cn("h-full", compact ? "p-4" : "p-5", interactive)}>
       <div className="flex items-start justify-between gap-3">
         <p className="text-xs font-medium uppercase tracking-wider text-content-muted">
           {label}
@@ -636,7 +633,7 @@ function Kpi({ icon: Icon, label, value, caption, progress, tone = "neutral", co
 
   if (to) {
     return (
-      <Link to={to} aria-label={`${label}: ${value}`} className="block">
+      <Link to={to} aria-label={`${label}: ${value}`} className="block h-full">
         {body}
       </Link>
     );
