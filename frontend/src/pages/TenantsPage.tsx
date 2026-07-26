@@ -1,233 +1,33 @@
 /**
- * TenantsPage — complete rewrite.
- * Features:
- * - Group by building
- * - Active tenants first, moved-out tenants below
- * - Building filter tabs (auto-generated from buildings)
- * - Clickable tenant rows → detail modal
- * - Tenant detail: full info, analytics, deposit, edit, notice, move-out
- * - Date pickers system-wide
+ * TenantsPage — tenant roster.
+ * - Building / status / payment / KYC filters
+ * - Rows and mobile cards navigate to the full tenant detail page (/tenants/:id)
+ * - Per-tenant "Remind" (SMS / Email) for anyone in arrears
  */
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
-  AlertTriangle, BellRing, CheckCircle2, ChevronDown, Download, FileText, LogOut,
-  Pencil, Phone, Plus, Search, Send, ShieldCheck, Upload, UserPlus, X, XCircle,
+  BellRing, ChevronDown, Download, Phone, Plus, Search, UserPlus, X,
 } from "lucide-react";
-
-
-import { cloneElement, isValidElement, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import toast from "react-hot-toast";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { z } from "zod";
 
 import {
-  Badge, Button, Card, DatePicker, EmptyState, ErrorState, Input, Modal,
+  Badge, Button, Card, DatePicker, EmptyState, ErrorState, Input,
   PageHeader, Skeleton, Table, TBody, TD, TH, THead, TR,
 } from "@/components/ui";
-import {
-  useCreateTenant, useMoveOutNotice, useMoveOutTenant,
-  useRejectKyc, useTenant, useTenants, useUpdateTenant,
-  useUploadDocument, useVerifyKyc,
-} from "@/hooks/useTenants";
+import { Field, inputCls, KYC_TONE, RemindModal } from "@/features/tenants/shared";
 import { useBuildings } from "@/hooks/useBuildings";
-import { useNotificationTemplates, useSendNotification } from "@/hooks/useNotifications";
+import { useCreateTenant, useTenants } from "@/hooks/useTenants";
 import { useUnits } from "@/hooks/useUnits";
 import { getErrorMessage } from "@/lib/apiError";
 import { cn } from "@/lib/cn";
+import { downloadCsv } from "@/lib/downloadPdf";
 import { isNonNegativeAmountOrBlank, isPositiveAmount } from "@/lib/formValidators";
-import type { KycStatus, TenantDetail, TenantListItem } from "@/lib/types";
-import { downloadCsv, downloadPdf } from "@/lib/downloadPdf";
 import { avatarFor } from "@/lib/images";
-
-
-const inputCls =
-  "w-full rounded-md bg-surface-raised hairline px-3 py-2.5 text-sm text-ink-900 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-sage-500/40";
-
-function Field({
-  label, error, children, className,
-}: { label: string; error?: string; children: React.ReactNode; className?: string }) {
-  const id = useId();
-  // Associate the label with the control for assistive tech. The single child
-  // control receives the generated id (unless it already has one).
-  const control = isValidElement(children)
-    ? cloneElement(children as React.ReactElement<{ id?: string }>, {
-        id: (children as React.ReactElement<{ id?: string }>).props.id ?? id,
-      })
-    : children;
-  return (
-    <div className={className}>
-      <label htmlFor={id} className="mb-1 block text-[11px] font-medium uppercase tracking-[0.14em] text-ink-500">{label}</label>
-      {control}
-      {error && <p className="mt-1 text-[11px] text-status-unpaid">{error}</p>}
-    </div>
-  );
-}
-
-// ─── KYC helpers ─────────────────────────────────────────────────────────────
-const KYC_TONE: Record<KycStatus, "paid" | "ochre" | "coral" | "neutral"> = {
-  verified: "paid",
-  pending: "ochre",
-  rejected: "coral",
-  not_started: "neutral",
-};
-
-function KycBadge({ status, label }: { status: KycStatus; label: string }) {
-  return <Badge tone={KYC_TONE[status]} withDot>KYC: {label}</Badge>;
-}
-
-const KYC_DOC_TYPES = [
-  { value: "id_front", label: "ID — Front" },
-  { value: "id_back", label: "ID — Back" },
-  { value: "passport", label: "Passport" },
-  { value: "kra_pin_certificate", label: "KRA PIN Certificate" },
-] as const;
-
-function KycPanel({ tenant }: { tenant: TenantDetail }) {
-  const upload = useUploadDocument(tenant.id);
-  const verify = useVerifyKyc(tenant.id);
-  const reject = useRejectKyc(tenant.id);
-  const fileRef = useRef<HTMLInputElement>(null);
-  const [docType, setDocType] = useState<string>("id_front");
-  const [rejecting, setRejecting] = useState(false);
-  const [reason, setReason] = useState("");
-
-  const handleUpload = async (file: File) => {
-    const fd = new FormData();
-    fd.append("file", file);
-    fd.append("doc_type", docType);
-    try {
-      await upload.mutateAsync(fd);
-      toast.success("Document uploaded");
-    } catch {
-      toast.error("Upload failed");
-    }
-  };
-
-  const documents = tenant.documents ?? [];
-  const missingItems = tenant.kyc_missing_items ?? [];
-  const kycDocs = documents.filter((d) =>
-    KYC_DOC_TYPES.some((t) => t.value === d.doc_type),
-  );
-
-  return (
-    <div className="rounded-md border border-ink-100 p-4 dark:border-ink-700">
-      <div className="mb-3 flex items-center justify-between">
-        <p className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-wider text-ink-500">
-          <ShieldCheck className="h-3.5 w-3.5" /> KYC Verification
-        </p>
-        <KycBadge status={tenant.kyc_status} label={tenant.kyc_status_display} />
-      </div>
-
-      {/* KRA PIN */}
-      <div className="mb-3 flex justify-between gap-2 rounded-md bg-ink-50 px-3 py-2 text-sm dark:bg-ink-800">
-        <span className="text-ink-500">KRA PIN</span>
-        <span className="font-mono font-medium text-ink-900 dark:text-white">{tenant.kra_pin || "—"}</span>
-      </div>
-
-      {/* Missing items / reviewer notes */}
-      {missingItems.length > 0 ? (
-        <div className="mb-3 rounded-md bg-ochre-500/10 p-3 text-sm text-ink-700">
-          <p className="font-medium text-ochre-700">Still needed before verification:</p>
-          <ul className="mt-1 list-inside list-disc text-ink-600">
-            {missingItems.map((m) => <li key={m}>{m}</li>)}
-          </ul>
-        </div>
-      ) : tenant.kyc_status === "verified" ? (
-        <div className="mb-3 rounded-md bg-status-paid/10 p-3 text-sm text-status-paid flex items-center gap-2">
-          <CheckCircle2 className="h-4 w-4 shrink-0" />
-          Verified{tenant.kyc_verified_by_name ? ` by ${tenant.kyc_verified_by_name}` : ""}
-          {tenant.kyc_verified_at ? ` on ${tenant.kyc_verified_at.slice(0, 10)}` : ""}.
-        </div>
-      ) : null}
-      {tenant.kyc_status === "rejected" && tenant.kyc_notes && (
-        <div className="mb-3 rounded-md bg-status-unpaid/10 p-3 text-sm text-status-unpaid">
-          <span className="font-medium">Rejected:</span> {tenant.kyc_notes}
-        </div>
-      )}
-
-      {/* Document list */}
-      {kycDocs.length > 0 && (
-        <ul className="mb-3 space-y-1.5">
-          {kycDocs.map((d) => (
-            <li key={d.id} className="flex items-center justify-between gap-2 rounded-md bg-ink-50 px-3 py-1.5 text-xs dark:bg-ink-800">
-              <span className="flex items-center gap-1.5 text-ink-700 dark:text-ink-200">
-                <FileText className="h-3.5 w-3.5 text-ink-400" />
-                {d.doc_type_display}
-                <span className="text-ink-400">· {d.original_name}</span>
-              </span>
-              <a href={d.file} target="_blank" rel="noreferrer" className="text-sage-600 hover:underline">View</a>
-            </li>
-          ))}
-        </ul>
-      )}
-
-      {/* Upload */}
-      <div className="mb-3 flex flex-wrap items-end gap-2">
-        <Field label="Document type" className="flex-1 min-w-[160px]">
-          <select value={docType} onChange={(e) => setDocType(e.target.value)} className={inputCls}>
-            {KYC_DOC_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
-          </select>
-        </Field>
-        <input
-          ref={fileRef}
-          type="file"
-          accept="image/*,application/pdf"
-          className="hidden"
-          onChange={(e) => {
-            const f = e.target.files?.[0];
-            if (f) handleUpload(f);
-            e.target.value = "";
-          }}
-        />
-        <Button type="button" variant="glass" size="sm" loading={upload.isPending} onClick={() => fileRef.current?.click()}>
-          <Upload className="h-3.5 w-3.5" /> Upload
-        </Button>
-      </div>
-
-      {/* Verify / reject actions */}
-      {tenant.kyc_status !== "verified" && (
-        rejecting ? (
-          <div className="space-y-2">
-            <Field label="Rejection reason">
-              <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} className={inputCls} placeholder="What's wrong / what the tenant needs to re-submit…" />
-            </Field>
-            <div className="flex justify-end gap-2">
-              <Button type="button" variant="ghost" size="sm" onClick={() => { setRejecting(false); setReason(""); }}>Cancel</Button>
-              <Button
-                type="button" variant="danger" size="sm" loading={reject.isPending} disabled={!reason.trim()}
-                onClick={async () => {
-                  try { await reject.mutateAsync({ reason: reason.trim() }); toast.success("KYC rejected"); setRejecting(false); setReason(""); }
-                  catch { toast.error("Failed"); }
-                }}
-              >
-                <XCircle className="h-3.5 w-3.5" /> Confirm rejection
-              </Button>
-            </div>
-          </div>
-        ) : (
-          <div className="flex justify-end gap-2">
-            {(tenant.kyc_status === "pending" || tenant.kyc_status === "rejected") && (
-              <Button type="button" variant="ghost" size="sm" onClick={() => setRejecting(true)}>Reject</Button>
-            )}
-            <Button
-              type="button" size="sm" loading={verify.isPending} disabled={missingItems.length > 0}
-              onClick={async () => {
-                try { await verify.mutateAsync(); toast.success("KYC verified"); }
-                catch (e) {
-                  const detail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-                  toast.error(detail ?? "Failed to verify");
-                }
-              }}
-            >
-              <ShieldCheck className="h-3.5 w-3.5" /> Mark verified
-            </Button>
-          </div>
-        )
-      )}
-    </div>
-  );
-}
+import type { TenantListItem } from "@/lib/types";
 
 // ─── Create Tenant Form ──────────────────────────────────────────────────────
 const createSchema = z.object({
@@ -253,50 +53,6 @@ const createSchema = z.object({
   notes: z.string().optional(),
 });
 type CreateFormValues = z.infer<typeof createSchema>;
-
-// ─── Edit / Notice / Move-out schemas ────────────────────────────────────────
-const editSchema = z.object({
-  first_name: z.string().min(1, "Required"),
-  last_name: z.string().min(1, "Required"),
-  kra_pin: z.string().regex(/^[AP]\d{9}[A-Z]$/, "Format: A007523148T").or(z.literal("")).optional(),
-  phone: z.string().min(1, "Required"),
-  email: z.string().email("Enter a valid email").or(z.literal("")).optional(),
-  care_of: z.string().optional(),
-  monthly_rent: z
-    .string()
-    .min(1, "Required")
-    .refine(isPositiveAmount, "Enter an amount greater than 0"),
-  deposit_paid: z
-    .string()
-    .optional()
-    .refine(isNonNegativeAmountOrBlank, "Enter a valid amount"),
-  due_day: z.coerce.number().int().min(1).max(31).optional(),
-  deposit_refund_percentage: z.coerce
-    .number({ invalid_type_error: "Enter a number between 0 and 100" })
-    .min(0, "Cannot be below 0")
-    .max(100, "Cannot exceed 100"),
-  emergency_contact: z.string().optional(),
-  emergency_phone: z.string().optional(),
-  notes: z.string().optional(),
-});
-type EditFormValues = z.infer<typeof editSchema>;
-
-const noticeSchema = z.object({
-  notice_date: z.string().min(1, "Required"),
-  intended_move_out_date: z.string().min(1, "Required"),
-  notes: z.string().optional(),
-});
-type NoticeFormValues = z.infer<typeof noticeSchema>;
-
-const moveOutSchema = z.object({
-  move_out_date: z.string().min(1, "Required"),
-  deposit_refund_percentage: z.coerce
-    .number({ invalid_type_error: "Enter a number between 0 and 100" })
-    .min(0, "Cannot be below 0")
-    .max(100, "Cannot exceed 100"),
-  notes: z.string().optional(),
-});
-type MoveOutFormValues = z.infer<typeof moveOutSchema>;
 
 function CreateTenantForm({ onClose }: { onClose: () => void }) {
   const { data: vacantUnits } = useUnits({ status: "vacant" });
@@ -371,221 +127,6 @@ function CreateTenantForm({ onClose }: { onClose: () => void }) {
   );
 }
 
-// ─── Tenant Detail Modal ─────────────────────────────────────────────────────
-function TenantDetailModal({ tenantId, onClose }: { tenantId: number; onClose: () => void }) {
-  const { data: tenant, isLoading, isError, refetch } = useTenant(tenantId);
-  const updateTenant = useUpdateTenant(tenantId);
-  const moveOutNotice = useMoveOutNotice(tenantId);
-  const moveOut = useMoveOutTenant(tenantId);
-  const [mode, setMode] = useState<"view" | "edit" | "notice" | "moveout">("view");
-
-  const editForm = useForm<EditFormValues>({ resolver: zodResolver(editSchema) });
-  const noticeForm = useForm<NoticeFormValues>({
-    resolver: zodResolver(noticeSchema),
-    defaultValues: { notice_date: new Date().toISOString().slice(0, 10), intended_move_out_date: "", notes: "" },
-  });
-  const moveOutForm = useForm<MoveOutFormValues>({
-    resolver: zodResolver(moveOutSchema),
-    defaultValues: { move_out_date: new Date().toISOString().slice(0, 10), deposit_refund_percentage: 100, notes: "" },
-  });
-
-  const handleDownloadStatement = async () => {
-    try {
-      await downloadPdf(`/tenants/${tenantId}/statement-pdf/`, `wilkem-statement-${tenantId}.pdf`);
-    } catch {
-      toast.error("Failed to download statement");
-    }
-  };
-
-
-  useEffect(() => {
-    if (tenant) {
-      editForm.reset({
-        first_name: tenant.first_name, last_name: tenant.last_name,
-        kra_pin: tenant.kra_pin ?? "",
-        phone: tenant.phone, email: tenant.email ?? "",
-        care_of: tenant.care_of ?? "",
-        monthly_rent: String(tenant.monthly_rent),
-        deposit_paid: String(tenant.deposit_paid),
-        deposit_refund_percentage: tenant.deposit_refund_percentage ?? 100,
-        emergency_contact: tenant.emergency_contact ?? "",
-        emergency_phone: tenant.emergency_phone ?? "",
-        due_day: tenant.due_day ?? 5,
-        notes: tenant.notes ?? "",
-
-      });
-    }
-  }, [tenant, editForm]);
-
-
-  const isActive = tenant?.status === "active" || tenant?.status === "notice_given";
-
-  const headerActions = (
-    <>
-      {isActive && mode === "view" && (
-        <>
-          <Button size="sm" variant="glass" onClick={() => setMode("edit")}><Pencil className="h-3.5 w-3.5" /> Edit</Button>
-          <Button size="sm" variant="glass" onClick={handleDownloadStatement}><FileText className="h-3.5 w-3.5" /> Statement PDF</Button>
-          <Button size="sm" variant="glass" onClick={() => setMode("notice")}><AlertTriangle className="h-3.5 w-3.5" /> Notice</Button>
-          <Button size="sm" variant="danger" onClick={() => setMode("moveout")}><LogOut className="h-3.5 w-3.5" /> Move Out</Button>
-        </>
-      )}
-      {mode !== "view" && <Button size="sm" variant="ghost" onClick={() => setMode("view")}>Cancel</Button>}
-    </>
-  );
-
-  return (
-    <Modal
-      open
-      onClose={onClose}
-      size="lg"
-      eyebrow={tenant ? `${tenant.building_name} · ${tenant.unit_label}` : undefined}
-      title={isLoading ? "Loading…" : tenant?.full_name}
-      headerActions={headerActions}
-    >
-        <div className="space-y-5">
-          {isLoading && <div className="space-y-3">{Array.from({length:4}).map((_,i) => <div key={i} className="h-8 rounded bg-ink-100 animate-pulse" />)}</div>}
-          {isError && !tenant && (
-            <ErrorState
-              title="This tenant could not be loaded."
-              description="The record did not come back. This is usually temporary."
-              onRetry={() => void refetch()}
-            />
-          )}
-          {tenant && mode === "view" && (
-            <>
-              <div className="flex items-center gap-4">
-                <img src={avatarFor(tenant.full_name)} alt="" className="h-14 w-14 rounded-full shadow" />
-                <div>
-                  <p className="font-display text-xl font-semibold text-ink-900">{tenant.full_name}</p>
-                  <p className="text-sm text-ink-500">{tenant.building_name} — {tenant.unit_label}</p>
-                  <div className="mt-1 flex flex-wrap gap-1.5">
-                    <Badge tone={tenant.status === "active" ? "sage" : tenant.status === "notice_given" ? "ochre" : "neutral"} withDot>
-                      {tenant.status_display}
-                    </Badge>
-                    <KycBadge status={tenant.kyc_status} label={tenant.kyc_status_display} />
-                  </div>
-                </div>
-              </div>
-              <div className="grid gap-2 sm:grid-cols-2 text-sm">
-                {([
-                  ["Phone", tenant.phone],
-                  ["Email", tenant.email || "—"],
-                  ["ID Number", tenant.id_number],
-                  ["Emergency Contact", tenant.emergency_contact || "—"],
-                  ["Move-in Date", tenant.move_in_date],
-                  ["Move-out Date", tenant.move_out_date || "Active"],
-                  ["Monthly Rent", `KES ${Number(tenant.monthly_rent).toLocaleString()}`],
-                  ["Deposit Paid", `KES ${Number(tenant.deposit_paid).toLocaleString()}`],
-                  ["Deposit Refund %", `${tenant.deposit_refund_percentage ?? 100}%`],
-                  ...(tenant.deposit_refund_amount != null ? [["Deposit Refund Amount", `KES ${Number(tenant.deposit_refund_amount).toLocaleString()}`]] : []),
-                  ...(tenant.due_day ? [["Rent Due Day", String(tenant.due_day)]] : []),
-                  ...(tenant.notice_date ? [["Notice Given", tenant.notice_date]] : []),
-
-                  ...(tenant.intended_move_out_date ? [["Intended Move-out", tenant.intended_move_out_date]] : []),
-                ] as [string, string][]).map(([k, v]) => (
-                  <div key={k} className="flex justify-between gap-2 rounded-md bg-ink-50 px-3 py-2 dark:bg-ink-800">
-                    <span className="text-ink-500">{k}</span>
-                    <span className="font-medium text-ink-900 dark:text-white">{v}</span>
-                  </div>
-                ))}
-              </div>
-              <div className="rounded-md bg-sage-500/8 p-4">
-                <p className="text-[11px] font-medium uppercase tracking-wider text-ink-500 mb-3">Payment Analytics</p>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="rounded-md bg-white p-3 text-center dark:bg-ink-800">
-                    <p className="font-display text-xl font-semibold text-sage-700">KES {(tenant.total_paid ?? 0).toLocaleString()}</p>
-                    <p className="text-[11px] text-ink-500">Total paid</p>
-                  </div>
-                  <div className="rounded-md bg-white p-3 text-center dark:bg-ink-800">
-                    <p className={`font-display text-xl font-semibold ${(tenant.total_arrears ?? 0) > 0 ? "text-status-unpaid" : "text-sage-700"}`}>
-                      KES {(tenant.total_arrears ?? 0).toLocaleString()}
-                    </p>
-                    <p className="text-[11px] text-ink-500">Arrears</p>
-                  </div>
-                </div>
-              </div>
-              <KycPanel tenant={tenant} />
-            </>
-          )}
-          {tenant && mode === "edit" && (
-            <form onSubmit={editForm.handleSubmit(async (v) => {
-              try { await updateTenant.mutateAsync(v as unknown as Record<string, unknown>); toast.success("Updated"); setMode("view"); }
-              catch (e) { toast.error(getErrorMessage(e, "Failed to update tenant")); }
-            })} className="space-y-4">
-              <p className="font-medium text-ink-900">Edit Tenant Details</p>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <Field label="First name" error={editForm.formState.errors.first_name?.message}><input {...editForm.register("first_name")} className={inputCls} /></Field>
-                <Field label="Last name" error={editForm.formState.errors.last_name?.message}><input {...editForm.register("last_name")} className={inputCls} /></Field>
-                <Field label="KRA PIN" error={editForm.formState.errors.kra_pin?.message}><input {...editForm.register("kra_pin")} className={inputCls} placeholder="A007523148T" /></Field>
-                <Field label="Phone" error={editForm.formState.errors.phone?.message}><input {...editForm.register("phone")} className={inputCls} /></Field>
-                <Field label="Email" error={editForm.formState.errors.email?.message}><input {...editForm.register("email")} className={inputCls} /></Field>
-                <Field label="Monthly rent (KES)" error={editForm.formState.errors.monthly_rent?.message}><input {...editForm.register("monthly_rent")} className={inputCls} /></Field>
-                <Field label="Deposit paid (KES)"><input {...editForm.register("deposit_paid")} className={inputCls} /></Field>
-                <Field label="Rent Due Day (1-31)" error={editForm.formState.errors.due_day?.message}><input type="number" min={1} max={31} {...editForm.register("due_day")} className={inputCls} /></Field>
-
-                <Field label="Deposit refund % (for move-out)" error={editForm.formState.errors.deposit_refund_percentage?.message}>
-                  <input type="number" min={0} max={100} {...editForm.register("deposit_refund_percentage")} className={inputCls} />
-                </Field>
-                <Field label="Emergency contact"><input {...editForm.register("emergency_contact")} className={inputCls} /></Field>
-                <Field label="Emergency phone"><input {...editForm.register("emergency_phone")} className={inputCls} /></Field>
-                <Field label="c/o (appears on rent statement)">
-                  <input {...editForm.register("care_of")} className={inputCls} placeholder="e.g. David Chibeka" />
-                </Field>
-              </div>
-              <div className="flex justify-end gap-2">
-                <Button type="button" variant="ghost" onClick={() => setMode("view")}>Cancel</Button>
-                <Button type="submit" loading={updateTenant.isPending}>Save changes</Button>
-              </div>
-            </form>
-          )}
-          {tenant && mode === "notice" && (
-            <form onSubmit={noticeForm.handleSubmit(async (v) => {
-              try { await moveOutNotice.mutateAsync({ notice_date: v.notice_date, intended_move_out_date: v.intended_move_out_date, notes: v.notes }); toast.success("Notice recorded"); setMode("view"); }
-              catch (e) { toast.error(getErrorMessage(e, "Failed to record notice")); }
-            })} className="space-y-4">
-              <p className="font-medium text-ink-900">Record Move-out Notice</p>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <DatePicker label="Notice date *" {...noticeForm.register("notice_date")} error={noticeForm.formState.errors.notice_date?.message} />
-                <DatePicker label="Intended move-out date *" {...noticeForm.register("intended_move_out_date")} error={noticeForm.formState.errors.intended_move_out_date?.message} />
-              </div>
-              <Field label="Notes"><textarea {...noticeForm.register("notes")} rows={2} className={inputCls} /></Field>
-              <div className="flex justify-end gap-2">
-                <Button type="button" variant="ghost" onClick={() => setMode("view")}>Cancel</Button>
-                <Button type="submit" loading={moveOutNotice.isPending}>Record notice</Button>
-              </div>
-            </form>
-          )}
-          {tenant && mode === "moveout" && (
-            <form onSubmit={moveOutForm.handleSubmit(async (v) => {
-              try {
-                await moveOut.mutateAsync({ move_out_date: v.move_out_date, notes: v.notes, deposit_refund_percentage: v.deposit_refund_percentage });
-                toast.success("Tenant moved out"); onClose();
-              } catch (e) { toast.error(getErrorMessage(e, "Failed to process move-out")); }
-            })} className="space-y-4">
-              <div className="rounded-md bg-status-unpaid/8 p-3 text-sm text-status-unpaid flex items-center gap-2">
-                <AlertTriangle className="h-4 w-4 shrink-0" />
-                This will move the tenant out and free up the unit.
-              </div>
-              <DatePicker label="Move-out date *" {...moveOutForm.register("move_out_date")} error={moveOutForm.formState.errors.move_out_date?.message} />
-              <Field label="Deposit refund %" error={moveOutForm.formState.errors.deposit_refund_percentage?.message}>
-                <input type="number" min={0} max={100} step={1} {...moveOutForm.register("deposit_refund_percentage")} className={inputCls} />
-              </Field>
-              <p className="-mt-2 text-[11px] text-ink-500">
-                Deposit paid: KES {Number(tenant.deposit_paid).toLocaleString()}. Set to 0% if all forfeited due to damage.
-              </p>
-              <Field label="Notes"><textarea {...moveOutForm.register("notes")} rows={2} className={inputCls} /></Field>
-              <div className="flex justify-end gap-2">
-                <Button type="button" variant="ghost" onClick={() => setMode("view")}>Cancel</Button>
-                <Button type="submit" variant="danger" loading={moveOut.isPending}><LogOut className="h-4 w-4" /> Confirm move-out</Button>
-              </div>
-            </form>
-          )}
-        </div>
-    </Modal>
-  );
-}
-
 // ─── Filter dropdown ─────────────────────────────────────────────────────────
 function FilterSelect({
   label, value, onChange, options,
@@ -616,142 +157,9 @@ function FilterSelect({
   );
 }
 
-// ─── Rent reminder (SMS) ─────────────────────────────────────────────────────
-// Fill the template's {placeholders} from the tenant so Osoro previews the exact
-// message. The backend also resolves placeholders on send, but we send the
-// already-resolved text so what he sees is what goes out (WYSIWYG).
-function fillPlaceholders(text: string, t: TenantListItem): string {
-  const now = new Date();
-  const month = now.getMonth() + 1;
-  const year = now.getFullYear();
-  const dueDay = t.due_day || 5;
-  const dueDate = `${year}-${String(month).padStart(2, "0")}-${String(dueDay).padStart(2, "0")}`;
-  const first = t.first_name || t.full_name.split(" ")[0] || "";
-  return text
-    .replaceAll("{tenant_name}", t.full_name)
-    .replaceAll("{first_name}", first)
-    .replaceAll("{unit_label}", t.unit_label)
-    .replaceAll("{building_name}", t.building_name)
-    .replaceAll("{month}", String(month))
-    .replaceAll("{year}", String(year))
-    .replaceAll("{amount}", Number(t.monthly_rent).toLocaleString())
-    .replaceAll("{balance}", Number(t.balance).toLocaleString())
-    .replaceAll("{due_date}", dueDate);
-}
-
-// Rent-related templates, most-relevant first for an arrears reminder.
-const REMINDER_TEMPLATE_KEYS = ["rent_overdue", "rent_reminder"];
-
-function RemindModal({ tenant, onClose }: { tenant: TenantListItem; onClose: () => void }) {
-  const { data: templates } = useNotificationTemplates();
-  const send = useSendNotification();
-  const [templateKey, setTemplateKey] = useState(REMINDER_TEMPLATE_KEYS[0]);
-  const [body, setBody] = useState("");
-
-  const reminderTemplates = useMemo(
-    () => (templates ?? []).filter((t) => REMINDER_TEMPLATE_KEYS.includes(t.key)),
-    [templates],
-  );
-
-  // Reset the editable body whenever the chosen template (or its data) loads.
-  useEffect(() => {
-    const tpl = reminderTemplates.find((t) => t.key === templateKey);
-    if (tpl) setBody(fillPlaceholders(tpl.body, tenant));
-  }, [templateKey, reminderTemplates, tenant]);
-
-  const hasPhone = Boolean(tenant.phone);
-  const canSend = hasPhone && body.trim().length > 0 && !send.isPending;
-
-  const handleSend = async () => {
-    try {
-      const res = await send.mutateAsync({
-        audience: "tenant",
-        tenant_ids: [tenant.id],
-        channel: "sms",
-        template_key: templateKey,
-        subject: "",
-        body: body.trim(),
-      });
-      if (res.sent > 0) {
-        toast.success(`Reminder sent to ${tenant.full_name}`);
-        onClose();
-      } else {
-        const err = res.notifications?.[0]?.error;
-        toast.error(err ? `Could not send: ${err}` : "The SMS could not be sent.");
-      }
-    } catch (e) {
-      toast.error(getErrorMessage(e, "Failed to send the reminder"));
-    }
-  };
-
-  return (
-    <Modal
-      open
-      onClose={onClose}
-      size="md"
-      eyebrow={`${tenant.building_name} · ${tenant.unit_label}`}
-      title="Send rent reminder"
-    >
-      <div className="space-y-4">
-        <div className="flex items-center justify-between gap-3 rounded-md bg-ink-50 px-3 py-2.5 text-sm dark:bg-ink-800">
-          <div className="min-w-0">
-            <p className="truncate font-medium text-ink-900 dark:text-white">{tenant.full_name}</p>
-            <p className="flex items-center gap-1 text-[11px] text-ink-500">
-              <Phone className="h-3 w-3" /> {tenant.phone || "No phone on file"}
-            </p>
-          </div>
-          <div className="text-right">
-            <p className="font-display text-lg font-semibold text-status-unpaid tabular-nums">
-              KES {Number(tenant.balance).toLocaleString()}
-            </p>
-            <p className="text-[11px] text-ink-500">Outstanding</p>
-          </div>
-        </div>
-
-        <Field label="Template">
-          <select
-            value={templateKey}
-            onChange={(e) => setTemplateKey(e.target.value)}
-            className={inputCls}
-          >
-            {reminderTemplates.map((t) => (
-              <option key={t.key} value={t.key}>{t.label}</option>
-            ))}
-          </select>
-        </Field>
-
-        <Field label="Message (SMS)">
-          <textarea
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
-            rows={5}
-            className={inputCls}
-          />
-        </Field>
-        <p className="-mt-2 text-[11px] text-ink-500">
-          {body.length} characters · {Math.max(1, Math.ceil(body.length / 160))} SMS. Sent to the tenant's phone via M-Pesa Paybill instructions.
-        </p>
-
-        {!hasPhone && (
-          <div className="rounded-md bg-status-unpaid/8 p-3 text-sm text-status-unpaid flex items-center gap-2">
-            <AlertTriangle className="h-4 w-4 shrink-0" />
-            This tenant has no phone number on file, so an SMS can't be sent. Add one on their profile first.
-          </div>
-        )}
-
-        <div className="flex justify-end gap-2">
-          <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button type="button" onClick={handleSend} loading={send.isPending} disabled={!canSend}>
-            <Send className="h-4 w-4" /> Send SMS
-          </Button>
-        </div>
-      </div>
-    </Modal>
-  );
-}
-
 // ─── Main Page ───────────────────────────────────────────────────────────────
 export default function TenantsPage() {
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [statusFilter, setStatusFilter] = useState("");
   const [kycFilter, setKycFilter] = useState("");
@@ -761,7 +169,6 @@ export default function TenantsPage() {
   const [payFilter, setPayFilter] = useState(searchParams.get("payment_status") ?? "");
   const [search, setSearch] = useState(searchParams.get("q") ?? "");
   const [showForm, setShowForm] = useState(searchParams.get("new") === "1");
-  const [selectedTenantId, setSelectedTenantId] = useState<number | null>(null);
   const [remindTenant, setRemindTenant] = useState<TenantListItem | null>(null);
   const [exporting, setExporting] = useState(false);
 
@@ -819,6 +226,8 @@ export default function TenantsPage() {
   const pendingKycCount = tenants?.filter((t) => t.kyc_status === "pending").length ?? 0;
 
   const activeCount = tenants?.filter((t) => t.status === "active").length ?? 0;
+
+  const openTenant = (id: number) => navigate(`/tenants/${id}`);
 
   return (
     <>
@@ -931,11 +340,11 @@ export default function TenantsPage() {
                       role="button"
                       tabIndex={0}
                       aria-label={`View ${t.full_name}`}
-                      onClick={() => setSelectedTenantId(t.id)}
+                      onClick={() => openTenant(t.id)}
                       onKeyDown={(e) => {
                         if (e.key === "Enter" || e.key === " ") {
                           e.preventDefault();
-                          setSelectedTenantId(t.id);
+                          openTenant(t.id);
                         }
                       }}
                     >
@@ -996,11 +405,11 @@ export default function TenantsPage() {
                   role="button"
                   tabIndex={0}
                   aria-label={`View ${t.full_name}`}
-                  onClick={() => setSelectedTenantId(t.id)}
+                  onClick={() => openTenant(t.id)}
                   onKeyDown={(e) => {
                     if (e.key === "Enter" || e.key === " ") {
                       e.preventDefault();
-                      setSelectedTenantId(t.id);
+                      openTenant(t.id);
                     }
                   }}
                 >
@@ -1048,10 +457,6 @@ export default function TenantsPage() {
           </>
         )}
       </div>
-
-      {selectedTenantId && (
-        <TenantDetailModal tenantId={selectedTenantId} onClose={() => setSelectedTenantId(null)} />
-      )}
 
       {remindTenant && (
         <RemindModal tenant={remindTenant} onClose={() => setRemindTenant(null)} />

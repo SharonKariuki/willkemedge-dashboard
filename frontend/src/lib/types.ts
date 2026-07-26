@@ -102,6 +102,7 @@ export interface TenantListItem {
   first_name: string;
   last_name: string;
   phone: string;
+  email: string;
   unit: number;
   unit_label: string;
   building_name: string;

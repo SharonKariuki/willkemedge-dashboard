@@ -17,6 +17,25 @@ import { useUnitStatusSummary, useUnits } from "@/hooks/useUnits";
 import { cn } from "@/lib/cn";
 import type { UnitStatus } from "@/lib/types";
 
+/** Short, card-friendly property label. Every property shares the
+ *  "Wilkem Edge/Ventures" brand and generic type words, so we strip those and
+ *  keep the distinguishing location (e.g. "Donholm", "Arcade Matasia"). Falls
+ *  back to the original name if stripping leaves nothing. */
+function shortBuilding(name: string): string {
+  const short = name
+    .replace(/\bwilkem(\s+edge|\s+ventures)?\b/gi, "")
+    .replace(/\bbusiness\s+arcade\b/gi, "Arcade")
+    .replace(/\bcommercial\s*&?\s*residential\s+properties\b/gi, "")
+    .replace(/\b(residential\s+)?apartments?\b/gi, "")
+    .replace(/\bproperties\b/gi, "")
+    .replace(/\bestate\b/gi, "")
+    .replace(/[,–—]/g, " ")
+    .replace(/\s*-\s*/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return short || name;
+}
+
 const STATUS_FILTERS = [
   { value: "", label: "All statuses", tone: "neutral" as const },
   { value: "vacant", label: "Vacant", tone: "vacant" as const },
@@ -54,14 +73,6 @@ function FilterSelect({
     </div>
   );
 }
-
-const STATUS_RAIL: Record<UnitStatus, string> = {
-  vacant: "bg-status-vacant",
-  occupied_paid: "bg-status-paid",
-  occupied_partial: "bg-status-partial",
-  occupied_unpaid: "bg-status-unpaid",
-  arrears: "bg-status-unpaid",
-};
 
 export default function UnitsPage() {
   const navigate = useNavigate();
@@ -201,51 +212,43 @@ export default function UnitsPage() {
               role={hasTenant ? "button" : undefined}
               title={hasTenant ? `View ${unit.current_tenant_name}` : undefined}
               className={cn(
-                "relative overflow-hidden",
+                "flex h-full flex-col p-4",
                 hasTenant && "cursor-pointer"
               )}
             >
-              <span
-                className={cn(
-                  "absolute left-0 top-0 h-full w-1.5",
-                  STATUS_RAIL[unit.status]
-                )}
-              />
-              <div className="p-5 pl-6">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.16em] text-ink-500">
-                      <Home className="h-3 w-3" />
-                      {unit.building_name}
-                    </div>
-                    <p className="mt-1 font-display text-xl font-semibold text-ink-900">
-                      {unit.label}
-                    </p>
-                  </div>
-                  <StatusBadge status={unit.status as UnitStatus} />
+              {/* Header — unit ID prominent, building de-emphasised, status badge */}
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="truncate font-display text-xl font-semibold text-ink-900">
+                    {unit.label}
+                  </p>
+                  <p className="mt-0.5 truncate text-[11px] text-ink-400" title={unit.building_name}>
+                    {shortBuilding(unit.building_name)}
+                  </p>
                 </div>
+                <StatusBadge status={unit.status as UnitStatus} />
+              </div>
 
-                <div className="mt-4 flex items-end justify-between">
-                  <div>
-                    <p className="text-[10px] uppercase tracking-wider text-ink-400">Monthly rent</p>
-                    <p className="font-display text-xl font-semibold text-ink-900 tabular-nums">
-                      <span className="text-sm text-ink-500">KES </span>
-                      {Number(unit.monthly_rent).toLocaleString()}
-                    </p>
-                  </div>
-                  <Badge tone="neutral" className="capitalize">
-                    {unit.unit_type.replace("_", " ")}
-                  </Badge>
+              {/* Rent + room type */}
+              <div className="mt-4 flex items-end justify-between gap-2">
+                <div>
+                  <p className="text-[10px] uppercase tracking-wider text-ink-400">Monthly rent</p>
+                  <p className="font-display text-xl font-semibold text-ink-900 tabular-nums">
+                    <span className="text-sm text-ink-500">KES </span>
+                    {Number(unit.monthly_rent).toLocaleString()}
+                  </p>
                 </div>
+                <Badge tone="neutral" className="shrink-0 capitalize">
+                  {unit.unit_type.replace("_", " ")}
+                </Badge>
+              </div>
 
-                {unit.current_tenant_name && (
-                  <div className="mt-3 flex items-center gap-2 text-[11px] text-ink-500">
-                    <span className="flex min-w-0 items-center gap-1 text-ink-600">
-                      <User className="h-3 w-3 shrink-0" />
-                      <span className="truncate">{unit.current_tenant_name}</span>
-                    </span>
-                  </div>
-                )}
+              {/* Footer — tenant, pinned to bottom with a hairline divider */}
+              <div className="mt-4 flex items-center gap-1.5 border-t border-border/60 pt-3 text-[11px] text-ink-500">
+                <User className="h-3 w-3 shrink-0" />
+                <span className="truncate">
+                  {unit.current_tenant_name ?? "No tenant"}
+                </span>
               </div>
             </Card>
             );
