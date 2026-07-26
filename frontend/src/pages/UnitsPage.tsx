@@ -1,4 +1,4 @@
-import { ChevronDown, Home, Search, Sparkles, User } from "lucide-react";
+import { ChevronDown, Home, Search, User } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
@@ -238,20 +238,14 @@ export default function UnitsPage() {
                   </Badge>
                 </div>
 
-                <div className="mt-3 flex items-center justify-between gap-2 text-[11px] text-ink-500">
-                  {unit.floor !== undefined && (
-                    <span className="flex items-center gap-1">
-                      <Sparkles className="h-3 w-3" />
-                      Floor {unit.floor}
-                    </span>
-                  )}
-                  {unit.current_tenant_name && (
+                {unit.current_tenant_name && (
+                  <div className="mt-3 flex items-center gap-2 text-[11px] text-ink-500">
                     <span className="flex min-w-0 items-center gap-1 text-ink-600">
                       <User className="h-3 w-3 shrink-0" />
                       <span className="truncate">{unit.current_tenant_name}</span>
                     </span>
-                  )}
-                </div>
+                  </div>
+                )}
               </div>
             </Card>
             );
