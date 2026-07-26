@@ -33,7 +33,7 @@ class TenantListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Tenant
         fields = [
-            "id", "full_name", "first_name", "last_name", "phone",
+            "id", "full_name", "first_name", "last_name", "phone", "email",
             "unit", "unit_label", "building_name", "building_id",
             "monthly_rent", "deposit_paid", "due_day", "status", "status_display",
             "kyc_status", "kyc_status_display", "balance", "payment_status",
