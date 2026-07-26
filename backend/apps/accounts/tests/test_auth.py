@@ -89,6 +89,35 @@ class AuthFlowTests(APITestCase):
         assert response.status_code == status.HTTP_429_TOO_MANY_REQUESTS
         assert "locked" in response.json()["detail"].lower()
 
+    def test_lockout_is_ip_scoped_to_prevent_dos(self):
+        """An attacker at one IP must not be able to lock the owner out globally."""
+        attacker_ip = "203.0.113.10"
+        for _ in range(LOCKOUT_THRESHOLD):
+            self.client.post(
+                self.login_url,
+                {"email": "william@gmail.com", "password": "wrong"},
+                format="json",
+                REMOTE_ADDR=attacker_ip,
+            )
+
+        # The attacker's own IP is locked for that email...
+        blocked = self.client.post(
+            self.login_url,
+            {"email": "william@gmail.com", "password": self.password},
+            format="json",
+            REMOTE_ADDR=attacker_ip,
+        )
+        assert blocked.status_code == status.HTTP_429_TOO_MANY_REQUESTS
+
+        # ...but the real owner signing in from a different IP is unaffected.
+        ok = self.client.post(
+            self.login_url,
+            {"email": "william@gmail.com", "password": self.password},
+            format="json",
+            REMOTE_ADDR="198.51.100.7",
+        )
+        assert ok.status_code == status.HTTP_200_OK
+
     def test_successful_login_resets_failed_attempt_window(self):
         # A few failed attempts (below threshold)...
         for _ in range(LOCKOUT_THRESHOLD - 1):
