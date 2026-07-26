@@ -15,7 +15,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { z } from "zod";
 
 import {
-  Badge, Breadcrumb, Button, Card, DatePicker, ErrorState, Skeleton,
+  Badge, Button, Card, DatePicker, ErrorState, Skeleton,
   Table, TBody, TD, TH, THead, TR,
 } from "@/components/ui";
 import { Field, KycPanel, RemindModal, inputCls } from "@/features/tenants/shared";
@@ -137,14 +137,6 @@ export default function TenantDetailPage() {
 
   return (
     <div className="space-y-6">
-      <Breadcrumb
-        items={[
-          { label: "Portfolio", to: "/buildings" },
-          { label: tenant.building_name, to: `/buildings/${tenant.building_id}` },
-          { label: tenant.full_name },
-        ]}
-      />
-
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <button

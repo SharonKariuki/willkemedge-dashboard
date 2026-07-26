@@ -9,7 +9,7 @@ import { ArrowLeft, DoorOpen } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 
 import {
-  Badge, Breadcrumb, Card, EmptyState, ErrorState, Skeleton,
+  Badge, Card, EmptyState, ErrorState, Skeleton,
   Table, TBody, TD, TH, THead, TR,
 } from "@/components/ui";
 import { useBuilding } from "@/hooks/useBuildings";
@@ -50,8 +50,6 @@ export default function BuildingDetailPage() {
 
   return (
     <div className="space-y-6">
-      <Breadcrumb items={[{ label: "Portfolio", to: "/buildings" }, { label: building.name }]} />
-
       <div>
         <button
           onClick={() => navigate("/buildings")}
