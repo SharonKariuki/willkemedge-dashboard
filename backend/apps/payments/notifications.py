@@ -52,6 +52,53 @@ def to_intl_phone(phone: str) -> str:
     return "+" + digits
 
 
+# Africa's Talking statusCodes that mean the message was accepted for delivery
+# (Processed / Sent / Queued). Everything else is a per-recipient rejection.
+_AT_ACCEPTED_STATUS_CODES = {100, 101, 102}
+
+# Map AT rejection statuses to plain-language reasons a non-technical operator
+# can act on. Unlisted statuses fall back to the raw AT status text.
+_AT_FAILURE_REASONS = {
+    "UserInBlacklist": "Recipient has blocked promotional SMS (they must dial *456*9# to opt back in)",
+    "InvalidPhoneNumber": "Phone number is not valid",
+    "UnsupportedNumberType": "This number cannot receive SMS",
+    "InsufficientBalance": "SMS account balance is too low",
+    "InvalidSenderId": "Sender ID is not registered/approved",
+    "RiskHold": "Message held by Africa's Talking risk review",
+    "CouldNotRoute": "Carrier could not route the message",
+    "UserDoesNotExist": "Number is not a valid subscriber",
+    "UserInInvalidState": "Recipient number cannot currently receive messages",
+}
+
+
+def at_delivery_error(receipt: dict | None) -> str | None:
+    """Return a plain-language reason if an AT send receipt reports a per-recipient
+    failure, else ``None``.
+
+    Africa's Talking answers the send call with HTTP 200 even when the carrier
+    rejects the recipient (e.g. ``UserInBlacklist``) — the true outcome lives in
+    the per-recipient ``status``/``statusCode``. ``send_sms`` therefore cannot
+    raise on these; callers must inspect the receipt to know whether delivery
+    was actually accepted, otherwise a blocked message looks like a success.
+    """
+    if not receipt:
+        return None
+    data = receipt.get("SMSMessageData") if isinstance(receipt, dict) else None
+    if not isinstance(data, dict):
+        return None
+    recipients = data.get("Recipients") or []
+    if not recipients:
+        # Nobody was accepted — surface the batch-level message if AT gave one.
+        batch_msg = str(data.get("Message", "")).strip()
+        return f"Not delivered: {batch_msg}" if batch_msg else "Not delivered"
+    recipient = recipients[0]
+    code = recipient.get("statusCode")
+    status = str(recipient.get("status", "")).strip()
+    if code in _AT_ACCEPTED_STATUS_CODES or status in ("Success", "Sent"):
+        return None
+    return _AT_FAILURE_REASONS.get(status, f"Not delivered ({status or code or 'unknown'})")
+
+
 def send_sms(phone: str, message: str) -> dict | None:
     """
     Send an SMS via Africa's Talking REST API (using httpx).

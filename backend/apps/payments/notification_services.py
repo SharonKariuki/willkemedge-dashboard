@@ -17,7 +17,7 @@ from django.utils import timezone
 from apps.tenants.models import Tenant
 
 from .models import NotificationChannel, NotificationStatus, TenantNotification
-from .notifications import custom_email_html, send_email, send_sms
+from .notifications import at_delivery_error, custom_email_html, send_email, send_sms
 
 logger = logging.getLogger(__name__)
 
@@ -78,8 +78,10 @@ def dispatch_notification(notification: TenantNotification) -> TenantNotificatio
     tenant = notification.tenant
     rendered_body = _resolve_placeholders(notification.body, tenant)
     rendered_subject = _resolve_placeholders(notification.subject or "Notice", tenant)
+    notification.body = rendered_body
+    notification.subject = rendered_subject
 
-    update_fields = ["status", "sent_at", "body", "subject"]
+    error: str | None = None
     try:
         if notification.channel in (NotificationChannel.SMS, NotificationChannel.BOTH):
             if not tenant.phone:
@@ -90,7 +92,11 @@ def dispatch_notification(notification: TenantNotification) -> TenantNotificatio
                 # messageId) for auditing.
                 notification.provider_response = str(sms_receipt)[:5000]
                 notification.provider_message_id = _at_message_id(sms_receipt)
-                update_fields += ["provider_response", "provider_message_id"]
+                # AT answers with HTTP 200 even when the carrier rejects the
+                # recipient (e.g. UserInBlacklist), so send_sms cannot raise on
+                # it. Read the per-recipient status so a blocked message is
+                # recorded as FAILED, not a false 'sent'.
+                error = at_delivery_error(sms_receipt)
 
         if notification.channel in (NotificationChannel.EMAIL, NotificationChannel.BOTH):
             if tenant.email:
@@ -102,17 +108,17 @@ def dispatch_notification(notification: TenantNotification) -> TenantNotificatio
                 )
             elif notification.channel == NotificationChannel.EMAIL:
                 raise ValueError("Tenant has no email address on file")
-
-        notification.status = NotificationStatus.SENT
-        notification.sent_at = timezone.now()
-        notification.body = rendered_body
-        notification.subject = rendered_subject
-        notification.save(update_fields=update_fields)
-        logger.info("Notification %s sent to %s", notification.id, tenant)
     except Exception as exc:
-        notification.status = NotificationStatus.FAILED
-        notification.error = str(exc)[:500]
-        notification.save(update_fields=["status", "error"])
+        error = str(exc)[:500]
         logger.warning("Notification %s failed: %s", notification.id, exc)
 
+    if error:
+        notification.status = NotificationStatus.FAILED
+        notification.error = error
+    else:
+        notification.status = NotificationStatus.SENT
+        notification.sent_at = timezone.now()
+        logger.info("Notification %s sent to %s", notification.id, tenant)
+
+    notification.save()
     return notification
