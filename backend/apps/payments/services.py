@@ -185,8 +185,13 @@ def allocate_payment_fifo(
     remaining = Decimal(str(amount))
     created: list[Payment] = []
 
+    # select_for_update locks the outstanding arrears rows for the life of this
+    # atomic block, so two credits arriving for the same tenant concurrently are
+    # serialised: the second waits, then re-reads the balances the first left
+    # behind instead of allocating against stale (already-cleared) rows.
     outstanding = list(
-        Arrears.objects.filter(tenant=tenant, balance__gt=0)
+        Arrears.objects.select_for_update()
+        .filter(tenant=tenant, balance__gt=0)
         .order_by("period_year", "period_month")
     )
     for ar in outstanding:
