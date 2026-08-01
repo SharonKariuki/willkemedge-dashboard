@@ -21,6 +21,9 @@ Safety properties (see review C1–C4, H1/H3/H5)
   replayed delivery hits the unique constraint (IntegrityError) and is acked
   without a second Payment. An unexpected error rolls the whole thing back so
   the bank's retry reprocesses cleanly — no orphaned Payment, no lost credit.
+  Belt-and-braces, the TransactionId is also handed to the allocator as an
+  idempotency key, so the same credit cannot be double-booked via another path
+  (e.g. a manual entry racing the unmatched-queue reprocess).
 * **Account guard:** credits whose AcctNo != COOP_ACCOUNT_NUMBER are ignored.
 * **Strict CREDIT:** only EventType == "CREDIT" is booked; everything else
   (DEBIT, reversals, or a missing field) is ignored, never assumed income.
@@ -370,6 +373,7 @@ class CoopIpnView(APIView):
                             reference=trans_id,
                             notes=f"Co-op IPN ({parsed['channel']}); matched by {matched_by}; "
                                   f"ref {event.payment_ref}",
+                            idempotency_key=trans_id,
                         )
                         event.status = CoopIpnStatus.RECORDED
                         split = f" across {len(payments)} periods" if len(payments) > 1 else ""

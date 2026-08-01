@@ -69,9 +69,9 @@ def process_payment(
     already-recorded Payment instead of double-booking (and double-reducing
     arrears). The key is enforced by a partial unique constraint at the DB
     level, so concurrent retries that both pass the pre-check are still caught
-    via IntegrityError. FIFO allocation intentionally leaves the key blank —
-    it splits one credit into several Payment rows that share a reference — so
-    it is never de-duplicated here.
+    via IntegrityError. FIFO allocation passes a per-chunk key derived from the
+    bank transaction id (see `allocate_payment_fifo`), so a replayed credit is
+    de-duplicated there too.
     """
     if idempotency_key:
         existing = Payment.objects.filter(idempotency_key=idempotency_key).first()
@@ -163,6 +163,7 @@ def allocate_payment_fifo(
     source: str = "cash",
     reference: str = "",
     notes: str = "",
+    idempotency_key: str = "",
 ) -> list[Payment]:
     """
     Apply an incoming credit to the tenant's outstanding balances oldest-first.
@@ -181,9 +182,36 @@ def allocate_payment_fifo(
 
     NB: chunks are sized against Arrears.balance (snapshotted when the queryset
     is read), and per-chunk tax handling is whatever process_payment applies.
+
+    Idempotency
+    -----------
+    Pass ``idempotency_key`` (the bank's transaction id) to make replaying the
+    same credit a no-op. One credit becomes several Payment rows, so the key
+    can't be used verbatim; each chunk gets ``<key>#<n>``, guarded by the
+    partial unique constraint on Payment.idempotency_key. Before allocating we
+    look for any chunk already carrying this prefix and, if found, return the
+    existing rows untouched rather than re-splitting the money.
+
+    The chunk ordinal — not the period — is the discriminator on purpose: FIFO
+    legitimately books two chunks to the SAME period when a partial arrear is
+    cleared and the remainder spills into the current month, and a period-keyed
+    scheme would silently swallow the second one.
+
+    Callers that leave the key blank keep the previous behaviour (no
+    de-duplication), so manual back-office entry of a genuine second payment
+    with the same reference is still possible.
     """
     remaining = Decimal(str(amount))
     created: list[Payment] = []
+
+    # Cap so `<key>#<n>` always fits Payment.idempotency_key (max_length=100).
+    base_key = (idempotency_key or "").strip()[:90]
+    if base_key:
+        already = list(
+            Payment.objects.filter(idempotency_key__startswith=f"{base_key}#").order_by("id")
+        )
+        if already:
+            return already
 
     # select_for_update locks the outstanding arrears rows for the life of this
     # atomic block, so two credits arriving for the same tenant concurrently are
@@ -203,6 +231,7 @@ def allocate_payment_fifo(
                 tenant=tenant, amount=chunk, payment_date=payment_date,
                 period_month=ar.period_month, period_year=ar.period_year,
                 source=source, reference=reference, notes=notes,
+                idempotency_key=f"{base_key}#{len(created)}" if base_key else "",
             )
         )
         remaining -= chunk
@@ -215,6 +244,7 @@ def allocate_payment_fifo(
                 tenant=tenant, amount=remaining, payment_date=payment_date,
                 period_month=payment_date.month, period_year=payment_date.year,
                 source=source, reference=reference, notes=notes,
+                idempotency_key=f"{base_key}#{len(created)}" if base_key else "",
             )
         )
     return created
