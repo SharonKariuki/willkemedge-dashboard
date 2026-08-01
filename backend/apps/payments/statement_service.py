@@ -100,7 +100,7 @@ def _ordinal(n: int) -> str:
 
 def _build_ledger(tenant, *, is_business: bool, as_of: _dt.date | None):
     """Return (rows, final_balance). Rows are dicts ready for the template."""
-    from .models import Arrears, Payment, UtilityCharge
+    from .models import Arrears, Payment, PaymentType, UtilityCharge
 
     # (posting_date, sort_order, description, invoice_amount, payment_amount)
     events: list[tuple[_dt.date, int, str, Decimal, Decimal]] = []
@@ -120,12 +120,31 @@ def _build_ledger(tenant, *, is_business: bool, as_of: _dt.date | None):
         else:
             events.append((posting, 0, f"Month Rent - {_month_name(arr.period_month, arr.period_year)}", base, ZERO))
 
+        # A waiver discharges the obligation just as cash does. Without this
+        # credit the statement kept showing debt the business had already
+        # written off — permanently, since the charge row is never removed.
+        waived = _money(arr.waived_amount)
+        if waived > 0:
+            label = f"Waiver - {_month_name(arr.period_month, arr.period_year)}"
+            if arr.waive_notes:
+                label = f"{label} ({arr.waive_notes})"
+            events.append((posting, 4, label, ZERO, waived))
+
     for util in UtilityCharge.objects.filter(tenant=tenant).order_by("posting_date", "id"):
         if as_of and util.posting_date > as_of:
             continue
         events.append((util.posting_date, 2, util.description(), _money(util.amount), ZERO))
 
-    for pay in Payment.objects.filter(tenant=tenant).order_by("payment_date", "created_at"):
+    # Deposits are excluded: a security deposit is a refundable liability, not a
+    # payment against rent. Crediting it here reduced the rent owed *and* showed
+    # the same money again on the "Security Deposit" breakdown line. Voided
+    # payments are excluded because the money was never really received.
+    payments = (
+        Payment.objects.filter(tenant=tenant, voided_at__isnull=True)
+        .exclude(payment_type=PaymentType.DEPOSIT)
+        .order_by("payment_date", "created_at")
+    )
+    for pay in payments:
         if as_of and pay.payment_date > as_of:
             continue
         events.append((pay.payment_date, 3, "Payment Received", ZERO, _money(pay.amount)))
@@ -221,7 +240,9 @@ def build_statement(tenant, *, statement_date: _dt.date | None = None, as_of: _d
     from .models import Payment, PaymentType, UtilityCharge
 
     #  Security deposit held = deposit-type payments received (up to as_of).
-    deposit_q = Payment.objects.filter(tenant=tenant, payment_type=PaymentType.DEPOSIT)
+    deposit_q = Payment.objects.filter(
+        tenant=tenant, payment_type=PaymentType.DEPOSIT, voided_at__isnull=True
+    )
     if as_of:
         deposit_q = deposit_q.filter(payment_date__lte=as_of)
     security_deposit = _money(deposit_q.aggregate(t=Sum("amount"))["t"])

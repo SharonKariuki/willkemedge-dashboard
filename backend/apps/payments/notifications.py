@@ -124,7 +124,10 @@ def send_sms(phone: str, message: str) -> dict | None:
     sender_id = getattr(settings, "AT_SENDER_ID", "")
 
     if not api_key:
-        logger.warning("SMS skipped (AT_API_KEY not set): to=%s msg=%s", phone, message)
+        # Never log the recipient or the body: SMS content carries tenant names,
+        # balances and payment references (Data Protection Act 2019). The IPN
+        # path already masks phone numbers; this one used to log both in full.
+        logger.warning("SMS skipped (AT_API_KEY not set): %d-char message suppressed", len(message or ""))
         return None
 
     to = to_intl_phone(phone)
