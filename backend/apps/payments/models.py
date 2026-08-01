@@ -71,10 +71,11 @@ class Payment(models.Model):
         blank=True,
         default="",
         help_text=(
-            "Natural-key guard against double-booking a single payment. Set only "
-            "by single-payment ingestion (the manual create/mock paths); left "
-            "blank by FIFO allocation, which deliberately splits one credit into "
-            "several Payment rows that share a reference. Unique when non-blank."
+            "Natural-key guard against double-booking a single payment. Single-"
+            "payment ingestion (the manual create/mock paths) sets the bare "
+            "reference; FIFO allocation splits one credit into several Payment "
+            "rows and sets '<transaction id>#<chunk>' on each. Unique when "
+            "non-blank."
         ),
     )
     notes = models.TextField(blank=True)

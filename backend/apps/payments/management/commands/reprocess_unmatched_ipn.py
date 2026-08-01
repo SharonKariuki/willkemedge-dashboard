@@ -140,6 +140,7 @@ class Command(BaseCommand):
                         source=parsed["channel"],
                         reference=event.transaction_id,
                         notes=notes,
+                        idempotency_key=event.transaction_id,
                     )
                     event.status = CoopIpnStatus.RECORDED
                     split = f" across {len(payments)} periods" if len(payments) > 1 else ""

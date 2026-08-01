@@ -20,6 +20,32 @@ from apps.tenants.models import Tenant, TenantStatus
 # (e.g. "90290#A12", "90290 A12", "90290-A12").
 _BILL_REF_SEP_RE = re.compile(r"^[\s#*\-./]+")
 
+# A unit label is a building-code prefix, a number, and an optional letter
+# suffix, with an optional hyphen either side of the number: RB09, DON3A,
+# F-13B, MR304. Payers routinely retype the number with different zero
+# padding ("RB009" for RB09) or drop the hyphen ("F03" for F-03).
+_LABEL_SHAPE_RE = re.compile(r"^([A-Z]*)-?0*(\d+)-?([A-Z]*)$")
+
+
+def canonical_label(label: str) -> str | None:
+    """Zero-padding/hyphen-insensitive form of a unit label, or None.
+
+    Collapses RB009 and RB09 to the same key, and F03 to F-03's key, so a
+    payer's harmless retyping of the number still matches. Returns None for
+    labels that aren't prefix+digits+suffix shaped, which are then only ever
+    compared literally.
+
+    Deliberately does NOT invent a missing building prefix: "3A" does not
+    canonicalise to "DON3A". Guessing which building a bare house number
+    belongs to is exactly the ambiguity that misroutes money — that mapping
+    has to be an explicit UnitAlias entered by a human.
+    """
+    m = _LABEL_SHAPE_RE.match((label or "").strip().upper())
+    if not m:
+        return None
+    prefix, digits, suffix = m.groups()
+    return f"{prefix}|{digits}|{suffix}"
+
 
 def normalize_bill_ref(bill_ref: str) -> str:
     """Recover the bare house number from a Paybill BillRefNumber.
@@ -39,10 +65,11 @@ def _unit_for_label(house_number: str) -> Unit | None:
 
     Tries the current `Unit.label` first, then falls back to retired labels in
     `UnitAlias` so payments that still use the OLD account reference keep
-    matching during the building-code transition. A global unique constraint
-    keeps both label and alias namespaces unambiguous, so this returns at most
-    one unit; the `[:2]` guard is belt-and-braces in case the constraint is not
-    yet deployed.
+    matching during the building-code transition, and finally to the canonical
+    (zero-padding-insensitive) form so "RB009" reaches RB09. A global unique
+    constraint keeps both label and alias namespaces unambiguous, so this
+    returns at most one unit; the `[:2]` guard is belt-and-braces in case the
+    constraint is not yet deployed.
     """
     units = list(Unit.objects.filter(label__iexact=house_number)[:2])
     if len(units) == 1:
@@ -52,6 +79,37 @@ def _unit_for_label(house_number: str) -> Unit | None:
     aliases = list(UnitAlias.objects.filter(label__iexact=house_number).select_related("unit")[:2])
     if len(aliases) == 1:
         return aliases[0].unit
+    if len(aliases) > 1:
+        return None
+    return _unit_by_canonical(house_number)
+
+
+def _unit_by_canonical(house_number: str) -> Unit | None:
+    """Last resort: match on the zero-padding-insensitive form of the label.
+
+    Only fires when the literal lookups above found nothing, and only when
+    exactly ONE unit (or, failing that, one alias) shares the canonical form —
+    anything ambiguous returns None and lands in the admin queue rather than
+    being guessed at. Both scans are done in Python because the canonical form
+    isn't a stored column; the unit table is small (order of hundreds) and this
+    path runs only for refs that already failed an indexed lookup.
+    """
+    target = canonical_label(house_number)
+    if target is None:
+        return None
+
+    matches = [u for u in Unit.objects.only("id", "label") if canonical_label(u.label) == target]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        return None
+
+    alias_matches = [
+        a for a in UnitAlias.objects.select_related("unit")
+        if canonical_label(a.label) == target
+    ]
+    if len(alias_matches) == 1:
+        return alias_matches[0].unit
     return None
 
 
