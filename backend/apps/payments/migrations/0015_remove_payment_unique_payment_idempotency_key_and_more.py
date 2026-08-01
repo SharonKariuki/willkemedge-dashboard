@@ -71,14 +71,12 @@ class Migration(migrations.Migration):
             model_name='payment',
             index=models.Index(fields=['voided_at'], name='payments_pa_voided__f97ad4_idx'),
         ),
-        migrations.AddConstraint(
-            model_name='arrears',
-            constraint=models.CheckConstraint(condition=models.Q(('balance__gte', 0)), name='arrears_balance_non_negative'),
-        ),
-        migrations.AddConstraint(
-            model_name='arrears',
-            constraint=models.CheckConstraint(condition=models.Q(('period_month__gte', 1), ('period_month__lte', 12)), name='arrears_period_month_valid'),
-        ),
+        # The two Arrears CheckConstraints belonging to this model change are
+        # added in 0018 instead, AFTER the 0016 recompute has healed the data
+        # they assert. Adding them here failed the production deploy: a legacy
+        # row carried balance = -1000.00, so the whole migration rolled back.
+        # A constraint cannot be introduced before the migration that
+        # establishes the invariant it checks. Do not move them back here.
         migrations.AddConstraint(
             model_name='payment',
             constraint=models.UniqueConstraint(condition=models.Q(('idempotency_key', ''), _negated=True), fields=('tenant', 'idempotency_key'), name='unique_payment_idempotency_key_per_tenant'),
