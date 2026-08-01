@@ -15,7 +15,7 @@ class ExpensesAPITests(APITestCase):
     @classmethod
     def setUpTestData(cls):
         cls.user = User.objects.create_user(
-            username="admin", email="admin@test.com", password="testpass123!"
+            username="admin", email="admin@test.com", password="testpass123!", role="owner"
         )
         # The Chart of Accounts is seeded via data migration; reuse a posting
         # account rather than recreating one (codes are unique).

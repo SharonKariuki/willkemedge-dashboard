@@ -23,7 +23,7 @@ class DashboardSummaryTests(APITestCase):
     @classmethod
     def setUpTestData(cls):
         cls.user = User.objects.create_user(
-            username="admin", email="admin@test.com", password="testpass123!"
+            username="admin", email="admin@test.com", password="testpass123!", role="owner"
         )
         cls.building = Building.objects.create(name="Summary Block", total_floors=2)
 
@@ -131,15 +131,18 @@ class DashboardSummaryTests(APITestCase):
         data = self._summary()
         current = data["income_trend"][-1]
         assert current["month"] == f"{self.year}-{self.month:02d}"
-        # Rent 33,200; deposit 15,000 excluded from income.
-        assert current["amount"] == 33200.0
+        # Income is net of VAT and excludes the refundable 15,000 deposit:
+        # residential 10,000 + commercial 23,200/1.16 = 30,000. The 16% on
+        # commercial rent is a liability owed to KRA, not income.
+        assert round(current["amount"], 2) == 30000.0
 
     def test_annual_income_report_excludes_deposit(self):
         resp = self.client.get("/api/reports/annual-income/", {"year": self.year})
         assert resp.status_code == 200
         monthly = {row["month"]: row["total"] for row in resp.json()["monthly"]}
-        # Income for the current month is rent only — the 15,000 deposit is out.
-        assert monthly[self.month] == 33200.0
+        # Rent only (deposit excluded) and net of VAT — the same basis as the
+        # dashboard income trend and the P&L: 10,000 + 23,200/1.16 = 30,000.
+        assert round(monthly[self.month], 2) == 30000.0
 
     def test_occupancy_report_excludes_under_maintenance(self):
         resp = self.client.get("/api/reports/occupancy/")

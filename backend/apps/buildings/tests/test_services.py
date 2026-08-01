@@ -126,7 +126,7 @@ class UnitViewSetTests(TestCase):
         from django.contrib.auth import get_user_model
         User = get_user_model()
         cls.user = User.objects.create_user(
-            username="tester", email="test@example.com", password="testpass123!"
+            username="tester", email="test@example.com", password="testpass123!", role="owner"
         )
         cls.building = Building.objects.create(name="API Block", total_floors=2)
         Unit.objects.create(

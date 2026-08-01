@@ -89,7 +89,9 @@ def move_out(unit: Unit) -> Unit:
     return transition_status(unit, UnitStatus.VACANT)
 
 
-def recalculate_unit_status(unit: Unit, amount_paid: Decimal) -> Unit:
+def recalculate_unit_status(
+    unit: Unit, amount_paid: Decimal, *, obligation: Decimal | None = None
+) -> Unit:
     """
     Recalculate status based on how much has been paid for the current period.
 
@@ -97,11 +99,17 @@ def recalculate_unit_status(unit: Unit, amount_paid: Decimal) -> Unit:
     - amount_paid == 0     → OCCUPIED_UNPAID
     - 0 < amount_paid < rent → OCCUPIED_PARTIAL
     - amount_paid >= rent  → OCCUPIED_PAID
+
+    ``obligation`` is the figure the payment should be measured against. Callers
+    that know the true period obligation — rent plus VAT for a commercial unit,
+    which is what the tenant actually pays — pass it explicitly; otherwise the
+    unit's base rent is used and a commercial tenant paying in full would never
+    reach OCCUPIED_PAID.
     """
     if unit.status == UnitStatus.VACANT:
         return unit  # can't recalculate a vacant unit
 
-    rent = unit.monthly_rent
+    rent = obligation if obligation is not None else unit.monthly_rent
     if amount_paid <= 0:
         new = UnitStatus.OCCUPIED_UNPAID
     elif amount_paid < rent:

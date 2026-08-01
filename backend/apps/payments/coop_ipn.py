@@ -43,10 +43,11 @@ import datetime as dt
 import hmac
 import ipaddress
 import logging
+import re
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 from django.conf import settings
-from django.db import IntegrityError
+from django.db import IntegrityError, models
 from django.db import transaction as db_transaction
 from django.utils import timezone
 from rest_framework.permissions import AllowAny
@@ -246,25 +247,44 @@ def _resolve_tenant(payload: dict, parsed: dict):
     return None, "", False
 
 
+# A bank reference is an alphanumeric run; splitting on anything else gives the
+# candidate tokens to look up. Minimum length guards against matching noise like
+# a bare "1" or a currency code.
+_REF_TOKEN_RE = re.compile(r"[A-Za-z0-9]{6,}")
+
+
 def _reversal_check(event_type: str, narration: str, payload: dict):
     """Decide whether a non-credit event is a reversal of a prior collection.
 
     Returns (is_reversal, original_event_or_None). A reversal is detected by a
     "REVERS" marker in the narration/memo, or by the debit referencing a prior
     RECORDED credit (its PaymentRef or TransactionId appearing in the text).
-    NB: heuristic until a real reversal sample is seen — tune with Co-op's data.
+
+    The original is looked up by **exact token match**, not substring, and over
+    the whole history rather than the most recent 500 events. The previous
+    approach failed both ways: a reversal of anything older than 500 events was
+    never linked to its original, and an unanchored substring meant a short
+    payment_ref like "1234" matched any narration containing those digits —
+    which, since authorising a reversal voids the linked payment, could unwind
+    an innocent tenant's money.
+
+    NB: still heuristic until a real reversal sample is seen — tune with Co-op's
+    data.
     """
     if event_type == "CREDIT":
         return False, None
     text = " ".join(str(payload.get(k, "")) for k in (
         "Narration", "PaymentRef", "CustMemoLine1", "CustMemoLine2", "CustMemoLine3"))
+
+    tokens = set(_REF_TOKEN_RE.findall(text))
     original = None
-    for ev in CoopIpnEvent.objects.filter(
-        status=CoopIpnStatus.RECORDED
-    ).only("transaction_id", "payment_ref")[:500]:
-        if (ev.payment_ref and ev.payment_ref in text) or (ev.transaction_id and ev.transaction_id in text):
-            original = ev
-            break
+    if tokens:
+        original = (
+            CoopIpnEvent.objects.filter(status=CoopIpnStatus.RECORDED)
+            .filter(models.Q(transaction_id__in=tokens) | models.Q(payment_ref__in=tokens))
+            .order_by("-received_at")
+            .first()
+        )
     is_reversal = "REVERS" in text.upper() or original is not None
     return is_reversal, original
 
@@ -317,6 +337,15 @@ class CoopIpnView(APIView):
 
         receipt_args = None  # (tenant_id, amount_str, reference, posting_date_iso)
 
+        # Resolved BEFORE opening the transaction: it queries history, and doing
+        # that inside the atomic block held the write transaction open for the
+        # duration while the bank waited on the response.
+        is_reversal, original_event = (
+            _reversal_check(event_type, narration, payload)
+            if event_type != "CREDIT"
+            else (False, None)
+        )
+
         try:
             with db_transaction.atomic():
                 # Atomic claim — a duplicate TransactionId raises IntegrityError.
@@ -339,12 +368,11 @@ class CoopIpnView(APIView):
                     event.status = CoopIpnStatus.IGNORED
                     event.detail = f"Non-KES currency ({currency})"
                 elif event_type != "CREDIT":
-                    is_reversal, original = _reversal_check(event_type, narration, payload)
                     if is_reversal:
                         # Never auto-reverse a tenant's payment — hold for the
                         # authorising director (Dr. Osoro) to approve.
                         event.status = CoopIpnStatus.REVERSAL_PENDING
-                        ref = original.transaction_id if original else "unknown original"
+                        ref = original_event.transaction_id if original_event else "unknown original"
                         event.detail = f"Reversal (orig: {ref}) — awaiting director authorization"
                     else:
                         event.status = CoopIpnStatus.IGNORED

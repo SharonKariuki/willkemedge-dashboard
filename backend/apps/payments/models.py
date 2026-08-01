@@ -74,12 +74,34 @@ class Payment(models.Model):
             "Natural-key guard against double-booking a single payment. Single-"
             "payment ingestion (the manual create/mock paths) sets the bare "
             "reference; FIFO allocation splits one credit into several Payment "
-            "rows and sets '<transaction id>#<chunk>' on each. Unique when "
-            "non-blank."
+            "rows and sets '<transaction id>#<chunk>' on each. Unique PER TENANT "
+            "when non-blank — see the constraint note below."
         ),
     )
     notes = models.TextField(blank=True)
 
+    # --- Void (see services.void_payment) ---
+    # Payments are immutable: a mistake is unwound by marking the row void and
+    # posting a mirror-image journal entry, never by editing or deleting it.
+    # A voided payment is excluded from every balance, arrears and income sum.
+    voided_at = models.DateTimeField(null=True, blank=True)
+    voided_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="payments_voided",
+    )
+    void_reason = models.CharField(max_length=255, blank=True)
+
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="payments_recorded",
+        help_text="Who recorded this payment. Null for automated (bank IPN) ingestion.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -89,17 +111,28 @@ class Payment(models.Model):
             models.Index(fields=["tenant", "period_year", "period_month"]),
             models.Index(fields=["period_year", "period_month"]),
             models.Index(fields=["reference"]),
+            models.Index(fields=["voided_at"]),
         ]
         constraints = [
+            # Scoped to the TENANT on purpose. A global key silently collapsed
+            # two different tenants who happened to share a reference — cash
+            # receipt books restart at "001", cheque numbers repeat across banks
+            # — and the second tenant's money was never recorded. Bank
+            # transaction ids are globally unique anyway, so scoping costs the
+            # webhook path nothing and makes the manual path safe.
             models.UniqueConstraint(
-                fields=["idempotency_key"],
+                fields=["tenant", "idempotency_key"],
                 condition=~models.Q(idempotency_key=""),
-                name="unique_payment_idempotency_key",
+                name="unique_payment_idempotency_key_per_tenant",
             ),
         ]
 
     def __str__(self) -> str:
         return f"KES {self.amount} — {self.tenant} ({self.period_month}/{self.period_year})"
+
+    @property
+    def is_void(self) -> bool:
+        return self.voided_at is not None
 
 
 class Arrears(models.Model):
@@ -112,17 +145,37 @@ class Arrears(models.Model):
     )
     period_month = models.PositiveSmallIntegerField()
     period_year = models.PositiveIntegerField()
-    expected_rent = models.DecimalField(max_digits=10, decimal_places=2)
+    expected_rent = models.DecimalField(
+        max_digits=10, decimal_places=2,
+        help_text="Rent billed for the period, VAT-EXCLUSIVE (the base rent).",
+    )
+    expected_vat = models.DecimalField(
+        max_digits=10, decimal_places=2, default=0,
+        help_text=(
+            "16% VAT owed on top of expected_rent for BUSINESS units; 0 for "
+            "residential. Commercial tenants pay rent+VAT as one figure, so the "
+            "obligation a payment is measured against is expected_rent + "
+            "expected_vat — comparing gross cash to base rent cleared commercial "
+            "arrears 16% early and spilled the VAT into the next period as rent."
+        ),
+    )
     amount_paid = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     balance = models.DecimalField(
         max_digits=10,
         decimal_places=2,
-        help_text="expected_rent - amount_paid. Positive = owed.",
+        help_text="expected_total - (amount_paid + waived_amount + credit_applied). Positive = owed.",
     )
     is_cleared = models.BooleanField(default=False)
     waived_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     waive_notes = models.TextField(blank=True)
-
+    credit_applied = models.DecimalField(
+        max_digits=10, decimal_places=2, default=0,
+        help_text=(
+            "Overpayment carried forward from an earlier period and applied to "
+            "this one. Without it a tenant who prepaid had the excess floored to "
+            "zero and was billed — and dunned — in full the following month."
+        ),
+    )
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -135,11 +188,32 @@ class Arrears(models.Model):
                 fields=["tenant", "period_month", "period_year"],
                 name="unique_arrears_per_period",
             ),
+            models.CheckConstraint(
+                condition=models.Q(balance__gte=0),
+                name="arrears_balance_non_negative",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(period_month__gte=1) & models.Q(period_month__lte=12),
+                name="arrears_period_month_valid",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["tenant", "is_cleared"]),
         ]
 
     def __str__(self) -> str:
         status = "cleared" if self.is_cleared else f"KES {self.balance} owed"
         return f"{self.tenant} — {self.period_month}/{self.period_year} ({status})"
+
+    @property
+    def expected_total(self) -> "models.DecimalField":
+        """The full obligation for the period — rent plus any VAT on it."""
+        return (self.expected_rent or 0) + (self.expected_vat or 0)
+
+    @property
+    def covered(self):
+        """Everything that discharges the obligation: cash, waivers, credit."""
+        return (self.amount_paid or 0) + (self.waived_amount or 0) + (self.credit_applied or 0)
 
 
 # ---------------------------------------------------------------------------

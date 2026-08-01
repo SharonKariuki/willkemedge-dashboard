@@ -29,28 +29,6 @@ from .models import (
 )
 
 # ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _void_payment(payment: Payment, notes: str = "") -> Payment:
-    """Create an equal-and-opposite Payment to void an existing one.
-
-    We never mutate the original (immutable financial records). The
-    compensating entry has a negative amount and references the original.
-    """
-    return Payment.objects.create(
-        tenant=payment.tenant,
-        amount=-payment.amount,
-        payment_date=payment.payment_date,
-        period_month=payment.period_month,
-        period_year=payment.period_year,
-        source=payment.source,
-        reference=f"VOID:{payment.reference or payment.pk}",
-        notes=notes or f"Reversal authorized; voids payment #{payment.pk}",
-    )
-
-
-# ---------------------------------------------------------------------------
 # Assign-to-tenant form (for the intermediate admin page)
 # ---------------------------------------------------------------------------
 
@@ -80,13 +58,36 @@ class AssignTenantForm(forms.Form):
 
 @admin.register(Payment)
 class PaymentAdmin(admin.ModelAdmin):
+    """Payments are immutable: view-only, with voiding as the correction path.
+
+    Editing a payment in place used to silently rewrite the general ledger with
+    no record of the old figure or who changed it. To correct a mistake, void
+    the payment (which posts a mirror-image reversal and is audit-logged) and
+    record the right one.
+    """
+
     list_display = (
         "tenant", "amount", "payment_type", "payment_date",
-        "source", "period_month", "period_year",
+        "source", "period_month", "period_year", "void_flag",
     )
     list_filter = ("payment_type", "source", "period_year", "period_month")
     search_fields = ("tenant__first_name", "tenant__last_name", "reference")
-    readonly_fields = ("created_at",)
+    readonly_fields = tuple(
+        f.name for f in Payment._meta.fields
+    )
+
+    @admin.display(description="Void", boolean=True)
+    def void_flag(self, obj):
+        return obj.voided_at is not None
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(Arrears)
@@ -227,14 +228,24 @@ class CoopIpnEventAdmin(admin.ModelAdmin):
                         skipped += 1
                         continue
                     if event.payment_id:
-                        _void_payment(
-                            event.payment,
-                            notes=f"Authorized reversal by {request.user}; "
-                                  f"IPN event #{event.pk} ({event.transaction_id})",
+                        # Void every chunk the credit was split across, not just
+                        # the representative link: a FIFO-allocated credit
+                        # becomes several Payment rows and reversing one left
+                        # the rest of the money on the tenant's account.
+                        from .services import void_payment
+
+                        chunks = Payment.objects.filter(
+                            tenant=event.payment.tenant,
+                            reference=event.transaction_id,
+                            voided_at__isnull=True,
                         )
-                        p = event.payment
-                        from .services import _update_arrears
-                        _update_arrears(p.tenant, p.period_month, p.period_year)
+                        for chunk in chunks or [event.payment]:
+                            void_payment(
+                                chunk,
+                                actor=request.user,
+                                reason=f"Bank reversal authorized; IPN event "
+                                       f"#{event.pk} ({event.transaction_id})",
+                            )
                         voided += 1
                     event.status = CoopIpnStatus.REVERSAL_APPLIED
                     event.detail = f"{event.detail}; authorized by {request.user}"
@@ -294,7 +305,7 @@ class CoopIpnEventAdmin(admin.ModelAdmin):
     def assign_tenant_view(self, request, event_id):
         """Intermediate admin page to pick a tenant for an unmatched IPN credit."""
 
-        from .services import allocate_payment_fifo
+        from .services import assign_unmatched_credit
         from .tasks import send_deposit_receipt
 
         event = CoopIpnEvent.objects.get(pk=event_id)
@@ -313,29 +324,12 @@ class CoopIpnEventAdmin(admin.ModelAdmin):
             if form.is_valid():
                 tenant = form.cleaned_data["tenant"]
                 try:
-                    with db_transaction.atomic():
-
-                        from .coop_ipn import _parse_narration, _posting_date
-
-                        pay_date = _posting_date(event.raw_payload or {})
-                        channel = _parse_narration(event.narration).get(
-                            "channel", event.channel or "bank"
-                        )
-                        payments = allocate_payment_fifo(
-                            tenant=tenant,
-                            amount=event.amount,
-                            payment_date=pay_date,
-                            source=channel,
-                            reference=event.transaction_id,
-                            notes=(
-                                f"Manually assigned by {request.user}; "
-                                f"IPN event #{event.pk}"
-                            ),
-                        )
-                        event.status = CoopIpnStatus.RECORDED
-                        event.detail = f"Manually assigned to {tenant} by {request.user}"
-                        event.payment = payments[0]
-                        event.save(update_fields=["status", "detail", "payment"])
+                    # Same service the API uses — locks the row, re-checks the
+                    # status under the lock and passes the bank transaction id
+                    # as an idempotency key. This page used to do none of that.
+                    event, payments = assign_unmatched_credit(
+                        event_id=event.pk, tenant=tenant, actor=request.user
+                    )
 
                     # Send the deposit receipt (broker-safe, off the atomic block)
                     try:
@@ -343,7 +337,7 @@ class CoopIpnEventAdmin(admin.ModelAdmin):
                             tenant.id,
                             str(event.amount),
                             event.transaction_id,
-                            pay_date.isoformat(),
+                            payments[0].payment_date.isoformat(),
                         )
                     except Exception:  # noqa: BLE001
                         pass

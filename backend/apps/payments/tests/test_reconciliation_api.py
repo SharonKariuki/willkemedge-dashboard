@@ -22,7 +22,7 @@ LIST_URL = "/api/unmatched-credits/"
 
 @pytest.fixture
 def auth_client(db):
-    user = User.objects.create_user(username="admin", email="a@t.com", password="pw12345678!")
+    user = User.objects.create_user(username="admin", email="a@t.com", password="pw12345678!", role="owner")
     client = APIClient()
     client.force_authenticate(user=user)
     return client

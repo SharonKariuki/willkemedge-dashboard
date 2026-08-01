@@ -3,7 +3,9 @@ import random
 import string
 from decimal import Decimal
 
+from django.conf import settings
 from django.db import transaction as db_transaction
+from django.http import Http404
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import serializers, status, viewsets
@@ -11,6 +13,8 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from apps.accounts import audit
+from apps.accounts.permissions import CanForgiveMoney, CanRecordMoney
 from apps.tenants.models import Tenant
 
 from .models import (
@@ -19,6 +23,7 @@ from .models import (
     CoopIpnStatus,
     Payment,
     PaymentSource,
+    PaymentType,
     Transaction,
     UtilityCharge,
 )
@@ -34,7 +39,12 @@ from .serializers import (
     TransactionSerializer,
     UtilityChargeSerializer,
 )
-from .services import get_collection_progress, process_payment
+from .services import (
+    IdempotencyConflict,
+    get_collection_progress,
+    process_payment,
+    void_payment,
+)
 from .tasks import generate_monthly_arrears, send_payment_confirmation
 
 
@@ -66,13 +76,18 @@ class PaymentViewSet(viewsets.ModelViewSet):
     Create triggers payment processing (arrears update + unit status recalc).
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CanRecordMoney]
     http_method_names = ["get", "post", "head", "options"]
 
     def get_queryset(self):
         qs = Payment.objects.select_related(
             "tenant", "tenant__unit", "tenant__unit__building"
         )
+
+        # Voided payments are excluded by default so lists and totals agree with
+        # arrears and the ledger; ?include_void=true surfaces them for audit.
+        if self.request.query_params.get("include_void") != "true":
+            qs = qs.filter(voided_at__isnull=True)
 
         tenant_id = self.request.query_params.get("tenant")
         if tenant_id:
@@ -94,6 +109,19 @@ class PaymentViewSet(viewsets.ModelViewSet):
             return PaymentCreateSerializer
         return PaymentSerializer
 
+    def create(self, request, *args, **kwargs):
+        """Wrap create so a reference collision is a 409, never a silent swallow."""
+        try:
+            return super().create(request, *args, **kwargs)
+        except IdempotencyConflict as exc:
+            return Response(
+                {
+                    "detail": str(exc),
+                    "existing_payment_id": exc.existing.pk,
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
     def perform_create(self, serializer):
         data = serializer.validated_data
         reference = data.get("reference", "")
@@ -104,14 +132,50 @@ class PaymentViewSet(viewsets.ModelViewSet):
             period_month=data["period_month"],
             period_year=data["period_year"],
             source=data.get("source", "cash"),
+            payment_type=data.get("payment_type", PaymentType.RENT),
             reference=reference,
             notes=data.get("notes", ""),
             # A referenced manual payment is a single event: dedupe double-submits
-            # (retry / double-click) on (its reference). Blank reference = no key,
-            # so unreferenced cash entries behave exactly as before.
+            # (retry / double-click) on (tenant, reference). Blank reference = no
+            # key, so unreferenced cash entries behave exactly as before.
             idempotency_key=reference,
+            created_by=self.request.user,
+        )
+        audit.record(
+            actor=self.request.user,
+            action="payment.create",
+            object_type="payment",
+            object_id=payment.pk,
+            summary=f"Recorded KES {payment.amount} for {payment.tenant} ({payment.period_month}/{payment.period_year})",
+            new_values={
+                "amount": payment.amount,
+                "payment_type": payment.payment_type,
+                "reference": payment.reference,
+                "payment_date": payment.payment_date,
+            },
         )
         send_payment_confirmation.delay(payment.id)
+
+    @action(detail=True, methods=["post"], url_path="void", permission_classes=[CanForgiveMoney])
+    def void(self, request, pk=None):
+        """POST /api/payments/{id}/void/ — unwind a payment (owner only).
+
+        Marks the row void and posts a mirror-image reversal to the ledger. The
+        original entry and the Payment row are both preserved for audit.
+        """
+        payment = get_object_or_404(Payment, pk=pk)
+        if payment.voided_at:
+            return Response(
+                {"detail": "Payment is already void."}, status=status.HTTP_409_CONFLICT
+            )
+        reason = (request.data.get("reason") or "").strip()
+        if not reason:
+            return Response(
+                {"detail": "A reason is required to void a payment."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        void_payment(payment, actor=request.user, reason=reason)
+        return Response(PaymentSerializer(payment).data)
 
     @action(detail=False, methods=["get"], url_path="recent")
     def recent(self, request):
@@ -132,7 +196,14 @@ class PaymentViewSet(viewsets.ModelViewSet):
         POST /api/payments/mock/
         Simulates a realistic payment. Runs the full processing pipeline
         so arrears + unit status + Transaction are all created correctly.
+
+        DEVELOPMENT ONLY. This creates a real Payment, a real Transaction and a
+        real journal entry crediting rental income — money that does not exist.
+        It is unreachable unless DEBUG is on.
         """
+        if not settings.DEBUG:
+            raise Http404
+
         serializer = MockPaymentSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
@@ -202,14 +273,23 @@ class ArrearsViewSet(viewsets.ReadOnlyModelViewSet):
         generate_monthly_arrears()
         return Response({"detail": "Arrears synchronized for active tenants."})
 
-    @action(detail=True, methods=["post"], url_path="waive")
+    @action(
+        detail=True, methods=["post"], url_path="waive",
+        permission_classes=[CanForgiveMoney],
+    )
     def waive(self, request, pk=None):
-        """POST /api/payments/arrears/{id}/waive/"""
+        """POST /api/payments/arrears/{id}/waive/ — write debt off (owner only).
+
+        Waiving is forgiving money, so it is deliberately a different privilege
+        from recording it: an accountant may enter receipts but not write a
+        balance off.
+        """
         arrears = self.get_object()
         if arrears.is_cleared:
             return Response({"detail": "Already cleared."}, status=400)
 
         notes = request.data.get("notes", "Waived by admin")
+        waived_now = arrears.balance
 
         with db_transaction.atomic():
             # Fold the outstanding balance into any prior waiver rather than
@@ -222,15 +302,30 @@ class ArrearsViewSet(viewsets.ReadOnlyModelViewSet):
 
             # Reflect the waiver in unit status only for the current period —
             # waiving an old period must not disturb the live unit. Feed the
-            # *covered* figure (cash paid + waived) as a Decimal so a full
-            # waiver reads as PAID instead of PARTIAL. (Passing cash-only, and
-            # as a float, was the previous bug.)
+            # *covered* figure (cash paid + waived + credit) as a Decimal so a
+            # full waiver reads as PAID instead of PARTIAL, and measure it
+            # against the full obligation including VAT.
             now = timezone.now()
             if arrears.period_month == now.month and arrears.period_year == now.year:
                 from apps.buildings.services import recalculate_unit_status
-                covered = arrears.amount_paid + arrears.waived_amount
-                recalculate_unit_status(arrears.tenant.unit, covered)
+                recalculate_unit_status(
+                    arrears.tenant.unit,
+                    arrears.covered,
+                    obligation=arrears.expected_total,
+                )
 
+        audit.record(
+            actor=request.user,
+            action="arrears.waive",
+            object_type="arrears",
+            object_id=arrears.pk,
+            summary=(
+                f"Waived KES {waived_now} for {arrears.tenant} "
+                f"({arrears.period_month}/{arrears.period_year}) — {notes}"
+            ),
+            old_values={"balance": waived_now, "is_cleared": False},
+            new_values={"waived_amount": arrears.waived_amount, "is_cleared": True},
+        )
         return Response(ArrearsSerializer(arrears).data)
 
 
@@ -353,7 +448,7 @@ class UnmatchedCreditViewSet(viewsets.ReadOnlyModelViewSet):
     against a chosen tenant (mirrors the admin assign action).
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CanRecordMoney]
     serializer_class = UnmatchedCreditSerializer
 
     def get_queryset(self):
@@ -369,40 +464,25 @@ class UnmatchedCreditViewSet(viewsets.ReadOnlyModelViewSet):
         if not tenant:
             return Response({"detail": "Tenant not found."}, status=status.HTTP_404_NOT_FOUND)
 
-        from .coop_ipn import _parse_narration, _posting_date
-        from .services import allocate_payment_fifo
+        from .services import CreditAlreadyResolved, assign_unmatched_credit
         from .tasks import send_deposit_receipt
 
         try:
-            with db_transaction.atomic():
-                # Lock + re-check under the lock so two clicks can't double-book.
-                event = CoopIpnEvent.objects.select_for_update().get(pk=pk)
-                if event.status != CoopIpnStatus.UNMATCHED:
-                    return Response(
-                        {"detail": f"Event is not unmatched (status: {event.get_status_display()})."},
-                        status=status.HTTP_409_CONFLICT,
-                    )
-                pay_date = _posting_date(event.raw_payload or {})
-                channel = _parse_narration(event.narration).get("channel", event.channel or "bank")
-                payments = allocate_payment_fifo(
-                    tenant=tenant,
-                    amount=event.amount,
-                    payment_date=pay_date,
-                    source=channel,
-                    reference=event.transaction_id,
-                    notes=f"Manually assigned by {request.user}; IPN event #{event.pk}",
-                )
-                event.status = CoopIpnStatus.RECORDED
-                event.detail = f"Manually assigned to {tenant} by {request.user}"
-                event.payment = payments[0]
-                event.save(update_fields=["status", "detail", "payment"])
+            event, payments = assign_unmatched_credit(
+                event_id=pk, tenant=tenant, actor=request.user
+            )
         except CoopIpnEvent.DoesNotExist:
             return Response({"detail": "Event not found."}, status=status.HTTP_404_NOT_FOUND)
+        except CreditAlreadyResolved as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
 
         # Receipt off the atomic block so a broker outage can't roll back the booking.
         try:
             send_deposit_receipt.delay(
-                tenant.id, str(event.amount), event.transaction_id, pay_date.isoformat()
+                tenant.id,
+                str(event.amount),
+                event.transaction_id,
+                payments[0].payment_date.isoformat(),
             )
         except Exception:  # noqa: BLE001
             pass

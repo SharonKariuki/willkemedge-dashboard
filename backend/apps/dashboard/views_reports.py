@@ -3,6 +3,7 @@ from collections import defaultdict
 from decimal import Decimal
 
 from django.db.models import Case, Count, DecimalField, F, Q, Sum, When
+from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -17,7 +18,9 @@ from apps.tenants.models import Tenant
 # Security deposits are a liability (refundable), not income — never count them
 # toward rental income or collection. Late fees and other income legitimately
 # are income, so we exclude only DEPOSIT rather than restrict to RENT.
-INCOME_PAYMENT_FILTER = ~Q(payment_type=PaymentType.DEPOSIT)
+# Voided payments are excluded everywhere: the money was unwound in the ledger,
+# so leaving them in would overstate every income and collection figure.
+INCOME_PAYMENT_FILTER = ~Q(payment_type=PaymentType.DEPOSIT) & Q(voided_at__isnull=True)
 
 _VAT_MULTIPLIER = Decimal("1") + TAX_RATE_BUSINESS
 
@@ -84,9 +87,12 @@ class AnnualIncomeSummaryView(APIView):
         monthly = []
         grand_total = Decimal("0")
         for m in range(1, 13):
+            # Same net-of-VAT basis as the P&L. Summing gross here meant the
+            # same year's income was reported two different ways depending on
+            # which report you opened.
             total = Payment.objects.filter(
                 INCOME_PAYMENT_FILTER, period_month=m, period_year=year
-            ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
+            ).aggregate(total=_net_income_sum())["total"] or Decimal("0")
             monthly.append({"month": m, "total": float(total)})
             grand_total += total
         return Response({"year": year, "grand_total": float(grand_total), "monthly": monthly})
@@ -121,8 +127,12 @@ class TenantPaymentHistoryView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, tenant_id):
-        tenant = Tenant.objects.select_related("unit", "unit__building").get(pk=tenant_id)
-        payments = Payment.objects.filter(tenant=tenant).order_by("period_year", "period_month")
+        tenant = get_object_or_404(
+            Tenant.objects.select_related("unit", "unit__building"), pk=tenant_id
+        )
+        payments = Payment.objects.filter(
+            INCOME_PAYMENT_FILTER, tenant=tenant, voided_at__isnull=True
+        ).order_by("period_year", "period_month")
 
         monthly = defaultdict(float)
         for p in payments:

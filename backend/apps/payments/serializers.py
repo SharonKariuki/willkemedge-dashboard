@@ -10,6 +10,7 @@ class PaymentSerializer(serializers.ModelSerializer):
     building_name = serializers.CharField(source="tenant.unit.building.name", read_only=True)
     source_display = serializers.CharField(source="get_source_display", read_only=True)
     transaction_id = serializers.IntegerField(source="transaction.id", read_only=True)
+    is_void = serializers.BooleanField(read_only=True)
 
 
     class Meta:
@@ -30,7 +31,9 @@ class PaymentSerializer(serializers.ModelSerializer):
             "reference",
             "transaction_id",
             "notes",
-
+            "is_void",
+            "voided_at",
+            "void_reason",
             "created_at",
         ]
 
@@ -69,6 +72,10 @@ class PaymentCreateSerializer(serializers.ModelSerializer):
 class ArrearsSerializer(serializers.ModelSerializer):
     tenant_name = serializers.CharField(source="tenant.full_name", read_only=True)
     unit_label = serializers.CharField(source="tenant.unit.label", read_only=True)
+    expected_total = serializers.DecimalField(
+        max_digits=10, decimal_places=2, read_only=True,
+        help_text="expected_rent + expected_vat — what the tenant actually owes.",
+    )
 
     class Meta:
         model = Arrears
@@ -80,11 +87,14 @@ class ArrearsSerializer(serializers.ModelSerializer):
             "period_month",
             "period_year",
             "expected_rent",
+            "expected_vat",
+            "expected_total",
             "amount_paid",
             "balance",
             "is_cleared",
             "waived_amount",
             "waive_notes",
+            "credit_applied",
             "updated_at",
         ]
 

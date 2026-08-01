@@ -19,7 +19,7 @@ class PaymentProcessingTests(APITestCase):
     @classmethod
     def setUpTestData(cls):
         cls.user = User.objects.create_user(
-            username="admin", email="admin@test.com", password="testpass123!"
+            username="admin", email="admin@test.com", password="testpass123!", role="owner"
         )
         cls.building = Building.objects.create(name="Pay Block", total_floors=2)
         cls.unit = Unit.objects.create(
