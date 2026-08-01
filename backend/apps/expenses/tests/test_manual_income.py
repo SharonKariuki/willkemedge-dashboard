@@ -23,7 +23,7 @@ User = get_user_model()
 
 @pytest.fixture
 def client(db):
-    user = User.objects.create_user(username="staff", email="s@t.com", password="pw123456!")
+    user = User.objects.create_user(username="staff", email="s@t.com", password="pw123456!", role="owner")
     c = APIClient()
     c.force_authenticate(user=user)
     return c

@@ -76,6 +76,7 @@ class DashboardSummaryView(APIView):
             payment_type=PaymentType.RENT,
             period_month=current_month,
             period_year=current_year,
+            voided_at__isnull=True,
         ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
 
         collection_pct = (
@@ -87,20 +88,24 @@ class DashboardSummaryView(APIView):
         last_year = current_year if current_month > 1 else current_year - 1
         last_month_collected = Payment.objects.filter(
             payment_type=PaymentType.RENT,
-            period_month=last_month, period_year=last_year
+            period_month=last_month, period_year=last_year,
+            voided_at__isnull=True,
         ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
 
         # --- 12-month income trend (income excludes refundable deposits) ---
+        # Net of VAT and void, on exactly the basis the P&L and the annual
+        # income report use, so "income" means one thing across the dashboard
+        # rather than gross here and net there.
+        from apps.dashboard.views_reports import INCOME_PAYMENT_FILTER, _net_income_sum
+
         income_trend = []
         for i in range(11, -1, -1):
             total_months = current_year * 12 + (current_month - 1) - i
             y, m0 = divmod(total_months, 12)
             m = m0 + 1
             month_total = Payment.objects.filter(
-                period_month=m, period_year=y
-            ).exclude(payment_type=PaymentType.DEPOSIT).aggregate(
-                total=Sum("amount")
-            )["total"] or 0
+                INCOME_PAYMENT_FILTER, period_month=m, period_year=y
+            ).aggregate(total=_net_income_sum())["total"] or 0
             income_trend.append({
                 "month": f"{y}-{m:02d}",
                 "amount": float(month_total),

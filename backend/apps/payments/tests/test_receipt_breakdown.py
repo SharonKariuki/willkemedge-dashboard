@@ -77,8 +77,12 @@ class TestStatementTotals:
         assert st["arrears_bf"] == "8,000.00"
         assert st["month_rent"] == "12,000.00"
         assert st["other_charges"] == "1,500.00"
-        # Ledger: (12,000 + 12,000 + 1,500) invoiced − 12,000 deposit paid = 13,500
-        assert st["unpaid_balance"] == "13,500.00"
+        # Ledger: (12,000 + 12,000 + 1,500) invoiced, nothing paid = 25,500.
+        # The deposit is NOT netted off: it is a refundable liability held on
+        # the tenant's behalf, not a payment against rent. Crediting it here
+        # reduced the rent owed while the same 12,000 was also reported on the
+        # "Security Deposit" line — the money appeared twice.
+        assert st["unpaid_balance"] == "25,500.00"
 
     @pytest.mark.django_db
     def test_zero_when_no_records(self, tenant):

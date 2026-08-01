@@ -320,10 +320,10 @@ def recalculate_all_statuses() -> None:
     from apps.buildings.services import recalculate_unit_status
     from apps.tenants.models import Tenant, TenantStatus
 
-    from .models import Payment
+    from .services import expected_vat_for, rent_payments_for
 
     now = timezone.now()
-    occupied = Unit.objects.exclude(status=UnitStatus.VACANT)
+    occupied = Unit.objects.exclude(status=UnitStatus.VACANT).select_related("building")
     updated = 0
 
     for unit in occupied:
@@ -334,13 +334,14 @@ def recalculate_all_statuses() -> None:
             updated += 1
             continue
 
-        total_paid = Payment.objects.filter(
-            tenant=tenant,
-            period_month=now.month,
-            period_year=now.year,
-        ).aggregate(total=models.Sum("amount"))["total"] or Decimal("0")
+        # Only non-void RENT settles rent, and a commercial tenant's obligation
+        # includes the VAT they actually pay — same basis as _update_arrears.
+        total_paid = rent_payments_for(tenant, now.month, now.year).aggregate(
+            total=models.Sum("amount")
+        )["total"] or Decimal("0")
+        obligation = tenant.monthly_rent + expected_vat_for(tenant, tenant.monthly_rent)
 
-        recalculate_unit_status(unit, total_paid)
+        recalculate_unit_status(unit, total_paid, obligation=obligation)
         updated += 1
 
     logger.info("recalculate_all_statuses: updated %d units", updated)
@@ -351,31 +352,47 @@ def generate_monthly_arrears() -> None:
     """
     Runs on the 1st of each month at 00:05 EAT.
     Creates an Arrears record for every active tenant if one doesn't exist yet.
+
+    The period is raised at the FULL obligation — base rent plus VAT for a
+    commercial unit, since that is the figure the tenant actually pays — and any
+    credit the tenant has banked from an earlier overpayment is drawn down
+    against it, so a prepaying tenant is not billed twice.
     """
     from apps.tenants.models import Tenant, TenantStatus
 
     from .models import Arrears
+    from .services import apply_available_credit, expected_vat_for
 
     now = timezone.now()
-    active = Tenant.objects.filter(status=TenantStatus.ACTIVE)
+    active = Tenant.objects.filter(status=TenantStatus.ACTIVE).select_related("unit")
     created = 0
+    credited = 0
 
     for tenant in active:
-        _, was_created = Arrears.objects.get_or_create(
+        expected_vat = expected_vat_for(tenant, tenant.monthly_rent)
+        arrears, was_created = Arrears.objects.get_or_create(
             tenant=tenant,
             period_month=now.month,
             period_year=now.year,
             defaults={
                 "expected_rent": tenant.monthly_rent,
+                "expected_vat": expected_vat,
                 "amount_paid": 0,
-                "balance": tenant.monthly_rent,
+                "balance": tenant.monthly_rent + expected_vat,
                 "is_cleared": False,
             },
         )
         if was_created:
             created += 1
+            before = arrears.credit_applied
+            apply_available_credit(arrears)
+            if arrears.credit_applied != before:
+                credited += 1
 
-    logger.info("generate_monthly_arrears: created %d new arrears records", created)
+    logger.info(
+        "generate_monthly_arrears: created %d new arrears records (%d drew on credit)",
+        created, credited,
+    )
 
 
 # ---------------------------------------------------------------------------

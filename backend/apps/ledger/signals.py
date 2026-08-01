@@ -84,8 +84,17 @@ def _safe_post(*, source_type, source_id, kind, operation, fn):
 
 @receiver(post_save, sender="payments.Payment")
 def on_payment_saved(sender, instance, created, **kwargs):
-    """Post on create; re-post (replace) on edit so corrections reach the GL."""
+    """Post on create; re-post (replace) on edit so corrections reach the GL.
+
+    A voided payment is skipped: its original NORMAL entry must stay exactly as
+    it was for audit, and the mirror-image REVERSAL entry is posted by
+    ``payments.services.void_payment``. Re-posting here would rewrite the
+    history the void exists to preserve.
+    """
     from apps.ledger.posting import post_payment
+
+    if getattr(instance, "voided_at", None):
+        return
 
     _safe_post(
         source_type="payment", source_id=instance.pk, kind="normal", operation="post",

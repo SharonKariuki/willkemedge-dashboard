@@ -23,7 +23,7 @@ class ReportsTests(APITestCase):
     @classmethod
     def setUpTestData(cls):
         cls.user = User.objects.create_user(
-            username="admin", email="admin@test.com", password="testpass123!"
+            username="admin", email="admin@test.com", password="testpass123!", role="owner"
         )
         cls.building = Building.objects.create(name="Block A", total_floors=2)
 
@@ -92,9 +92,12 @@ class ReportsTests(APITestCase):
         resp = self.client.get("/api/reports/annual-income/", {"year": YEAR})
         assert resp.status_code == 200
         body = resp.json()
-        assert body["grand_total"] == 22000.0
+        # Net of VAT, matching the P&L: residential 10,000 + commercial
+        # 12,000/1.16 = 10,344.83. Summing gross here used to report the same
+        # year's income differently from /reports/profit-loss/.
+        assert round(body["grand_total"], 2) == 20344.83
         april = next(m for m in body["monthly"] if m["month"] == MONTH)
-        assert april["total"] == 22000.0
+        assert round(april["total"], 2) == 20344.83
 
     # --- Arrears -------------------------------------------------------
 
@@ -102,10 +105,12 @@ class ReportsTests(APITestCase):
         resp = self.client.get("/api/reports/arrears/")
         assert resp.status_code == 200
         body = resp.json()
-        # Only the commercial tenant owes (20000 - 12000 = 8000).
+        # The commercial tenant owes rent PLUS the 16% VAT they are billed:
+        # (20,000 + 3,200) − 12,000 paid = 11,200. Measuring VAT-inclusive cash
+        # against VAT-exclusive rent understated this by the whole VAT amount.
         assert body["count"] == 1
-        assert body["total_balance"] == 8000.0
-        assert body["arrears"][0]["balance"] == 8000.0
+        assert body["total_balance"] == 11200.0
+        assert body["arrears"][0]["balance"] == 11200.0
 
     # --- Profit & Loss (monthly) ---------------------------------------
 
