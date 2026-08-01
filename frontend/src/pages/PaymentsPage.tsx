@@ -41,7 +41,6 @@ const SOURCES = [
   { value: "cash", label: "Cash" },
   { value: "mpesa", label: "M-Pesa" },
   { value: "bank", label: "Bank" },
-  { value: "cheque", label: "Cheque" },
 ];
 
 const PAYMENT_TYPES = [
@@ -244,7 +243,7 @@ export default function PaymentsPage() {
           <div className="mb-5">
             <p className="font-display text-lg font-semibold text-ink-900">Record manual payment</p>
             <p className="text-xs text-ink-500">
-              Manually log a cash, M-Pesa, bank, or cheque payment.
+              Manually log a cash, M-Pesa, or bank payment.
             </p>
           </div>
 
@@ -295,7 +294,6 @@ export default function PaymentsPage() {
                   <option value="cash">Cash</option>
                   <option value="mpesa">M-Pesa</option>
                   <option value="bank">Bank transfer</option>
-                  <option value="cheque">Cheque</option>
                 </select>
               </Field>
               <Field label="Type">

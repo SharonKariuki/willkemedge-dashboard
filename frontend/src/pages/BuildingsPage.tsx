@@ -987,10 +987,10 @@ function BuildingCard({ building }: { building: Building & { units?: Unit[] } })
           )}
 
           <Link
-            to={`/buildings/${building.id}`}
+            to={`/units?building=${building.id}`}
             className="mt-4 flex items-center justify-center gap-1 rounded-md bg-gray-900 py-2 text-xs font-medium text-white transition-colors hover:bg-gray-800"
           >
-            View property
+            View units
             <ArrowUpRight className="h-3.5 w-3.5" />
           </Link>
         </div>
