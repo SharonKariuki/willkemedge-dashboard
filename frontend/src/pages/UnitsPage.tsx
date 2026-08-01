@@ -76,15 +76,31 @@ function FilterSelect({
 
 export default function UnitsPage() {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [statusFilter, setStatusFilter] = useState("");
-  const [buildingFilter, setBuildingFilter] = useState("");
+  const [buildingFilter, setBuildingFilter] = useState(searchParams.get("building") ?? "");
   const [search, setSearch] = useState(searchParams.get("q") ?? "");
 
+  // The URL is the source of truth for search + building, so links like
+  // /units?building=3 (Buildings → "View property") land pre-filtered, and
+  // back/forward restores what you were looking at.
   useEffect(() => {
-    const q = searchParams.get("q") ?? "";
-    setSearch(q);
+    setSearch(searchParams.get("q") ?? "");
+    setBuildingFilter(searchParams.get("building") ?? "");
   }, [searchParams]);
+
+  function changeBuildingFilter(value: string) {
+    setBuildingFilter(value);
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        if (value) next.set("building", value);
+        else next.delete("building");
+        return next;
+      },
+      { replace: true },
+    );
+  }
 
   const filters: Record<string, string> = {};
   if (statusFilter) filters.status = statusFilter;
@@ -166,7 +182,7 @@ export default function UnitsPage() {
           <FilterSelect
             label="Filter by building"
             value={buildingFilter}
-            onChange={setBuildingFilter}
+            onChange={changeBuildingFilter}
             options={[
               { value: "", label: "All buildings" },
               ...(buildings ?? []).map((b) => ({ value: String(b.id), label: b.name })),
