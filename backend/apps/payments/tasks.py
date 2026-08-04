@@ -41,7 +41,10 @@ def _notify_tenant_payment(tenant, amount, reference: str, payment_date) -> None
     from .pdf_service import render_to_pdf
     from .statement_service import build_statement
 
-    unit_label = f"{tenant.unit.building.name} – {tenant.unit.label}"
+    # Plain hyphen, not an en dash: any character outside GSM-7 forces the whole
+    # SMS to UCS-2, which cuts the segment size from 160 chars to 70 and roughly
+    # triples the billed parts on every receipt.
+    unit_label = f"{tenant.unit.building.name} - {tenant.unit.label}"
 
     # Build the statement once — the SMS now carries the same five named totals
     # as the email receipt, so both channels agree.
