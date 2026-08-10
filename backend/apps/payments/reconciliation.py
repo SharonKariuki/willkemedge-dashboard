@@ -146,5 +146,5 @@ def render_summary_sms(summary: dict[str, Any]) -> str:
     needs = summary["needs_attention"]
     if needs:
         verb = "needs" if needs == 1 else "need"
-        return f"{base} {needs} {verb} your attention — log in to review."
+        return f"{base} {needs} {verb} your attention - log in to review."
     return f"{base} All clear, no action needed."

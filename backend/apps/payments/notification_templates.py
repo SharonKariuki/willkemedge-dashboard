@@ -17,7 +17,7 @@ TEMPLATES: list[dict] = [
         "body": (
             "Hi {tenant_name}, this is a friendly reminder that rent for Unit {unit_label} "
             "(KES {amount}) is due on {due_date}. Kindly pay via M-Pesa Paybill. "
-            "Thank you — Dr. Osoro Properties."
+            "Thank you - Wilkem Edge."
         ),
     },
     {
@@ -30,7 +30,7 @@ TEMPLATES: list[dict] = [
             "Dear {tenant_name}, rent for Unit {unit_label} for {month}/{year} "
             "is now overdue. Outstanding balance: KES {balance}. "
             "Please settle immediately or contact the office. "
-            "— Dr. Osoro Properties."
+            "- Wilkem Edge."
         ),
     },
     {
@@ -41,7 +41,7 @@ TEMPLATES: list[dict] = [
         "subject": "Payment Received",
         "body": (
             "Thank you {tenant_name}! We have received your payment of KES {amount} "
-            "for Unit {unit_label}. — Dr. Osoro Properties."
+            "for Unit {unit_label}. - Wilkem Edge."
         ),
     },
     {
@@ -53,7 +53,7 @@ TEMPLATES: list[dict] = [
         "body": (
             "Hi {tenant_name}, please note that water supply at your building will be "
             "interrupted on {due_date} for scheduled maintenance. We apologise for the "
-            "inconvenience. — Dr. Osoro Properties."
+            "inconvenience. - Wilkem Edge."
         ),
     },
     {
@@ -65,7 +65,7 @@ TEMPLATES: list[dict] = [
         "body": (
             "Dear {tenant_name}, we will be conducting an inspection of Unit {unit_label} "
             "on {due_date}. Kindly ensure access is available between 9 AM and 5 PM. "
-            "— Dr. Osoro Properties."
+            "- Wilkem Edge."
         ),
     },
     {
@@ -76,7 +76,7 @@ TEMPLATES: list[dict] = [
         "subject": "Announcement",
         "body": (
             "Hi {tenant_name}, [write your message here]. "
-            "— Dr. Osoro Properties."
+            "- Wilkem Edge."
         ),
     },
 ]
