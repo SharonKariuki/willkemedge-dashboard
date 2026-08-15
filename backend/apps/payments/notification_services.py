@@ -12,6 +12,7 @@ import logging
 from datetime import date
 from decimal import Decimal
 
+from django.conf import settings
 from django.utils import timezone
 
 from apps.tenants.models import Tenant
@@ -80,6 +81,20 @@ def dispatch_notification(notification: TenantNotification) -> TenantNotificatio
     rendered_subject = _resolve_placeholders(notification.subject or "Notice", tenant)
     notification.body = rendered_body
     notification.subject = rendered_subject
+
+    # Master switch. Left PENDING rather than SENT or FAILED: nothing was
+    # delivered and nothing went wrong, so the row stays a truthful record of
+    # a message still owed to the tenant — and can be re-dispatched once
+    # notifications are switched back on.
+    if not getattr(settings, "TENANT_NOTIFICATIONS_ENABLED", True):
+        logger.info(
+            "Notification %s suppressed for tenant %s: TENANT_NOTIFICATIONS_ENABLED=false",
+            notification.id, tenant.id,
+        )
+        notification.status = NotificationStatus.PENDING
+        notification.error = "Suppressed: tenant notifications are disabled"
+        notification.save()
+        return notification
 
     error: str | None = None
     try:

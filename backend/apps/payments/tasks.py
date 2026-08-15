@@ -32,6 +32,8 @@ def _notify_tenant_payment(tenant, amount, reference: str, payment_date) -> None
     amount rather than one per period chunk). Raises on failure so the caller
     can retry.
     """
+    from django.conf import settings
+
     from .notifications import (
         payment_sms_message,
         payment_statement_email_html,
@@ -40,6 +42,16 @@ def _notify_tenant_payment(tenant, amount, reference: str, payment_date) -> None
     )
     from .pdf_service import render_to_pdf
     from .statement_service import build_statement
+
+    # Master switch — see TENANT_NOTIFICATIONS_ENABLED in settings/base.py.
+    # Returning cleanly (not raising) so the caller does not retry: the payment
+    # itself is already recorded, and suppression is a deliberate state rather
+    # than a failure to recover from.
+    if not getattr(settings, "TENANT_NOTIFICATIONS_ENABLED", True):
+        logger.info(
+            "Receipt for tenant %s suppressed: TENANT_NOTIFICATIONS_ENABLED=false", tenant.id
+        )
+        return
 
     # Plain hyphen, not an en dash: any character outside GSM-7 forces the whole
     # SMS to UCS-2, which cuts the segment size from 160 chars to 70 and roughly
