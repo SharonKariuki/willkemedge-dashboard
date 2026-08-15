@@ -90,6 +90,17 @@ def test_reminder_sends_when_enabled(settings, notification):
     sms.assert_called_once()
 
 
+@pytest.mark.django_db
+def test_manual_send_is_not_suppressed(settings, notification):
+    """The admin broadcast form is a deliberate human act — it stays usable."""
+    settings.TENANT_NOTIFICATIONS_ENABLED = False
+    with patch("apps.payments.notification_services.send_sms", return_value=None) as sms:
+        result = dispatch_notification(notification, automatic=False)
+
+    sms.assert_called_once()
+    assert result.status == NotificationStatus.SENT
+
+
 # ── _notify_tenant_payment: receipts ───────────────────────────────────────
 
 @pytest.mark.django_db

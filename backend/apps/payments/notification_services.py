@@ -74,19 +74,28 @@ def _current_balance(tenant: Tenant) -> Decimal:
     return total or Decimal("0")
 
 
-def dispatch_notification(notification: TenantNotification) -> TenantNotification:
-    """Render placeholders, send via the chosen channel, and record outcome."""
+def dispatch_notification(
+    notification: TenantNotification, *, automatic: bool = True
+) -> TenantNotification:
+    """Render placeholders, send via the chosen channel, and record outcome.
+
+    ``automatic`` marks a send the system decided to make on its own — rent and
+    arrears reminders. Those are what TENANT_NOTIFICATIONS_ENABLED silences.
+    The admin broadcast form passes ``automatic=False``: a person chose to send
+    it, knows they did, and sees the result immediately, so it stays available
+    while automatic messaging is paused.
+    """
     tenant = notification.tenant
     rendered_body = _resolve_placeholders(notification.body, tenant)
     rendered_subject = _resolve_placeholders(notification.subject or "Notice", tenant)
     notification.body = rendered_body
     notification.subject = rendered_subject
 
-    # Master switch. Left PENDING rather than SENT or FAILED: nothing was
-    # delivered and nothing went wrong, so the row stays a truthful record of
-    # a message still owed to the tenant — and can be re-dispatched once
-    # notifications are switched back on.
-    if not getattr(settings, "TENANT_NOTIFICATIONS_ENABLED", True):
+    # Master switch, automatic sends only. Left PENDING rather than SENT or
+    # FAILED: nothing was delivered and nothing went wrong, so the row stays a
+    # truthful record of a message still owed to the tenant — and can be
+    # re-dispatched once notifications are switched back on.
+    if automatic and not getattr(settings, "TENANT_NOTIFICATIONS_ENABLED", True):
         logger.info(
             "Notification %s suppressed for tenant %s: TENANT_NOTIFICATIONS_ENABLED=false",
             notification.id, tenant.id,
