@@ -150,6 +150,13 @@ def send_unmatched_credit_alert(self, event_id: int) -> None:
         logger.error("send_unmatched_credit_alert: event %s not found", event_id)
         return
 
+    if not getattr(settings, "ADMIN_ALERTS_ENABLED", True):
+        logger.info(
+            "send_unmatched_credit_alert: event %s suppressed, ADMIN_ALERTS_ENABLED=false",
+            event_id,
+        )
+        return
+
     phones = {
         p for p in (
             getattr(settings, "ADMIN_ALERT_PHONE", ""),
@@ -235,6 +242,10 @@ def send_daily_reconciliation(self, target_iso: str | None = None) -> None:
             getattr(settings, "DIRECTOR_ALERT_PHONE", ""),
         ) if p
     }
+    if not getattr(settings, "ADMIN_ALERTS_ENABLED", True):
+        logger.info("send_daily_reconciliation: suppressed, ADMIN_ALERTS_ENABLED=false")
+        return
+
     if not emails and not phones:
         logger.warning("send_daily_reconciliation: no recipients configured — skipping")
         return
@@ -268,6 +279,18 @@ def send_reversal_authorization_alert(self, event_id: int) -> None:
         event = CoopIpnEvent.objects.get(pk=event_id)
     except CoopIpnEvent.DoesNotExist:
         logger.error("send_reversal_authorization_alert: event %s not found", event_id)
+        return
+
+    # WARNING, not INFO: a reversal is money leaving the account. Suppression is
+    # safe in that nothing is auto-undone, but nobody learns one is waiting, so
+    # this must be loud in the logs.
+    if not getattr(settings, "ADMIN_ALERTS_ENABLED", True):
+        logger.warning(
+            "send_reversal_authorization_alert: event %s SUPPRESSED by "
+            "ADMIN_ALERTS_ENABLED=false — a reversal of KES %s is awaiting "
+            "authorization and nobody has been notified",
+            event_id, event.amount,
+        )
         return
 
     phone = getattr(settings, "DIRECTOR_ALERT_PHONE", "") or getattr(settings, "ADMIN_ALERT_PHONE", "")
