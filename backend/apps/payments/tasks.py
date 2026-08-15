@@ -119,8 +119,14 @@ def send_deposit_receipt(self, tenant_id: int, amount: str, reference: str, paym
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=120)
 def send_unmatched_credit_alert(self, event_id: int) -> None:
-    """Alert the admin (SMS + email) when an IPN credit can't be auto-assigned
-    and needs manual reconciliation (review item M1)."""
+    """Alert the admin and the director (SMS + email) when an IPN credit can't
+    be auto-assigned and needs manual reconciliation (review item M1).
+
+    Recipients: ADMIN_ALERT_* and DIRECTOR_ALERT_* together, deduplicated — the
+    director carries the `owner` role, so he can clear the queue himself from
+    Reconciliation without waiting on the admin. Unlike the reversal alert this
+    is not a fallback chain: an unmatched credit is money already in the bank
+    that nobody has been told about, so both contacts are notified."""
     from django.conf import settings
 
     from .models import CoopIpnEvent
@@ -132,15 +138,28 @@ def send_unmatched_credit_alert(self, event_id: int) -> None:
         logger.error("send_unmatched_credit_alert: event %s not found", event_id)
         return
 
-    phone = getattr(settings, "ADMIN_ALERT_PHONE", "")
-    email = getattr(settings, "ADMIN_ALERT_EMAIL", "")
-    if not phone and not email:
-        logger.warning("send_unmatched_credit_alert: no ADMIN_ALERT_PHONE/EMAIL set — alert skipped")
+    phones = {
+        p for p in (
+            getattr(settings, "ADMIN_ALERT_PHONE", ""),
+            getattr(settings, "DIRECTOR_ALERT_PHONE", ""),
+        ) if p
+    }
+    emails = {
+        e for e in (
+            getattr(settings, "ADMIN_ALERT_EMAIL", ""),
+            getattr(settings, "DIRECTOR_ALERT_EMAIL", ""),
+        ) if e
+    }
+    if not phones and not emails:
+        logger.warning(
+            "send_unmatched_credit_alert: no ADMIN_ALERT_*/DIRECTOR_ALERT_* contact set "
+            "— alert skipped"
+        )
         return
 
     sms_text = (
         f"Wilkem Edge: unmatched payment KES {event.amount} (ref {event.transaction_id}). "
-        f"Reason: {event.detail}. Please reconcile in the dashboard."
+        f"Reason: {event.detail}. Open Reconciliation in the dashboard to assign it."
     )
     email_body = (
         "A bank credit could not be automatically assigned to a tenant and needs review.\n\n"
@@ -150,12 +169,12 @@ def send_unmatched_credit_alert(self, event_id: int) -> None:
         f"Account: {event.account_number}\n"
         f"Reason: {event.detail}\n\n"
         f"Narration: {event.narration}\n\n"
-        "Open the dashboard (Admin → Co-op IPN events, filter Unmatched) to assign it."
+        "Open Reconciliation in the dashboard to assign it to a tenant."
     )
     try:
-        if phone:
+        for phone in phones:
             send_sms(phone, sms_text)
-        if email:
+        for email in emails:
             send_email(email, "Action needed: unmatched bank credit", custom_email_html(
                 "Unmatched bank credit", email_body))
     except Exception as exc:
