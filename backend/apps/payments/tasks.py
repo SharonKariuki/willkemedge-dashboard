@@ -32,6 +32,8 @@ def _notify_tenant_payment(tenant, amount, reference: str, payment_date) -> None
     amount rather than one per period chunk). Raises on failure so the caller
     can retry.
     """
+    from django.conf import settings
+
     from .notifications import (
         payment_sms_message,
         payment_statement_email_html,
@@ -40,6 +42,16 @@ def _notify_tenant_payment(tenant, amount, reference: str, payment_date) -> None
     )
     from .pdf_service import render_to_pdf
     from .statement_service import build_statement
+
+    # Master switch — see TENANT_NOTIFICATIONS_ENABLED in settings/base.py.
+    # Returning cleanly (not raising) so the caller does not retry: the payment
+    # itself is already recorded, and suppression is a deliberate state rather
+    # than a failure to recover from.
+    if not getattr(settings, "TENANT_NOTIFICATIONS_ENABLED", True):
+        logger.info(
+            "Receipt for tenant %s suppressed: TENANT_NOTIFICATIONS_ENABLED=false", tenant.id
+        )
+        return
 
     # Plain hyphen, not an en dash: any character outside GSM-7 forces the whole
     # SMS to UCS-2, which cuts the segment size from 160 chars to 70 and roughly
@@ -119,8 +131,14 @@ def send_deposit_receipt(self, tenant_id: int, amount: str, reference: str, paym
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=120)
 def send_unmatched_credit_alert(self, event_id: int) -> None:
-    """Alert the admin (SMS + email) when an IPN credit can't be auto-assigned
-    and needs manual reconciliation (review item M1)."""
+    """Alert the admin and the director (SMS + email) when an IPN credit can't
+    be auto-assigned and needs manual reconciliation (review item M1).
+
+    Recipients: ADMIN_ALERT_* and DIRECTOR_ALERT_* together, deduplicated — the
+    director carries the `owner` role, so he can clear the queue himself from
+    Reconciliation without waiting on the admin. Unlike the reversal alert this
+    is not a fallback chain: an unmatched credit is money already in the bank
+    that nobody has been told about, so both contacts are notified."""
     from django.conf import settings
 
     from .models import CoopIpnEvent
@@ -132,15 +150,35 @@ def send_unmatched_credit_alert(self, event_id: int) -> None:
         logger.error("send_unmatched_credit_alert: event %s not found", event_id)
         return
 
-    phone = getattr(settings, "ADMIN_ALERT_PHONE", "")
-    email = getattr(settings, "ADMIN_ALERT_EMAIL", "")
-    if not phone and not email:
-        logger.warning("send_unmatched_credit_alert: no ADMIN_ALERT_PHONE/EMAIL set — alert skipped")
+    if not getattr(settings, "ADMIN_ALERTS_ENABLED", True):
+        logger.info(
+            "send_unmatched_credit_alert: event %s suppressed, ADMIN_ALERTS_ENABLED=false",
+            event_id,
+        )
+        return
+
+    phones = {
+        p for p in (
+            getattr(settings, "ADMIN_ALERT_PHONE", ""),
+            getattr(settings, "DIRECTOR_ALERT_PHONE", ""),
+        ) if p
+    }
+    emails = {
+        e for e in (
+            getattr(settings, "ADMIN_ALERT_EMAIL", ""),
+            getattr(settings, "DIRECTOR_ALERT_EMAIL", ""),
+        ) if e
+    }
+    if not phones and not emails:
+        logger.warning(
+            "send_unmatched_credit_alert: no ADMIN_ALERT_*/DIRECTOR_ALERT_* contact set "
+            "— alert skipped"
+        )
         return
 
     sms_text = (
         f"Wilkem Edge: unmatched payment KES {event.amount} (ref {event.transaction_id}). "
-        f"Reason: {event.detail}. Please reconcile in the dashboard."
+        f"Reason: {event.detail}. Open Reconciliation in the dashboard to assign it."
     )
     email_body = (
         "A bank credit could not be automatically assigned to a tenant and needs review.\n\n"
@@ -150,12 +188,12 @@ def send_unmatched_credit_alert(self, event_id: int) -> None:
         f"Account: {event.account_number}\n"
         f"Reason: {event.detail}\n\n"
         f"Narration: {event.narration}\n\n"
-        "Open the dashboard (Admin → Co-op IPN events, filter Unmatched) to assign it."
+        "Open Reconciliation in the dashboard to assign it to a tenant."
     )
     try:
-        if phone:
+        for phone in phones:
             send_sms(phone, sms_text)
-        if email:
+        for email in emails:
             send_email(email, "Action needed: unmatched bank credit", custom_email_html(
                 "Unmatched bank credit", email_body))
     except Exception as exc:
@@ -204,6 +242,10 @@ def send_daily_reconciliation(self, target_iso: str | None = None) -> None:
             getattr(settings, "DIRECTOR_ALERT_PHONE", ""),
         ) if p
     }
+    if not getattr(settings, "ADMIN_ALERTS_ENABLED", True):
+        logger.info("send_daily_reconciliation: suppressed, ADMIN_ALERTS_ENABLED=false")
+        return
+
     if not emails and not phones:
         logger.warning("send_daily_reconciliation: no recipients configured — skipping")
         return
@@ -237,6 +279,18 @@ def send_reversal_authorization_alert(self, event_id: int) -> None:
         event = CoopIpnEvent.objects.get(pk=event_id)
     except CoopIpnEvent.DoesNotExist:
         logger.error("send_reversal_authorization_alert: event %s not found", event_id)
+        return
+
+    # WARNING, not INFO: a reversal is money leaving the account. Suppression is
+    # safe in that nothing is auto-undone, but nobody learns one is waiting, so
+    # this must be loud in the logs.
+    if not getattr(settings, "ADMIN_ALERTS_ENABLED", True):
+        logger.warning(
+            "send_reversal_authorization_alert: event %s SUPPRESSED by "
+            "ADMIN_ALERTS_ENABLED=false — a reversal of KES %s is awaiting "
+            "authorization and nobody has been notified",
+            event_id, event.amount,
+        )
         return
 
     phone = getattr(settings, "DIRECTOR_ALERT_PHONE", "") or getattr(settings, "ADMIN_ALERT_PHONE", "")

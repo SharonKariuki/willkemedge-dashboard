@@ -247,6 +247,19 @@ COOP_IPN_ALLOWED_IPS = config("COOP_IPN_ALLOWED_IPS", default="", cast=Csv())
 COOP_IPN_TRUSTED_PROXY_COUNT = config("COOP_IPN_TRUSTED_PROXY_COUNT", default=1, cast=int)
 # Dev-only escape hatch: skip bearer auth when DEBUG and this is explicitly set.
 ALLOW_INSECURE_COOP_IPN = config("ALLOW_INSECURE_COOP_IPN", default=False, cast=bool)
+# Master switch for AUTOMATIC tenant messaging: receipts, rent reminders and
+# arrears reminders — everything the system sends on its own. Set false to run
+# against live data without messaging tenants (verification, handover, dry
+# runs). Deliberately NOT gated: the admin broadcast form (a person chose to
+# send it) and internal admin/director alerts (they are how you check the data
+# is right while tenants stay silent).
+TENANT_NOTIFICATIONS_ENABLED = config("TENANT_NOTIFICATIONS_ENABLED", default=True, cast=bool)
+# Master switch for INTERNAL staff alerts: unmatched credits, the daily
+# reconciliation summary, and reversal authorisation requests. Set false for a
+# quiet testing window. Note this silences the reversal request too — the
+# reversal is still never auto-applied, but nobody is told one is waiting, so
+# turn this back on before the system is relied upon unattended.
+ADMIN_ALERTS_ENABLED = config("ADMIN_ALERTS_ENABLED", default=True, cast=bool)
 # Admin alerted (SMS + email) when an IPN credit can't be auto-matched/errors.
 ADMIN_ALERT_PHONE = config("ADMIN_ALERT_PHONE", default="")
 ADMIN_ALERT_EMAIL = config("ADMIN_ALERT_EMAIL", default="")
