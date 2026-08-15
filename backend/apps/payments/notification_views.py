@@ -132,7 +132,9 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
                 template_key=data.get("template_key", ""),
                 created_by=request.user if request.user.is_authenticated else None,
             )
-            dispatch_notification(notification)
+            # automatic=False: a person is sending this deliberately from the
+            # dashboard, so it is not silenced by TENANT_NOTIFICATIONS_ENABLED.
+            dispatch_notification(notification, automatic=False)
             results.append(notification)
 
         sent = sum(1 for n in results if n.status == "sent")
