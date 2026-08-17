@@ -119,13 +119,14 @@ month since the June property load.
 This is what makes payments actually flow in, and it is the longest pole because it
 depends on Co-op's turnaround.
 
-Contact: **the Co-op contact**, Digital Integrations & Ecommerce — `[redacted]`.
-Technical contact on the signed B2B form: `[redacted]`.
+Contact: the Co-op Bank **Digital Integrations & Ecommerce** desk (contact details are
+held offline, not in this repo).
+Technical contact on the signed B2B form: see the signed form.
 Paybill **400222** (Co-op-aggregated), account format `90290#<UNIT_CODE>`.
 
-- [ ] Send Melvin the live endpoint and the bearer token you set as `COOP_IPN_TOKEN`:
+- [ ] Send the Co-op contact the live endpoint and the bearer token you set as `COOP_IPN_TOKEN`:
       `https://<api-domain>/api/payments/coop/ipn/`
-- [ ] Ask him to run the **Postman simulation** against it. There is no sandbox — Co-op
+- [ ] Ask them to run the **Postman simulation** against it. There is no sandbox — Co-op
       simulates POSTs to the live endpoint.
 - [ ] **Capture the two unknowns this resolves.** Every payload is persisted verbatim to
       `CoopIpnEvent.raw_payload`, so no extra capture code is needed — just read the rows
