@@ -113,7 +113,11 @@ class ArrearsReportView(APIView):
                 "tenant": a.tenant.full_name,
                 "unit": f"{a.tenant.unit.building.name} — {a.tenant.unit.label}",
                 "period": f"{a.period_month}/{a.period_year}",
-                "expected": float(a.expected_rent),
+                # Rent + VAT — the figure `balance` is measured against. Base
+                # rent alone made a commercial row fail to add up on screen.
+                "expected": float(a.expected_total),
+                "expected_rent": float(a.expected_rent),
+                "expected_vat": float(a.expected_vat),
                 "paid": float(a.amount_paid),
                 "balance": float(a.balance),
             })

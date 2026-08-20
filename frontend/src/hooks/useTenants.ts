@@ -55,7 +55,16 @@ export interface TenantPaymentHistory {
     source: string;
     reference: string;
   }[];
-  arrears: { period: string; expected: string; paid: string; balance: string }[];
+  /** `expected` is the full obligation (rent + VAT) that `balance` is measured
+   *  against; the two components are broken out for commercial units. */
+  arrears: {
+    period: string;
+    expected: string;
+    expected_rent: string;
+    expected_vat: string;
+    paid: string;
+    balance: string;
+  }[];
 }
 
 export function usePaymentHistory(id: number | string | null) {
