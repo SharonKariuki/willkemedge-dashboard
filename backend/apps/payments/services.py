@@ -349,11 +349,16 @@ def _update_arrears(tenant, period_month: int, period_year: int) -> Arrears:
 
     Only non-void RENT payments settle it — a security deposit is a refundable
     liability and a late fee is separate income; neither discharges rent.
-    """
-    expected_rent = tenant.monthly_rent
-    expected_vat = expected_vat_for(tenant, expected_rent)
-    obligation = expected_rent + expected_vat
 
+    The obligation itself is set when the period is RAISED — by
+    ``generate_monthly_arrears`` for an ordinary month, or by the opening-balance
+    import for the cutover period — and is never rewritten here. Recomputing it
+    from ``tenant.monthly_rent`` on every payment silently restated the debt: an
+    opening-balance row carries the brought-forward balance, not a month's rent,
+    so the first payment a tenant made against it inflated a KES 1,000 opening
+    arrear to a full month's KES 7,000 (and, the other way, collapsed a KES
+    74,700 one). See ``repair_opening_arrears`` for the cleanup.
+    """
     total_paid = rent_payments_for(tenant, period_month, period_year).aggregate(
         total=models.Sum("amount")
     )["total"] or ZERO
@@ -368,9 +373,22 @@ def _update_arrears(tenant, period_month: int, period_year: int) -> Arrears:
             period_month=period_month,
             period_year=period_year,
         )
-        .values("waived_amount", "waive_notes", "credit_applied")
+        .values("waived_amount", "waive_notes", "credit_applied",
+                "expected_rent", "expected_vat")
         .first()
-    ) or {}
+    )
+    if existing is None:
+        # No row yet: money arrived for a period no billing run ever raised
+        # (back-dated capture, or a tenant paying ahead). The tenant's current
+        # rent is the only obligation we can infer.
+        expected_rent = tenant.monthly_rent
+        expected_vat = expected_vat_for(tenant, expected_rent)
+        existing = {}
+    else:
+        expected_rent = existing["expected_rent"]
+        expected_vat = existing["expected_vat"] or ZERO
+
+    obligation = expected_rent + expected_vat
     waived_amount = existing.get("waived_amount") or ZERO
     waive_notes = existing.get("waive_notes") or ""
     credit_applied = existing.get("credit_applied") or ZERO
