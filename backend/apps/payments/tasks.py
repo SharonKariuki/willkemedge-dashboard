@@ -404,16 +404,77 @@ def recalculate_all_statuses() -> None:
     logger.info("recalculate_all_statuses: updated %d units", updated)
 
 
+def _next_period(year: int, month: int) -> tuple[int, int]:
+    return (year + 1, 1) if month == 12 else (year, month + 1)
+
+
+def billing_floor() -> tuple[int, int] | None:
+    """The first month the books charge rent for — the month after cutover.
+
+    The changeover posted one ``opening_ar`` journal entry per tenant carrying
+    everything owed up to that date, so rent accrues from the month after it.
+    Without this floor, catching up would walk back to each tenant's move-in and
+    re-bill years that the opening balance already settled.
+
+    None when no opening entries exist (a fresh install), in which case each
+    tenant is simply billed from their move-in month.
+    """
+    from apps.ledger.models import JournalEntry
+
+    cutover = (
+        JournalEntry.objects.filter(source_type="opening_ar")
+        .order_by("date")
+        .values_list("date", flat=True)
+        .first()
+    )
+    return _next_period(cutover.year, cutover.month) if cutover else None
+
+
+def first_billable_period(tenant, floor) -> tuple[int, int] | None:
+    """The first month this tenant should be charged rent for.
+
+    Whichever is later of their move-in month — nobody owes rent for a month
+    they had no keys — and the books' billing floor.
+    """
+    bounds = [b for b in (floor, None) if b]
+    if tenant.move_in_date:
+        bounds.append((tenant.move_in_date.year, tenant.move_in_date.month))
+    return max(bounds) if bounds else None
+
+
+def periods_due(tenant, floor, through: tuple[int, int]):
+    """Every (year, month) this tenant should have been billed, oldest first."""
+    cursor = first_billable_period(tenant, floor)
+    if cursor is None:
+        return
+    while cursor <= through:
+        yield cursor
+        cursor = _next_period(*cursor)
+
+
 @shared_task
-def generate_monthly_arrears() -> None:
+def generate_monthly_arrears() -> int:
     """
     Runs on the 1st of each month at 00:05 EAT.
-    Creates an Arrears record for every active tenant if one doesn't exist yet.
+    Creates the Arrears records every active tenant is missing.
 
     The period is raised at the FULL obligation — base rent plus VAT for a
     commercial unit, since that is the figure the tenant actually pays — and any
     credit the tenant has banked from an earlier overpayment is drawn down
     against it, so a prepaying tenant is not billed twice.
+
+    It bills every month a tenant is short of, not just the current one. There
+    is no Celery beat in production — a free external scheduler calls the cron
+    endpoint (see cron_views) — so a missed or failed trigger used to drop that
+    month's rent permanently: the task only ever looked at ``now``, and the
+    following month's run would not go back for it. August 2026 was never raised
+    for 54 of 82 active tenants, and 10 tenants who moved in after the last run
+    had never been billed at all, leaving them invisible to the arrears report
+    and the reminders. Catching up makes a missed trigger a delay rather than a
+    write-off.
+
+    Returns the number of rows raised, so the cron endpoint's response says what
+    actually happened.
     """
     from apps.tenants.models import Tenant, TenantStatus
 
@@ -421,26 +482,34 @@ def generate_monthly_arrears() -> None:
     from .services import apply_available_credit, expected_vat_for
 
     now = timezone.now()
+    through = (now.year, now.month)
+    floor = billing_floor()
     active = Tenant.objects.filter(status=TenantStatus.ACTIVE).select_related("unit")
     created = 0
     credited = 0
 
     for tenant in active:
-        expected_vat = expected_vat_for(tenant, tenant.monthly_rent)
-        arrears, was_created = Arrears.objects.get_or_create(
-            tenant=tenant,
-            period_month=now.month,
-            period_year=now.year,
-            defaults={
-                "expected_rent": tenant.monthly_rent,
-                "expected_vat": expected_vat,
-                "amount_paid": 0,
-                "balance": tenant.monthly_rent + expected_vat,
-                "is_cleared": False,
-            },
+        have = set(
+            Arrears.objects.filter(tenant=tenant)
+            .values_list("period_year", "period_month")
         )
-        if was_created:
+        expected_vat = expected_vat_for(tenant, tenant.monthly_rent)
+
+        for year, month in periods_due(tenant, floor, through):
+            if (year, month) in have:
+                continue
+            arrears = Arrears.objects.create(
+                tenant=tenant,
+                period_month=month,
+                period_year=year,
+                expected_rent=tenant.monthly_rent,
+                expected_vat=expected_vat,
+                amount_paid=0,
+                balance=tenant.monthly_rent + expected_vat,
+                is_cleared=False,
+            )
             created += 1
+            # Oldest period first, so banked credit pays down the earliest debt.
             before = arrears.credit_applied
             apply_available_credit(arrears)
             if arrears.credit_applied != before:
@@ -450,6 +519,7 @@ def generate_monthly_arrears() -> None:
         "generate_monthly_arrears: created %d new arrears records (%d drew on credit)",
         created, credited,
     )
+    return created
 
 
 # ---------------------------------------------------------------------------
