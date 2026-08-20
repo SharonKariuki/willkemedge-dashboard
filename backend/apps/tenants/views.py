@@ -270,9 +270,17 @@ class TenantViewSet(viewsets.ModelViewSet):
 
         from apps.payments.models import Arrears, Payment
         tenant = self.get_object()
-        payments = Payment.objects.filter(tenant=tenant).order_by("-payment_date")[:24]
+        payments = (
+            Payment.objects.filter(tenant=tenant, voided_at__isnull=True)
+            .order_by("-payment_date")[:24]
+        )
         arrears = Arrears.objects.filter(tenant=tenant, is_cleared=False)
-        total_paid = tenant.payments.aggregate(total=Sum("amount"))["total"] or Decimal("0")
+        # Voided payments are excluded from every other balance in the system;
+        # counting them here made paid-to-date disagree with the arrears table.
+        total_paid = (
+            tenant.payments.filter(voided_at__isnull=True)
+            .aggregate(total=Sum("amount"))["total"] or Decimal("0")
+        )
         total_arrears = arrears.aggregate(total=Sum("balance"))["total"] or Decimal("0")
         return Response({
             "total_paid": _money(total_paid),
