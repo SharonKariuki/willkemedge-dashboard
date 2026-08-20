@@ -11,6 +11,23 @@ def _money(value) -> str:
     return str(Decimal(str(value or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
 
+def outstanding_balance(tenant):
+    """Sum of the tenant's uncleared arrears balances."""
+    from django.db.models import Sum
+    return tenant.arrears.filter(is_cleared=False).aggregate(total=Sum("balance"))["total"] or 0
+
+
+def live_payments(tenant):
+    """Payments that still count — a voided payment is money that never was.
+
+    ``Payment`` rows are immutable, so a mistake is unwound by stamping
+    ``voided_at`` and posting a mirror journal entry. Every balance, arrears and
+    income figure excludes them; ``total_paid`` did not, so a voided receipt kept
+    inflating the tenant's paid-to-date long after it had been reversed.
+    """
+    return tenant.payments.filter(voided_at__isnull=True)
+
+
 class TenantDocumentSerializer(serializers.ModelSerializer):
     doc_type_display = serializers.CharField(source="get_doc_type_display", read_only=True)
 
@@ -46,8 +63,7 @@ class TenantListSerializer(serializers.ModelSerializer):
         falls back to a query if the object was fetched without it."""
         balance = getattr(obj, "outstanding_balance", None)
         if balance is None:
-            from django.db.models import Sum
-            balance = obj.arrears.filter(is_cleared=False).aggregate(total=Sum("balance"))["total"]
+            balance = outstanding_balance(obj)
         return balance or 0
 
     def get_balance(self, obj):
@@ -67,6 +83,11 @@ class TenantDetailSerializer(serializers.ModelSerializer):
     # Payment analytics
     total_paid = serializers.SerializerMethodField()
     total_arrears = serializers.SerializerMethodField()
+    # Mirrors TenantListSerializer. The detail page drives its arrears styling
+    # and the "Remind" button off this field; omitting it left every tenant
+    # reading as `undefined` — arrears rendered in the green "all paid" colour
+    # and the reminder button was unreachable no matter how much was owed.
+    payment_status = serializers.SerializerMethodField()
     # KYC
     kyc_status_display = serializers.CharField(source="get_kyc_status_display", read_only=True)
     kyc_complete = serializers.BooleanField(read_only=True)
@@ -87,7 +108,7 @@ class TenantDetailSerializer(serializers.ModelSerializer):
             "status", "status_display", "move_out_notes", "notes",
             "kyc_status", "kyc_status_display", "kyc_complete", "kyc_missing_items",
             "kyc_verified_at", "kyc_verified_by", "kyc_verified_by_name", "kyc_notes",
-            "documents", "total_paid", "total_arrears",
+            "documents", "total_paid", "total_arrears", "payment_status",
             "created_at", "updated_at",
         ]
         read_only_fields = [
@@ -97,13 +118,14 @@ class TenantDetailSerializer(serializers.ModelSerializer):
 
     def get_total_paid(self, obj):
         from django.db.models import Sum
-        result = obj.payments.aggregate(total=Sum("amount"))["total"]
+        result = live_payments(obj).aggregate(total=Sum("amount"))["total"]
         return _money(result)
 
     def get_total_arrears(self, obj):
-        from django.db.models import Sum
-        result = obj.arrears.filter(is_cleared=False).aggregate(total=Sum("balance"))["total"]
-        return _money(result)
+        return _money(outstanding_balance(obj))
+
+    def get_payment_status(self, obj):
+        return "in_arrears" if outstanding_balance(obj) > 0 else "paid"
 
 
 class TenantCreateSerializer(serializers.ModelSerializer):

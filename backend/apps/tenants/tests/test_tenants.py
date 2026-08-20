@@ -3,6 +3,7 @@ from decimal import Decimal
 
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APIClient, APITestCase
 
@@ -373,3 +374,62 @@ class TenantArrearsFilterExportTests(APITestCase):
         body = resp.content.decode()
         assert "Owing Test" in body
         assert "Paidup Test" not in body
+
+
+class TenantDetailPaymentFieldsTests(APITestCase):
+    """The detail page styles arrears and gates its Remind button on
+    `payment_status`, and shows `total_paid` beside them. The serializer omitted
+    the first (so arrears always rendered as paid) and counted voided receipts
+    in the second."""
+
+    @classmethod
+    def setUpTestData(cls):
+        from apps.payments.models import Arrears, Payment
+        from apps.tenants.models import Tenant
+
+        cls.user = User.objects.create_user(
+            username="admin", email="admin@test.com", password="testpass123!", role="owner"
+        )
+        cls.building = Building.objects.create(name="Road Block Eldoret", total_floors=4)
+        unit = Unit.objects.create(
+            building=cls.building, label="RB305",
+            monthly_rent=Decimal("7000"), status=UnitStatus.OCCUPIED_UNPAID,
+        )
+        cls.tenant = Tenant.objects.create(
+            first_name="Sheldon", last_name="Mutai", id_number="PENDING-RB305",
+            phone="+254707575747", unit=unit,
+            monthly_rent=Decimal("7000"), move_in_date="2026-01-01",
+        )
+        Arrears.objects.create(
+            tenant=cls.tenant, period_month=7, period_year=2026,
+            expected_rent=Decimal("7000"), amount_paid=Decimal("6000"),
+            balance=Decimal("1000"), is_cleared=False,
+        )
+        Payment.objects.create(
+            tenant=cls.tenant, amount=Decimal("6000"), payment_date="2026-08-11",
+            period_month=7, period_year=2026, source="mpesa",
+        )
+        # Reversed receipt — money that never was.
+        Payment.objects.create(
+            tenant=cls.tenant, amount=Decimal("4000"), payment_date="2026-08-12",
+            period_month=7, period_year=2026, source="mpesa",
+            voided_at=timezone.now(), void_reason="duplicate capture",
+        )
+
+    def setUp(self):
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.user)
+
+    def test_detail_exposes_payment_status(self):
+        body = self.client.get(f"/api/tenants/{self.tenant.pk}/").json()
+        assert body["payment_status"] == "in_arrears"
+        assert Decimal(body["total_arrears"]) == Decimal("1000.00")
+
+    def test_detail_total_paid_excludes_voided(self):
+        body = self.client.get(f"/api/tenants/{self.tenant.pk}/").json()
+        assert Decimal(body["total_paid"]) == Decimal("6000.00")
+
+    def test_payment_history_excludes_voided(self):
+        body = self.client.get(f"/api/tenants/{self.tenant.pk}/payment-history/").json()
+        assert Decimal(body["total_paid"]) == Decimal("6000.00")
+        assert [Decimal(p["amount"]) for p in body["payments"]] == [Decimal("6000.00")]
