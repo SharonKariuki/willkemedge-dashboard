@@ -64,22 +64,41 @@ Nothing sets these for you. In the Render dashboard → Environment:
 - [ ] Attach a **stable custom domain** and let Render issue SSL.
 - [ ] Add that domain to `DJANGO_ALLOWED_HOSTS`.
 
-### 2.3 Point a free scheduler at the cron endpoints
+### 2.3 Give the scheduler its credentials
 
-This replaces Celery beat. Sign up at cron-job.org (free) and create one job per row.
-Each is a `POST`, with the token either as `?token=<CRON_TRIGGER_TOKEN>` or an
-`Authorization: Bearer <CRON_TRIGGER_TOKEN>` header. Times are **EAT**, matching the
-original beat schedule.
+This replaces Celery beat. **The scheduler already exists** — it is
+`.github/workflows/scheduled-jobs.yml`, it is on `main`, and it has been firing on
+schedule since it was merged. Do *not* sign up for cron-job.org as well; you would
+be running two schedulers and still not notice this one failing.
 
-| Schedule | URL |
+It calls `POST /api/payments/cron/<job>/` with an `Authorization: Bearer` header, on
+the schedule below (the workflow's cron lines are UTC; EAT = UTC+3).
+
+| Schedule (EAT) | Job |
 |---|---|
-| 00:05, 1st of month | `POST /api/payments/cron/monthly-arrears/` |
-| 00:30 daily | `POST /api/payments/cron/recalculate-statuses/` |
-| 08:00 daily | `POST /api/payments/cron/rent-reminders/` |
-| 09:00 daily | `POST /api/payments/cron/arrears-reminders/` |
-| 03:00 daily | `POST /api/payments/cron/daily-reconciliation/` |
+| 1st of month, 03:00 | `monthly-arrears` |
+| 01:00 daily | `recalculate-statuses` |
+| 08:00 daily | `rent-reminders` |
+| 09:00 daily | `arrears-reminders` |
+| 18:00 daily | `daily-reconciliation` |
 
-- [ ] All five jobs created and returning **200**.
+It needs two settings in **Settings → Secrets and variables → Actions**. Without
+them every run fails in under ten seconds at the guard clause, which is exactly
+what happened for the whole of August 2026 — the workflow was firing five times a
+day into an empty token and nothing was ever billed:
+
+- [ ] Variable `API_BASE_URL` = `https://willkemedge-dashboard.onrender.com/api`
+      *(set 25 Aug 2026 — note this is the hand-made Render service, not the
+      `wilkemedge-api` name in `render.yaml`, which was never provisioned.)*
+- [ ] Secret `CRON_TRIGGER_TOKEN` — copy the **exact** value of
+      `CRON_TRIGGER_TOKEN` from the Render service's environment. A mismatch
+      fails closed with 401 and looks identical to it being unset.
+
+Verify with **Actions → Scheduled jobs → Run workflow**, picking
+`recalculate-statuses` (harmless and idempotent). A green run means both settings
+are right; a red one prints which of the two is missing.
+
+- [ ] Manual run is green, and the next scheduled run is green too.
 
 **`monthly-arrears` is the one that matters most.** It is the only thing that creates an
 `Arrears` row for a tenant who has *not* paid — tenants who do pay get their rows created
@@ -94,10 +113,17 @@ A failed run returns 500, so the scheduler's history shows red rather than faili
 Beat has never run in production, so `generate_monthly_arrears` has never fired for any
 month since the June property load.
 
-- [ ] In Django admin, check whether `Arrears` rows exist for the current month.
-- [ ] If not, fire `POST /api/payments/cron/monthly-arrears/` once by hand. It is
-      idempotent (`get_or_create`), so it is safe to run repeatedly.
-- [ ] Then fire `recalculate-statuses` so unit statuses catch up.
+Firing `monthly-arrears` by hand only raises the *current* month. Use the management
+command instead — it catches up every month a tenant is short of, and previews before
+it writes. From the Render Shell:
+
+- [ ] `python manage.py backfill_arrears` — read the preview. It raises real debt.
+- [ ] `python manage.py backfill_arrears --apply`
+- [ ] Fire `recalculate-statuses` from the workflow so unit statuses catch up.
+
+Correct the rents *before* backfilling, or it bills the old figures. As of the
+25 Aug 2026 statement reconciliation that means running `reconcile_aug_2026` first
+— see the command's docstring for what it repairs.
 
 ### 2.5 Frontend
 
