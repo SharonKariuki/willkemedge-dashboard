@@ -269,6 +269,7 @@ class TenantViewSet(viewsets.ModelViewSet):
         from django.db.models import Sum
 
         from apps.payments.models import Arrears, Payment
+        from apps.payments.monthly_ledger import build_monthly_ledger
         tenant = self.get_object()
         payments = (
             Payment.objects.filter(tenant=tenant, voided_at__isnull=True)
@@ -285,6 +286,10 @@ class TenantViewSet(viewsets.ModelViewSet):
         return Response({
             "total_paid": _money(total_paid),
             "total_arrears": _money(total_arrears),
+            # Deposit held — the "Rent Security Deposit" column of the rent roll.
+            "security_deposit": _money(tenant.deposit_paid),
+            # Month-by-month rent roll; extends itself as billing posts periods.
+            "monthly_ledger": build_monthly_ledger(tenant),
             "payments": [
                 {
                     "id": p.id,
