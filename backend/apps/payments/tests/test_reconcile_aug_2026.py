@@ -292,3 +292,81 @@ class TestUnitRelabel:
         call_command("reconcile_aug_2026", "--apply")
 
         assert roster["unit201"].aliases.count() == 1
+
+
+class TestZeroBillRepair:
+    """A row raised while the tenant's rent was 0.00 keeps swallowing cash:
+    nothing in the normal flow rewrites an existing obligation, and
+    backfill_arrears skips any period that already has a row."""
+
+    def _arrears(self, tenant, month, *, rent="0", paid="0"):
+        from apps.payments.models import Arrears
+
+        return Arrears.objects.create(
+            tenant=tenant, period_month=month, period_year=2026,
+            expected_rent=Decimal(rent), expected_vat=Decimal("0"),
+            amount_paid=Decimal(paid), balance=Decimal("0"), is_cleared=True,
+        )
+
+    def test_repairs_a_zero_row_that_holds_cash(self, roster, monkeypatch):
+        tenant = roster["current"]
+        self._arrears(tenant, 8, rent="0", paid="9000")
+        _pay(tenant, "9000", month=8, ref="REF-Z")
+        _clear(monkeypatch)
+
+        call_command("reconcile_aug_2026", "--apply")
+
+        from apps.payments.models import Arrears
+        arr = Arrears.objects.get(tenant=tenant, period_month=8)
+        assert arr.expected_rent == Decimal("9000.00"), "obligation still zero"
+        assert arr.balance == Decimal("0.00")
+        assert arr.is_cleared is True
+
+    def test_leaves_a_zero_row_with_no_cash_alone(self, roster, monkeypatch):
+        """A clean cutover month attracts no payment. Inventing a month's rent
+        for it is the corruption this repair exists to avoid repeating."""
+        tenant = roster["current"]
+        self._arrears(tenant, 6, rent="0", paid="0")
+        _clear(monkeypatch)
+
+        call_command("reconcile_aug_2026", "--apply")
+
+        from apps.payments.models import Arrears
+        assert Arrears.objects.get(tenant=tenant, period_month=6).expected_rent == Decimal("0.00")
+
+    def test_leaves_a_normally_billed_row_alone(self, roster, monkeypatch):
+        tenant = roster["current"]
+        self._arrears(tenant, 7, rent="9000", paid="4000")
+        _clear(monkeypatch)
+
+        call_command("reconcile_aug_2026", "--apply")
+
+        from apps.payments.models import Arrears
+        arr = Arrears.objects.get(tenant=tenant, period_month=7)
+        assert arr.expected_rent == Decimal("9000.00")
+        assert arr.amount_paid == Decimal("4000.00")
+
+    def test_underpayment_is_left_owing_not_cleared(self, roster, monkeypatch):
+        tenant = roster["current"]
+        self._arrears(tenant, 8, rent="0", paid="4000")
+        _pay(tenant, "4000", month=8, ref="REF-Z")
+        _clear(monkeypatch)
+
+        call_command("reconcile_aug_2026", "--apply")
+
+        from apps.payments.models import Arrears
+        arr = Arrears.objects.get(tenant=tenant, period_month=8)
+        assert arr.balance == Decimal("5000.00"), "partial payment reported as settled"
+        assert arr.is_cleared is False
+
+    def test_rerun_is_a_no_op(self, roster, monkeypatch):
+        tenant = roster["current"]
+        self._arrears(tenant, 8, rent="0", paid="9000")
+        _pay(tenant, "9000", month=8, ref="REF-Z")
+        _clear(monkeypatch)
+
+        call_command("reconcile_aug_2026", "--apply")
+        call_command("reconcile_aug_2026", "--apply")
+
+        from apps.payments.models import Arrears
+        assert Arrears.objects.get(tenant=tenant, period_month=8).expected_rent == Decimal("9000.00")

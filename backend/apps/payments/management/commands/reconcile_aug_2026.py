@@ -373,6 +373,12 @@ class Command(BaseCommand):
                 t.first_name, t.last_name = first, last
                 t.save(update_fields=["first_name", "last_name", "updated_at"])
 
+        # ---- 7. Zero-rent arrears rows that swallowed real cash -------------
+        # Deliberately last: step 2 moves money off the duplicate records first,
+        # so a row only reaches here if the cash genuinely belongs to it.
+        self._head("7. Arrears rows billed at zero that nonetheless took money")
+        self._repair_zero_bills()
+
         # ---- summary --------------------------------------------------------
         if not self.apply:
             self.stdout.write(self.style.WARNING(
@@ -401,6 +407,54 @@ class Command(BaseCommand):
         if move_in and (year, month) < (move_in.year, move_in.month):
             return (move_in.year, move_in.month)
         return (year, month)
+
+    def _repair_zero_bills(self):
+        """Re-derive arrears rows raised at zero rent that then took real money.
+
+        ``_update_arrears`` never rewrites an existing obligation — and rightly
+        so, since an opening-balance row carries a brought-forward figure rather
+        than a month's rent, and recomputing it from ``monthly_rent`` is exactly
+        what corrupted the cutover balances before. ``backfill_arrears`` uses
+        ``get_or_create`` and skips any period that already has a row. So a row
+        raised while the tenant's rent was still 0.00 stays at zero forever, and
+        every shilling paid against it reads as credit: RB406 shows roughly
+        18,000 in hand while owing two months.
+
+        The repair is scoped to rows where cash actually landed on a zero
+        obligation. That combination cannot be legitimate — a genuinely
+        rent-free period attracts no payment — whereas a zero row with no
+        payment may well be a clean cutover, and inventing a month's rent for it
+        would repeat the original corruption. Those are left alone.
+        """
+        from apps.payments.models import Arrears
+        from apps.payments.services import _update_arrears, expected_vat_for
+
+        stranded = (
+            Arrears.objects.filter(expected_rent=0, amount_paid__gt=0, tenant__monthly_rent__gt=0)
+            .select_related("tenant", "tenant__unit")
+            .order_by("tenant__unit__label", "period_year", "period_month")
+        )
+        if not stranded:
+            self._skip("none — no zero-rent row is holding cash")
+            return
+
+        for arr in stranded:
+            tenant = arr.tenant
+            rent = tenant.monthly_rent
+            vat = expected_vat_for(tenant, rent)
+            label = tenant.unit.label if tenant.unit else "(no unit)"
+            self._do(
+                f"{label} {tenant.full_name} {arr.period_month}/{arr.period_year}: "
+                f"billed 0.00 but holds {arr.amount_paid} -> obligation {rent}"
+                + (f" + VAT {vat}" if vat else "")
+            )
+            if not self.apply:
+                continue
+            with transaction.atomic():
+                # Set the obligation, then let the canonical routine re-derive
+                # amount_paid, balance and is_cleared from it.
+                Arrears.objects.filter(pk=arr.pk).update(expected_rent=rent, expected_vat=vat)
+                _update_arrears(tenant, arr.period_month, arr.period_year)
 
     def _relabel_unit(self, current, wanted, why):
         """Rename a unit, keeping the old label as a payment-matching alias."""
