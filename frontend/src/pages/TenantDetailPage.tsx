@@ -192,7 +192,7 @@ export default function TenantDetailPage() {
               <Field label="Phone" error={editForm.formState.errors.phone?.message}><input {...editForm.register("phone")} className={inputCls} /></Field>
               <Field label="Email" error={editForm.formState.errors.email?.message}><input {...editForm.register("email")} className={inputCls} /></Field>
               <Field label="Monthly rent (KES)" error={editForm.formState.errors.monthly_rent?.message}><input {...editForm.register("monthly_rent")} className={inputCls} /></Field>
-              <Field label="Deposit paid (KES)"><input {...editForm.register("deposit_paid")} className={inputCls} /></Field>
+              <Field label="Rent security deposit (KES)"><input {...editForm.register("deposit_paid")} className={inputCls} /></Field>
               <Field label="Rent Due Day (1-31)" error={editForm.formState.errors.due_day?.message}><input type="number" min={1} max={31} {...editForm.register("due_day")} className={inputCls} /></Field>
               <Field label="Deposit refund % (for move-out)" error={editForm.formState.errors.deposit_refund_percentage?.message}>
                 <input type="number" min={0} max={100} {...editForm.register("deposit_refund_percentage")} className={inputCls} />
@@ -274,8 +274,8 @@ export default function TenantDetailPage() {
           <p className="mt-2 font-semibold tabular-nums text-content">{KES(tenant.monthly_rent)}</p>
         </Card>
         <Card padding="md">
-          <p className="text-xs uppercase tracking-wider text-content-muted">Total paid</p>
-          <p className="mt-2 font-semibold tabular-nums text-sage-600">{KES(history?.total_paid ?? 0)}</p>
+          <p className="text-xs uppercase tracking-wider text-content-muted">Rent security deposit</p>
+          <p className="mt-2 font-semibold tabular-nums text-content">{KES(tenant.deposit_paid)}</p>
         </Card>
         <Card padding="md">
           <p className="text-xs uppercase tracking-wider text-content-muted">Arrears</p>
@@ -332,29 +332,58 @@ export default function TenantDetailPage() {
         )}
       </Card>
 
-      {/* Outstanding arrears */}
-      {history?.arrears.length ? (
-        <Card padding="none">
-          <div className="border-b border-hairline px-5 py-4">
-            <h2 className="font-semibold text-content">Outstanding arrears</h2>
-          </div>
+      {/* Monthly rent roll — one row per month, extends itself as billing posts */}
+      <Card padding="none">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-hairline px-5 py-4">
+          <h2 className="font-semibold text-content">Monthly rent roll</h2>
+          <p className="text-xs text-content-muted">
+            Arrears b/f + rent + other charges − payments. A new row appears each month.
+          </p>
+        </div>
+        {history?.monthly_ledger?.length ? (
           <Table>
             <THead>
-              <TR><TH>Period</TH><TH className="text-right">Expected</TH><TH className="text-right">Paid</TH><TH className="text-right">Balance</TH></TR>
+              <TR>
+                <TH>Month</TH>
+                <TH className="text-right">Arrears b/f</TH>
+                <TH className="text-right">Rent</TH>
+                <TH className="text-right">Other charges</TH>
+                <TH className="text-right">Total due</TH>
+                <TH className="text-right">Payment made</TH>
+                <TH className="text-right">Balance</TH>
+              </TR>
             </THead>
             <TBody>
-              {history.arrears.map((a, i) => (
-                <TR key={i}>
-                  <TD>{a.period}</TD>
-                  <TD className="text-right tabular-nums">{KES(a.expected)}</TD>
-                  <TD className="text-right tabular-nums">{KES(a.paid)}</TD>
-                  <TD className="text-right font-medium tabular-nums text-orange-600">{KES(a.balance)}</TD>
-                </TR>
-              ))}
+              {history.monthly_ledger.map((m) => {
+                const balance = Number(m.balance);
+                const rent = Number(m.rent) + Number(m.vat);
+                return (
+                  <TR key={m.period}>
+                    <TD className="whitespace-nowrap">{m.label}</TD>
+                    <TD className="text-right tabular-nums text-content-muted">{KES(m.brought_forward)}</TD>
+                    <TD className="text-right tabular-nums">{KES(rent)}</TD>
+                    <TD className="text-right tabular-nums text-content-muted">
+                      {Number(m.other_charges) ? KES(m.other_charges) : "—"}
+                    </TD>
+                    <TD className="text-right tabular-nums">{KES(m.total_due)}</TD>
+                    <TD className="text-right tabular-nums text-sage-600">{KES(m.paid)}</TD>
+                    <TD className={cn(
+                      "text-right font-medium tabular-nums",
+                      balance > 0 ? "text-orange-600" : "text-sage-600",
+                    )}>
+                      {balance < 0 ? `${KES(Math.abs(balance))} cr` : KES(balance)}
+                    </TD>
+                  </TR>
+                );
+              })}
             </TBody>
           </Table>
-        </Card>
-      ) : null}
+        ) : (
+          <p className="px-5 py-6 text-sm text-content-muted">
+            Nothing billed yet — the first row appears once rent is charged for a month.
+          </p>
+        )}
+      </Card>
 
       {reminding && <RemindModal tenant={tenant} onClose={() => setReminding(false)} />}
     </div>

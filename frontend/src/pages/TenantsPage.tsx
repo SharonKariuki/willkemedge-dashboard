@@ -102,7 +102,7 @@ function CreateTenantForm({ onClose }: { onClose: () => void }) {
         <Field label="Monthly rent (KES) *" error={errors.monthly_rent?.message}>
           <input {...register("monthly_rent")} className={inputCls} />
         </Field>
-        <Field label="Deposit paid (KES)">
+        <Field label="Rent security deposit (KES)">
           <input {...register("deposit_paid")} className={inputCls} />
         </Field>
         <Field label="Rent Due Day (1-31)" error={errors.due_day?.message}>

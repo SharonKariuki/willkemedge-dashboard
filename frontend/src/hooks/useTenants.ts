@@ -21,9 +21,28 @@ export function useTenants(filters?: TenantFilters) {
   });
 }
 
+/** One month of the rent roll: b/f + rent + VAT + other charges - paid = balance,
+ *  and that balance is the next month's `brought_forward`. */
+export interface MonthlyLedgerRow {
+  period: string;
+  period_month: number;
+  period_year: number;
+  label: string;
+  brought_forward: string;
+  rent: string;
+  vat: string;
+  other_charges: string;
+  waived: string;
+  total_due: string;
+  paid: string;
+  balance: string;
+}
+
 export interface TenantPaymentHistory {
   total_paid: string;
   total_arrears: string;
+  security_deposit: string;
+  monthly_ledger: MonthlyLedgerRow[];
   payments: {
     id: number;
     amount: string;
