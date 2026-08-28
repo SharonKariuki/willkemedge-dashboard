@@ -19,6 +19,8 @@ Allowed transitions:
 """
 from decimal import Decimal
 
+from django.db import models
+
 from .models import Unit, UnitStatus
 
 # Valid origin → destination transitions.
@@ -89,6 +91,36 @@ def move_out(unit: Unit) -> Unit:
     return transition_status(unit, UnitStatus.VACANT)
 
 
+def has_unsettled_earlier_months(unit: Unit) -> bool:
+    """True when the unit's tenant still owes for a month before this one.
+
+    Kept separate from the status rule so the arrears sweep and the integrity
+    check can ask the same question the badge answers.
+    """
+    from django.utils import timezone
+
+    from apps.payments.models import Arrears
+    from apps.tenants.models import Tenant, TenantStatus
+
+    tenant_ids = list(
+        Tenant.objects
+        .filter(unit=unit, status__in=[TenantStatus.ACTIVE, TenantStatus.NOTICE_GIVEN])
+        .values_list("id", flat=True)
+    )
+    if not tenant_ids:
+        return False
+
+    today = timezone.localdate()
+    earlier = models.Q(period_year__lt=today.year) | models.Q(
+        period_year=today.year, period_month__lt=today.month
+    )
+    return (
+        Arrears.objects
+        .filter(earlier, tenant_id__in=tenant_ids, is_cleared=False, balance__gt=0)
+        .exists()
+    )
+
+
 def recalculate_unit_status(
     unit: Unit, amount_paid: Decimal, *, obligation: Decimal | None = None
 ) -> Unit:
@@ -108,6 +140,19 @@ def recalculate_unit_status(
     """
     if unit.status == UnitStatus.VACANT:
         return unit  # can't recalculate a vacant unit
+
+    # Debt carried from an earlier month outranks how this one is going. A
+    # tenant who pays August in full while still owing July is in arrears, not
+    # "paid" — MCG10 read Paid on the units board while carrying 43,800 forward,
+    # because the rule only ever looked at the current period. This is also the
+    # only thing that ever sets ARREARS: the status existed, the badge existed
+    # and the dashboard counted it, but nothing outside seed data assigned it.
+    if has_unsettled_earlier_months(unit):
+        new = UnitStatus.ARREARS
+        if new != unit.status:
+            unit.status = new
+            unit.save(update_fields=["status", "updated_at"])
+        return unit
 
     rent = obligation if obligation is not None else unit.monthly_rent
     if amount_paid <= 0:
