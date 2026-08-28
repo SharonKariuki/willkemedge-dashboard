@@ -241,3 +241,43 @@ class TestReproducesTheStatement:
         assert Decimal(aug["total_due"]) == D("39840.00"), "total payable"
         assert Decimal(aug["paid"]) == D("27840.00"), "payment made"
         assert Decimal(aug["balance"]) == D("12000.00"), "balance"
+
+
+class TestOpeningDoesNotDoubleCount:
+    """A B/Forward is a closing position — it already contains every charge
+    raised up to that date. Seeding it alongside a charge sitting in the same
+    month counts that charge twice, and the error compounds into every month
+    after. MCG10 hit exactly this in production."""
+
+    def test_refuses_when_the_opening_month_already_has_charges(self, arcade, monkeypatch):
+        tenant = arcade["owing"]
+        UtilityCharge.objects.create(
+            tenant=tenant, posting_date=_dt.date(2026, 7, 31),
+            period_year=2026, period_month=7, label="Water Usage", amount=D("10200"),
+        )
+        _stmt(monkeypatch, [_row(tenant, 43800, 25000, 4000)])
+
+        call_command("reconcile_matasia_commercial", "--apply")
+
+        assert _july(tenant) is None, "seeded an opening on top of an existing charge"
+
+    def test_a_clean_opening_month_still_seeds(self, arcade, monkeypatch):
+        tenant = arcade["owing"]
+        _stmt(monkeypatch, [_row(tenant, 43800, 25000, 4000)])
+
+        call_command("reconcile_matasia_commercial", "--apply")
+
+        assert _july(tenant).expected_rent == D("43800.00")
+
+    def test_a_charge_in_august_does_not_block_the_july_opening(self, arcade, monkeypatch):
+        """Only the opening month itself clashes; the billed month is fine."""
+        tenant = arcade["owing"]
+        UtilityCharge.objects.create(
+            tenant=tenant, posting_date=_dt.date(2026, 8, 1),
+            period_year=2026, period_month=8, label="Other costs", amount=D("12340"),
+        )
+        _stmt(monkeypatch, [_row(tenant, 43800, 25000, 4000, other=12340)])
+
+        call_command("reconcile_matasia_commercial", "--apply")
+
+        assert _july(tenant).expected_rent == D("43800.00")
