@@ -61,19 +61,24 @@ CHANNELS = [
 
 # Rent security deposits — (unit, tenant id, amount, why)
 #
-# A commercial lease takes three months' rent. These tenancies were carrying
-# 0.00, which is not "no deposit taken" but "never recorded", so each is set to
-# 3x its rent. The figure belongs on the record rather than being computed for
-# display every time the page loads.
+# A commercial lease takes three months' rent, and Dr Osoro has confirmed the
+# rule holds across the board. Every commercial tenancy is set to 3x its rent.
 #
-# Left alone deliberately: MCF01 holds 50,000 against an expected 75,000, and
-# MCG05 holds 390,780 against 259,500. Both are real recorded figures rather
-# than blanks, so overwriting them would destroy whatever they represent.
+# The figures in the original roll only followed the rule for five of twelve
+# (seed_wilkem_property.py), so the rest were carrying whatever was transcribed
+# at import — zeros in seven cases, and two that sat above the rule: MCF01 at
+# two months, and MCG05 at 390,780 against an expected 259,500. That last one
+# was never computed from anything; it was typed in from the "old matasia"
+# roll, and the note on the record ("Also occupies office unit F-12, not yet
+# loaded") suggests it had absorbed a second unit's deposit while F-12 was
+# untracked. Both are now brought onto the rule.
 DEPOSITS = [
     ("MCG01", 159, Decimal("72000.00"), "3 x 24,000"),
     ("MCG02", 150, Decimal("67500.00"), "3 x 22,500"),
     ("MCG03", 160, Decimal("54000.00"), "3 x 18,000"),
+    ("MCG05", 148, Decimal("259500.00"), "3 x 86,500 — was 390,780 from the old roll"),
     ("MCG10", 164, Decimal("75000.00"), "3 x 25,000"),
+    ("MCF01", 175, Decimal("75000.00"), "3 x 25,000 — was 50,000, two months"),
     ("MCF04", 165, Decimal("75000.00"), "3 x 25,000"),
     ("MCF12", 166, Decimal("151965.00"), "3 x 50,655"),
     ("MCF13", 167, Decimal("72000.00"), "3 x 24,000"),

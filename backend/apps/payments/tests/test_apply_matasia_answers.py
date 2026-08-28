@@ -328,3 +328,28 @@ class TestStrikeOutScope:
         would open those tenancies at nil against a sheet that says otherwise."""
         residential = [row for row in cmd.DISCARD_PERIODS if row[0].upper().startswith("MR")]
         assert residential == [], f"residential struck out without openings loaded: {residential}"
+
+
+class TestDepositRule:
+    """Every commercial deposit on the live table must be exactly 3x rent.
+
+    The figures in the original roll only followed the rule for five of twelve
+    tenancies, so a stray transcribed number is the likely way this drifts."""
+
+    RENTS = {
+        "MCG01": D("24000"), "MCG02": D("22500"), "MCG03": D("18000"),
+        "MCG05": D("86500"), "MCG10": D("25000"), "MCF01": D("25000"),
+        "MCF04": D("25000"), "MCF12": D("50655"), "MCF13": D("24000"),
+    }
+
+    def test_every_deposit_is_three_months_rent(self):
+        wrong = [
+            f"{label}: {amount} != 3 x {self.RENTS[label]}"
+            for label, _tid, amount, _why in cmd.DEPOSITS
+            if label in self.RENTS and amount != self.RENTS[label] * 3
+        ]
+        assert wrong == [], f"deposits off the 3x rule: {wrong}"
+
+    def test_no_duplicate_units(self):
+        labels = [row[0] for row in cmd.DEPOSITS]
+        assert len(labels) == len(set(labels)), f"a unit is listed twice: {labels}"
