@@ -77,12 +77,23 @@ export default function TenantDetailPage() {
   // unit's classification so a unit reclassified mid-tenancy still shows the
   // VAT it was actually charged.
   const showVat = (history?.monthly_ledger ?? []).some((m) => Number(m.vat) > 0);
-  // The rent roll always runs through to the current month, even when billing
-  // has not posted for it yet, so its last row is this month's position. The
-  // arrears card reads that rather than a sum across every period: what the
-  // landlord chases is the balance owed now, and it keeps the card agreeing
-  // with the bottom line of the table further down the page.
-  const thisMonth = (history?.monthly_ledger ?? []).at(-1) ?? null;
+  // The arrears card shows the balance owed as at now — what the landlord
+  // actually chases — rather than a sum across every period.
+  //
+  // It has to match on the month rather than take the last row: the ledger runs
+  // PAST today whenever a tenant has paid ahead. Fortcom's quarterly transfer
+  // put rows in September and October, so the last row there is October and the
+  // card would have read three months of accrued VAT instead of this month's.
+  const monthKey = (year: number, month: number) => year * 12 + (month - 1);
+  const now = new Date();
+  const nowKey = monthKey(now.getFullYear(), now.getMonth() + 1);
+  const ledger = history?.monthly_ledger ?? [];
+  const thisMonth =
+    ledger.find((m) => monthKey(m.period_year, m.period_month) === nowKey)
+    // A tenancy whose ledger stops short of today (moved out, say) falls back
+    // to its most recent month rather than showing nothing.
+    ?? [...ledger].reverse().find((m) => monthKey(m.period_year, m.period_month) <= nowKey)
+    ?? null;
   const owedNow = Number(thisMonth?.balance ?? 0);
   const updateTenant = useUpdateTenant(id ?? "");
   const moveOutNotice = useMoveOutNotice(id ?? "");
