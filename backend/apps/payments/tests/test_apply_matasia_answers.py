@@ -308,3 +308,23 @@ class TestDiscardPeriod:
         call_command("apply_matasia_answers", "--apply")
 
         assert Payment.objects.filter(tenant=tenant, voided_at__isnull=True, period_month=6).count() == 0
+
+
+class TestStrikeOutScope:
+    """Guards on the live DISCARD_PERIODS table itself, not the mechanism.
+
+    Both invariants are easy to break by adding one plausible-looking row, and
+    neither failure would be obvious afterwards — the numbers would just be
+    quietly wrong on the statement."""
+
+    def test_july_is_never_struck_out(self):
+        """July 2026 holds the opening balances seeded from the statement's
+        B/Forward column. Striking it would zero every August total payable."""
+        july = [row for row in cmd.DISCARD_PERIODS if (row[2], row[3]) == (2026, 7)]
+        assert july == [], f"July strike-out would destroy the B/Forward openings: {july}"
+
+    def test_scope_is_commercial_only(self):
+        """Matasia residential has no B/Forward loaded, so clearing its history
+        would open those tenancies at nil against a sheet that says otherwise."""
+        residential = [row for row in cmd.DISCARD_PERIODS if row[0].upper().startswith("MR")]
+        assert residential == [], f"residential struck out without openings loaded: {residential}"

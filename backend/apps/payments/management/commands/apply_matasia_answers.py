@@ -84,12 +84,31 @@ DEPOSITS = [
 # Voids every live payment in the period and removes the charge, so the rent
 # roll starts after it with a clean nil brought-forward.
 #
-# Used sparingly and never lightly: MCG02's June payment of 21,880 is a genuine
-# Co-op receipt ("GLOW BY ELLIE", 6 Jun), so discarding it reverses real income
-# out of the GL. Raised with Dr Osoro, who confirmed the statement's nil July
-# brought-forward is what the books should follow.
+# Matasia Commercial begins at August 2026: the 21 Aug statement is the opening
+# record, and its B/Forward column is the only pre-August position the books
+# should carry. Everything else before that date goes.
+#
+# This is not a small thing and was not done on inference. The five June
+# receipts below total 211,830 of genuine Co-op money — Sidai 102,960, Elimisha
+# 50,000, GeoTruth 30,000, Glow by Ellie 21,880, Fortify 6,990 — and striking
+# them reverses that income out of the GL. Put to Dr Osoro with the figures; he
+# chose to start at August and follow the sheets.
+#
+# Scope is COMMERCIAL only. Matasia residential is deliberately untouched: its
+# B/Forward column has not been loaded yet, so clearing its history would leave
+# those tenancies opening at nil against a sheet that says otherwise — worse
+# than leaving them alone.
+#
+# The July rows are NOT listed here and must not be. Six of them are the
+# opening balances seeded from the statement's B/Forward (MCG01 12,000,
+# MCG10 43,800, MCF03 20,000, MCF12 10,000, and the MCF13/MCF14 credits);
+# removing them would zero every August "Total Payable" on the sheet.
 DISCARD_PERIODS = [
-    ("MCG02", 150, 2026, 6, "statement carries nil forward into July; June is struck out"),
+    ("MCF03", 151, 2026, 6, "Matasia Commercial starts at August"),
+    ("MCF14", 152, 2026, 6, "Matasia Commercial starts at August"),
+    ("MCG02", 150, 2026, 6, "Matasia Commercial starts at August"),
+    ("MCG04", 149, 2026, 6, "Matasia Commercial starts at August"),
+    ("MCG05", 148, 2026, 6, "Matasia Commercial starts at August"),
 ]
 
 # Reported every run so it is not quietly forgotten.
