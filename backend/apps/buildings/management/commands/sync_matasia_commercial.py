@@ -125,7 +125,10 @@ class Command(BaseCommand):
 
     def handle(self, *args, **opts):
         from apps.buildings.models import (
-            Building, Unit, UnitClassification, UnitStatus,
+            Building,
+            Unit,
+            UnitClassification,
+            UnitStatus,
         )
         from apps.tenants.models import Tenant, TenantStatus
 
@@ -145,7 +148,7 @@ class Command(BaseCommand):
             if abs(Decimal(vat) - expected) > 1:
                 vat_notes.append(f"{unit_code}: roll shows VAT {vat} on rent {rent} (16% would be {expected})")
 
-        plan_rename, plan_new_unit, plan_new_tenant, plan_rent = [], [], [], []
+        plan_rename, plan_new_unit = [], []
 
         existing = {u.label.upper(): u for u in building.units.all()}
 
@@ -166,7 +169,7 @@ class Command(BaseCommand):
 
         # 2. Missing units, and 3. tenants / rent corrections.
         by_code = {u[0]: u for u in ROLL}
-        for unit_code, floor, tenant_name, contact, phone, kra, rent, _vat in ROLL:
+        for unit_code, floor, tenant_name, _contact, _phone, _kra, rent, _vat in ROLL:
             if unit_code.upper() not in after_rename:
                 plan_new_unit.append((unit_code, floor, tenant_name, rent))
 
