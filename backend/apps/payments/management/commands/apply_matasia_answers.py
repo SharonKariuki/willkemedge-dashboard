@@ -1,12 +1,8 @@
 """
 Apply Dr Osoro's answers on the Matasia Commercial queries (Aug 2026).
 
-Four of the questions raised against the 21 Aug 2026 statement came back
-answered. Three of them change data:
-
-  MCF04  vacant — the roster had Wilkem Ventures Co. Ltd. recorded as an
-         active tenancy at 25,000 a month. It was never billed and never paid
-         anything, so the tenancy is archived and the unit returned to vacant.
+Questions raised against the 21 Aug 2026 statement that came back answered.
+Two of them change data:
 
   MCF20  vacant — the unit is on the statement but has never existed in the
          system. Created as a vacant BUSINESS shop on the first floor, matching
@@ -23,11 +19,13 @@ replacement both stay in the ledger.
   MCG02  no VAT is charged — confirmed deliberate, so nothing to do. The
          August row already carries 22,500 with zero VAT.
 
-STILL UNRESOLVED, deliberately not touched: the answer names MCF07 as newly
-occupied by Ignite Energy Access Limited, while the roster has them on MCG07
-with 180,000 across three periods. Ground floor and first floor are different
-units and different payment references, so moving that tenancy is not a guess
-worth making. See --report.
+  MCF04  occupied by Wilkem Ventures Co. Ltd. — a first answer of "vacant" was
+         corrected before this ran, so the roster was right and the tenancy
+         stays. It is the statement that is wrong to show the unit vacant.
+
+Two things are reported every run rather than acted on: which unit Ignite
+Energy actually occupies, and whether MCF04 should be billed at all. Both are
+decisions, not data fixes.
 
 DRY-RUN BY DEFAULT. Nothing is written without --apply. Re-running is safe.
 
@@ -42,9 +40,12 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
 # Tenancies the landlord has confirmed do not exist — (unit, tenant id, why)
-VACATE = [
-    ("MCF04", 165, "Dr Osoro confirms MCF04 is vacant"),
-]
+#
+# Empty on purpose. MCF04 was listed here on a first answer of "vacant", then
+# corrected to occupied by Wilkem Ventures Co. Ltd. before this ran, so the
+# roster was right all along and the tenancy stays. The machinery is kept
+# because the same shape of correction will come round again.
+VACATE = []
 
 # Units on the statement that the system has never had — (unit, floor, type)
 CREATE_UNITS = [
@@ -66,6 +67,14 @@ UNRESOLVED = [
         "with 3 payments totalling 180,000 and 3 arrears rows. MCF07 exists and is "
         "vacant. Confirm which unit before moving the tenancy — the unit label is "
         "the payment reference tenants quote.",
+    ),
+    (
+        "MCF04 — Wilkem Ventures Co. Ltd., occupied but never billed",
+        "Confirmed occupied at 25,000 a month, so the roster is right and the "
+        "21 Aug statement is wrong to show it vacant. It has no arrears row for "
+        "any month, so nothing has ever been charged. Whether the landlord's own "
+        "company pays rent or occupies rent-free is a decision, not a data fix — "
+        "billing it retrospectively would raise real debt against it.",
     ),
 ]
 
