@@ -122,6 +122,10 @@ def build_context(data: dict) -> dict:
     rows = []
     balance = _dec(data.get("opening_balance"))
     last_rent = Decimal("0")
+    # Payments banked since the current month's rent was charged, i.e. what the
+    # tenant has put against this month. There are no periods on these plain
+    # dicts, so position in the ledger is the only ordering available.
+    paid_since_rent = Decimal("0")
     start = int(data.get("start_index", 1))
 
     for i, txn in enumerate(data.get("transactions", []), start=start):
@@ -129,6 +133,9 @@ def build_context(data: dict) -> dict:
         balance += invoice - payments
         if invoice > 0 and re.search(r"\brent\b", lines[0], re.IGNORECASE):
             last_rent = invoice  # current-month rent = the most recent rent charge
+            paid_since_rent = Decimal("0")
+        else:
+            paid_since_rent += payments
         rows.append({
             "index": txn.get("no", i),
             "date": txn.get("date", ""),
@@ -141,7 +148,11 @@ def build_context(data: dict) -> dict:
 
     total_due = balance
     current_month = _dec(data.get("current_month_rent")) if data.get("current_month_rent") is not None else last_rent
-    arrears_others = total_due - current_month
+    # Derived so the column foots to the ledger's closing balance. The payment
+    # is shown on its own line rather than being netted invisibly into the
+    # arrears figure, which used to drive it negative once a tenant had settled
+    # the month — see statement_service for the same fix on the live path.
+    arrears_others = total_due - current_month + paid_since_rent
 
     return {
         "tenant_name": data.get("tenant_name", ""),
@@ -166,6 +177,8 @@ def build_context(data: dict) -> dict:
 
         "arrears_others": _money(arrears_others),
         "current_month": _money(current_month),
+        "payments_received": _money(paid_since_rent),
+        "payments_received_value": paid_since_rent,
         "total_due": _money(total_due),
         "total_due_whole": _whole(total_due),
 
