@@ -30,6 +30,11 @@ from decimal import Decimal
 
 ZERO = Decimal("0.00")
 
+#  Written into ``Arrears.waive_notes`` by the statement-seeding commands. It is
+#  how a carried opening balance is told apart from a month that was genuinely
+#  billed, since both are stored as an Arrears row.
+OPENING_MARKER = "Opening position carried"
+
 #  Most recent N months returned. The roll-forward is computed over the tenant's
 #  whole history first, so the oldest row shown still carries a correct b/f.
 DEFAULT_MONTHS = 24
@@ -100,6 +105,19 @@ def build_monthly_ledger(tenant, *, months: int = DEFAULT_MONTHS, today: _dt.dat
         waived = _money(arr.waived_amount) if arr else ZERO
         other_charges = other.get(k, ZERO)
         received = paid.get(k, ZERO)
+
+        # An opening row carries a balance brought forward from before the books
+        # began, not a month's rent. It is stored as a charge because that is
+        # the only way to seed the roll-forward, but reporting it under "rent"
+        # reads as though the month was billed that amount — Elimisha's July
+        # showed "Rent 20,000" against an actual rent of 22,500. Move it to the
+        # column it belongs in. The total is unchanged either way, so the
+        # roll-forward into the next month is untouched.
+        is_opening = bool(arr and OPENING_MARKER in (arr.waive_notes or ""))
+        if is_opening:
+            brought_forward += rent
+            rent = ZERO
+
         total_due = brought_forward + rent + vat + other_charges
         balance = total_due - received - waived
         rows.append({
@@ -115,6 +133,7 @@ def build_monthly_ledger(tenant, *, months: int = DEFAULT_MONTHS, today: _dt.dat
             "total_due": str(total_due),
             "paid": str(received),
             "balance": str(balance),
+            "is_opening": is_opening,
         })
 
     return rows[-months:] if months and months > 0 else rows
