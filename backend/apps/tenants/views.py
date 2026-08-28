@@ -305,7 +305,14 @@ class TenantViewSet(viewsets.ModelViewSet):
             "arrears": [
                 {
                     "period": f"{a.period_month}/{a.period_year}",
-                    "expected": _money(a.expected_rent),
+                    # The full obligation, rent + VAT. A commercial tenant pays
+                    # the VAT-inclusive figure and `balance` is measured against
+                    # it, so showing base rent alone made the row contradict
+                    # itself on screen: expected 15,000 less paid 6,990 was
+                    # displayed beside a balance of 10,410.
+                    "expected": _money(a.expected_total),
+                    "expected_rent": _money(a.expected_rent),
+                    "expected_vat": _money(a.expected_vat),
                     "paid": _money(a.amount_paid),
                     "balance": _money(a.balance),
                 }
