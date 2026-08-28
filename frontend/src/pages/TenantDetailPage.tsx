@@ -95,6 +95,13 @@ export default function TenantDetailPage() {
     ?? [...ledger].reverse().find((m) => monthKey(m.period_year, m.period_month) <= nowKey)
     ?? null;
   const owedNow = Number(thisMonth?.balance ?? 0);
+  // Both derived by the backend from one rule (apps/tenants/deposits.py) so the
+  // page, the integrity check and the API cannot drift on what a deposit
+  // should be. Older API responses omit them; fall back rather than render NaN.
+  const depositShortfall = Number(tenant?.deposit_shortfall ?? 0);
+  const depositMonths = Number(tenant?.deposit_months ?? 1);
+  // "1 month's rent" but "3 months' rent" — the apostrophe moves.
+  const depositRule = depositMonths === 1 ? "1 month's rent" : `${depositMonths} months' rent`;
   const updateTenant = useUpdateTenant(id ?? "");
   const moveOutNotice = useMoveOutNotice(id ?? "");
   const moveOut = useMoveOutTenant(id ?? "");
@@ -296,9 +303,20 @@ export default function TenantDetailPage() {
           <p className="text-xs uppercase tracking-wider text-content-muted">Monthly rent</p>
           <p className="mt-2 font-semibold tabular-nums text-content">{KES(tenant.monthly_rent)}</p>
         </Card>
+        {/* The rule is one month's rent — three for a commercial letting — and
+            the card states it against what is actually held. Showing the held
+            figure alone gave nothing to judge it by, so a residential deposit
+            sitting at zero looked no different from one paid in full. */}
         <Card padding="md">
           <p className="text-xs uppercase tracking-wider text-content-muted">Rent security deposit</p>
-          <p className="mt-2 font-semibold tabular-nums text-content">{KES(tenant.deposit_paid)}</p>
+          <p className={cn("mt-2 font-semibold tabular-nums", depositShortfall > 0 ? "text-orange-600" : "text-content")}>
+            {KES(tenant.deposit_paid)}
+          </p>
+          <p className="mt-1 text-xs text-content-muted">
+            {depositShortfall > 0
+              ? `${KES(depositShortfall)} short of ${KES(tenant.expected_deposit)} (${depositRule})`
+              : depositRule}
+          </p>
         </Card>
         <Card padding="md">
           <p className="text-xs uppercase tracking-wider text-content-muted">Arrears</p>

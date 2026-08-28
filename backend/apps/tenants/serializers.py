@@ -79,10 +79,16 @@ class TenantDetailSerializer(serializers.ModelSerializer):
     building_name = serializers.CharField(source="unit.building.name", read_only=True)
     building_id = serializers.IntegerField(source="unit.building.id", read_only=True)
     # Commercial and residential lettings differ on the page: commercial is
-    # VAT-rated and takes no rent security deposit, so the detail view needs to
-    # know which it is rather than inferring it from whatever figures happen to
-    # be loaded.
+    # VAT-rated and takes a three-month deposit against the residential one, so
+    # the detail view needs to know which it is rather than inferring it from
+    # whatever figures happen to be loaded.
     unit_classification = serializers.CharField(source="unit.classification", read_only=True)
+    # What the deposit SHOULD be, so the card has something to hold `deposit_paid`
+    # against. Derived, never stored: the rule is policy and `deposit_paid` is
+    # cash received, and conflating them is how an unquestioned figure survives.
+    deposit_months = serializers.SerializerMethodField()
+    expected_deposit = serializers.SerializerMethodField()
+    deposit_shortfall = serializers.SerializerMethodField()
     status_display = serializers.CharField(source="get_status_display", read_only=True)
     documents = TenantDocumentSerializer(many=True, read_only=True)
     # Payment analytics
@@ -106,6 +112,7 @@ class TenantDetailSerializer(serializers.ModelSerializer):
             "phone", "email", "emergency_contact", "emergency_phone", "care_of",
             "unit", "unit_label", "building_name", "building_id", "unit_classification",
             "monthly_rent", "deposit_paid", "due_day",
+            "deposit_months", "expected_deposit", "deposit_shortfall",
 
             "deposit_refund_percentage", "deposit_refund_amount",
             "move_in_date", "move_out_date",
@@ -120,6 +127,18 @@ class TenantDetailSerializer(serializers.ModelSerializer):
             "status", "move_out_date", "move_out_notes", "created_at", "updated_at",
             "kyc_status", "kyc_verified_at", "kyc_verified_by", "kyc_notes",
         ]
+
+    def get_deposit_months(self, obj):
+        from apps.tenants.deposits import deposit_months
+        return deposit_months(obj)
+
+    def get_expected_deposit(self, obj):
+        from apps.tenants.deposits import expected_deposit
+        return _money(expected_deposit(obj))
+
+    def get_deposit_shortfall(self, obj):
+        from apps.tenants.deposits import deposit_shortfall
+        return _money(deposit_shortfall(obj))
 
     def get_total_paid(self, obj):
         from django.db.models import Sum
