@@ -17,6 +17,8 @@ import {
   THead,
   TR,
 } from "@/components/ui";
+import { TenantPicker } from "@/features/payments/TenantPicker";
+import { toChoices, type TenantChoice } from "@/features/payments/tenantChoices";
 import { useTenants } from "@/hooks/useTenants";
 import {
   useAssignCredit,
@@ -25,17 +27,9 @@ import {
 } from "@/hooks/useUnmatchedCredits";
 import { getErrorMessage } from "@/lib/apiError";
 
-const inputCls =
-  "w-full rounded-md bg-surface-raised hairline px-3 py-2 text-sm text-ink-900 focus:outline-none focus:ring-2 focus:ring-sage-500/40";
-
 function formatKes(amount: string): string {
   const n = Number(amount);
   return Number.isFinite(n) ? `KES ${n.toLocaleString("en-KE")}` : `KES ${amount}`;
-}
-
-interface TenantOption {
-  id: number;
-  label: string;
 }
 
 function CreditRow({
@@ -43,18 +37,18 @@ function CreditRow({
   tenants,
 }: {
   credit: UnmatchedCredit;
-  tenants: TenantOption[];
+  tenants: TenantChoice[];
 }) {
-  const [tenantId, setTenantId] = useState<string>("");
+  const [tenantId, setTenantId] = useState<number | null>(null);
   const assign = useAssignCredit();
 
   const handleAssign = () => {
-    if (!tenantId) {
+    if (tenantId === null) {
       toast.error("Pick a tenant to assign this credit to.");
       return;
     }
     assign.mutate(
-      { id: credit.id, tenant: Number(tenantId) },
+      { id: credit.id, tenant: tenantId },
       {
         onSuccess: (res) => toast.success(res.detail),
         onError: (err) => toast.error(getErrorMessage(err)),
@@ -85,21 +79,15 @@ function CreditRow({
       </TD>
       <TD>
         <div className="flex items-center gap-2">
-          <select
-            className={inputCls}
+          <TenantPicker
+            choices={tenants}
             value={tenantId}
-            onChange={(e) => setTenantId(e.target.value)}
+            onChange={setTenantId}
             disabled={assign.isPending}
-            aria-label={`Assign credit ${credit.transaction_id} to tenant`}
-          >
-            <option value="">Select tenant…</option>
-            {tenants.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.label}
-              </option>
-            ))}
-          </select>
-          <Button onClick={handleAssign} disabled={assign.isPending || !tenantId}>
+            suggestion={credit.payer_hint.name}
+            ariaLabel={`Assign credit ${credit.transaction_id} to tenant`}
+          />
+          <Button onClick={handleAssign} disabled={assign.isPending || tenantId === null}>
             {assign.isPending ? "Assigning…" : "Assign"}
           </Button>
         </div>
@@ -110,16 +98,12 @@ function CreditRow({
 
 export default function ReconciliationPage() {
   const { data: credits, isLoading, isError, refetch } = useUnmatchedCredits();
-  const { data: tenants } = useTenants({ status: "active" });
-
-  const tenantOptions: TenantOption[] = useMemo(
-    () =>
-      (tenants ?? []).map((t) => ({
-        id: t.id,
-        label: t.unit_label ? `${t.unit_label} — ${t.full_name}` : t.full_name,
-      })),
-    [tenants],
-  );
+  // Every tenancy, not just the active ones. A tenant on notice still owes rent
+  // and one who has moved out may still be settling arrears — filtering to
+  // "active" meant Elimisha's PesaLink credit could not be assigned at all,
+  // because they had given notice.
+  const { data: tenants } = useTenants();
+  const tenantOptions = useMemo(() => toChoices(tenants), [tenants]);
 
   return (
     <div className="space-y-6">
