@@ -124,14 +124,21 @@ export interface TenantDetail extends TenantListItem {
   id_number: string;
   kra_pin: string;
   email: string;
-  /** RESIDENTIAL | BUSINESS — commercial lettings are VAT-rated and take no
-   *  rent security deposit, so the detail page shows different cards. */
+  /** RESIDENTIAL | BUSINESS — commercial lettings are VAT-rated and take a
+   *  three-month deposit against the residential one month. */
   unit_classification: string;
   /** Name printed on the rent statement, e.g. a guarantor or company. */
   care_of: string;
   emergency_contact: string;
   emergency_phone: string;
+  /** Deposit actually received. Never adjusted to match the rule below. */
   deposit_paid: string;
+  /** Months of rent the deposit should be: 1, or 3 for a commercial letting. */
+  deposit_months: number;
+  /** What the deposit should be under the rule — derived, not stored. */
+  expected_deposit: number;
+  /** How far `deposit_paid` falls short of `expected_deposit`; 0 if met. */
+  deposit_shortfall: number;
   deposit_refund_percentage: number;
   deposit_refund_amount: string;
   due_day: number;
