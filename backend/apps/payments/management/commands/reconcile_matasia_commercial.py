@@ -185,7 +185,7 @@ class Command(BaseCommand):
 
     def _seed_opening(self, tenant, label, bf):
         """Create the July row that carries the statement's B/Forward."""
-        from apps.payments.models import Arrears, Payment
+        from apps.payments.models import Arrears, Payment, UtilityCharge
         from apps.payments.services import process_payment
 
         year, month = JUL
@@ -197,6 +197,24 @@ class Command(BaseCommand):
             return
         if bf == 0:
             self._skip(f"{label} {tenant.full_name}: nothing brought forward")
+            return
+
+        # The B/Forward is a closing position: it already contains every charge
+        # raised up to that date. Seeding it alongside a charge that also sits in
+        # the opening month counts that charge twice, and the error compounds
+        # into every month after. MCG10 hit exactly this — a July water charge of
+        # 10,200 rode on top of a 43,800 brought-forward and pushed August to
+        # 95,340 against a statement saying 85,140.
+        clashing = UtilityCharge.objects.filter(
+            tenant=tenant, period_year=year, period_month=month,
+        )
+        if clashing.exists():
+            total = sum((c.amount for c in clashing), D(0))
+            self._skip(
+                f"{label} {tenant.full_name}: {month}/{year} already carries {total} of "
+                f"charges, which the {bf} brought-forward would double-count — "
+                f"clear them first, or fold them into the B/Forward"
+            )
             return
 
         key = f"OPENING-CREDIT-2026-07-{label}"
