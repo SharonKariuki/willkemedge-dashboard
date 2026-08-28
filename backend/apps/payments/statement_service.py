@@ -37,7 +37,7 @@ from apps.expenses.coa import (
     SERVICE_CHARGE_UTILITIES,
 )
 
-from .tax_service import calculate_tax
+from .monthly_ledger import OPENING_MARKER
 
 ZERO = Decimal("0.00")
 
@@ -56,6 +56,8 @@ DEFAULT_BANK_BRANCH = "Karen Branch"
 DEFAULT_BANK_ACCOUNT = "01136069098300"
 DEFAULT_BANK_ACCOUNT_NAME = "Wilkem Ventures Company Ltd"
 DEFAULT_PAYBILL_NUMBER = "400222"
+
+
 
 
 def _money(value) -> Decimal:
@@ -113,12 +115,23 @@ def _build_ledger(tenant, *, is_business: bool, as_of: _dt.date | None):
         if as_of and posting > as_of:
             continue
         base = _money(arr.expected_rent)
-        if is_business and base > 0:
-            vat = calculate_tax(base, UnitClassification.BUSINESS).tax_amount
-            events.append((posting, 0, f"Month Rent - {_month_name(arr.period_month, arr.period_year)}", base, ZERO))
-            events.append((posting, 1, "16% VAT on Rent", _money(vat), ZERO))
+        period = _month_name(arr.period_month, arr.period_year)
+
+        # A carried opening balance is stored as an Arrears row because that is
+        # the only way to seed the roll-forward, but it is not a month's rent —
+        # printing it as "Month Rent" put 20,000 against Elimisha's July when
+        # their rent is 22,500. It attracts no VAT either: whatever tax was due
+        # is already inside the figure carried.
+        if OPENING_MARKER in (arr.waive_notes or ""):
+            events.append((posting, 0, f"Balance brought forward - {period}", base, ZERO))
         else:
-            events.append((posting, 0, f"Month Rent - {_month_name(arr.period_month, arr.period_year)}", base, ZERO))
+            # VAT is read from the row, not recomputed. Not every commercial
+            # letting is rated — MCG02 is billed with none — and deriving 16%
+            # here charged tax on the statement that the ledger never raised.
+            vat = _money(arr.expected_vat)
+            events.append((posting, 0, f"Month Rent - {period}", base, ZERO))
+            if vat > 0:
+                events.append((posting, 1, "16% VAT on Rent", vat, ZERO))
 
         # A waiver discharges the obligation just as cash does. Without this
         # credit the statement kept showing debt the business had already
@@ -225,10 +238,9 @@ def build_statement(tenant, *, statement_date: _dt.date | None = None, as_of: _d
         current_base = ZERO
         current_period_label = _month_name(statement_date.month, statement_date.year)
 
-    vat_on_rent = (
-        calculate_tax(current_base, UnitClassification.BUSINESS).tax_amount
-        if is_business and current_base > 0 else ZERO
-    )
+    # Read the VAT actually raised rather than deriving it, for the same reason
+    # the ledger rows do: a commercial unit is not necessarily VAT-rated.
+    vat_on_rent = _money(current.expected_vat) if current is not None else ZERO
     total_due = balance
     arrears_others = total_due - current_base - vat_on_rent
 
