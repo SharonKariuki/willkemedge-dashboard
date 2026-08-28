@@ -212,3 +212,99 @@ class TestDryRun:
         assert arcade["ghost"].status == TenantStatus.ACTIVE
         assert not Unit.objects.filter(label="MCQ20").exists()
         assert _live(arcade["payer"]).get().source == "bank"
+
+
+class TestDeposits:
+    def test_records_the_deposit(self, arcade, monkeypatch):
+        monkeypatch.setattr(cmd, "VACATE", [])
+        monkeypatch.setattr(cmd, "CREATE_UNITS", [])
+        monkeypatch.setattr(cmd, "CHANNELS", [])
+        monkeypatch.setattr(cmd, "DISCARD_PERIODS", [])
+        monkeypatch.setattr(cmd, "DEPOSITS", [("MCQ04", arcade["ghost"].pk, D("72000"), "3 x 24,000")])
+
+        call_command("apply_matasia_answers", "--apply")
+
+        arcade["ghost"].refresh_from_db()
+        assert arcade["ghost"].deposit_paid == D("72000.00")
+
+    def test_rerun_is_a_no_op(self, arcade, monkeypatch):
+        monkeypatch.setattr(cmd, "VACATE", [])
+        monkeypatch.setattr(cmd, "CREATE_UNITS", [])
+        monkeypatch.setattr(cmd, "CHANNELS", [])
+        monkeypatch.setattr(cmd, "DISCARD_PERIODS", [])
+        monkeypatch.setattr(cmd, "DEPOSITS", [("MCQ04", arcade["ghost"].pk, D("72000"), "3 x 24,000")])
+
+        call_command("apply_matasia_answers", "--apply")
+        call_command("apply_matasia_answers", "--apply")
+
+        arcade["ghost"].refresh_from_db()
+        assert arcade["ghost"].deposit_paid == D("72000.00")
+
+
+class TestDiscardPeriod:
+    def _only(self, monkeypatch, discard):
+        monkeypatch.setattr(cmd, "VACATE", [])
+        monkeypatch.setattr(cmd, "CREATE_UNITS", [])
+        monkeypatch.setattr(cmd, "CHANNELS", [])
+        monkeypatch.setattr(cmd, "DEPOSITS", [])
+        monkeypatch.setattr(cmd, "DISCARD_PERIODS", discard)
+
+    def _june(self, tenant, rent="22500", vat="3600", paid="0"):
+        from apps.payments.models import Arrears
+
+        return Arrears.objects.create(
+            tenant=tenant, period_year=2026, period_month=6,
+            expected_rent=D(rent), expected_vat=D(vat),
+            amount_paid=D(paid), balance=D(rent) + D(vat) - D(paid),
+        )
+
+    def test_voids_the_payment_and_removes_the_charge(self, arcade, monkeypatch):
+        from apps.payments.models import Arrears
+
+        tenant = arcade["payer"]
+        self._june(tenant)
+        pay = _pay(tenant, "21880", "Q-JUN", source="mpesa")
+        Payment.objects.filter(pk=pay.pk).update(period_month=6)
+        self._only(monkeypatch, [("MCQ12", tenant.pk, 2026, 6, "struck out")])
+
+        call_command("apply_matasia_answers", "--apply")
+
+        pay.refresh_from_db()
+        assert pay.voided_at is not None, "the receipt was deleted rather than voided"
+        assert not Arrears.objects.filter(tenant=tenant, period_month=6).exists()
+
+    def test_the_receipt_survives_as_a_voided_row(self, arcade, monkeypatch):
+        """Cash that was genuinely banked stays traceable — the reversal is the
+        audit trail, deletion would erase it."""
+        tenant = arcade["payer"]
+        self._june(tenant)
+        pay = _pay(tenant, "21880", "Q-JUN", source="mpesa")
+        Payment.objects.filter(pk=pay.pk).update(period_month=6)
+        self._only(monkeypatch, [("MCQ12", tenant.pk, 2026, 6, "struck out")])
+
+        call_command("apply_matasia_answers", "--apply")
+
+        assert Payment.objects.filter(pk=pay.pk).exists()
+
+    def test_later_periods_are_untouched(self, arcade, monkeypatch):
+        tenant = arcade["payer"]
+        self._june(tenant)
+        august = _pay(tenant, "22500", "Q-AUG", source="mpesa")
+        self._only(monkeypatch, [("MCQ12", tenant.pk, 2026, 6, "struck out")])
+
+        call_command("apply_matasia_answers", "--apply")
+
+        august.refresh_from_db()
+        assert august.voided_at is None, "August was caught by a June strike-out"
+
+    def test_rerun_is_a_no_op(self, arcade, monkeypatch):
+        tenant = arcade["payer"]
+        self._june(tenant)
+        pay = _pay(tenant, "21880", "Q-JUN", source="mpesa")
+        Payment.objects.filter(pk=pay.pk).update(period_month=6)
+        self._only(monkeypatch, [("MCQ12", tenant.pk, 2026, 6, "struck out")])
+
+        call_command("apply_matasia_answers", "--apply")
+        call_command("apply_matasia_answers", "--apply")
+
+        assert Payment.objects.filter(tenant=tenant, voided_at__isnull=True, period_month=6).count() == 0

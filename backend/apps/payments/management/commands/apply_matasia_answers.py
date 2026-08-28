@@ -59,6 +59,39 @@ CHANNELS = [
     ("STMT-2026-08-MCG02", "MCG02", 150, "cash", "Glow by Ellie paid cash"),
 ]
 
+# Rent security deposits — (unit, tenant id, amount, why)
+#
+# A commercial lease takes three months' rent. These tenancies were carrying
+# 0.00, which is not "no deposit taken" but "never recorded", so each is set to
+# 3x its rent. The figure belongs on the record rather than being computed for
+# display every time the page loads.
+#
+# Left alone deliberately: MCF01 holds 50,000 against an expected 75,000, and
+# MCG05 holds 390,780 against 259,500. Both are real recorded figures rather
+# than blanks, so overwriting them would destroy whatever they represent.
+DEPOSITS = [
+    ("MCG01", 159, Decimal("72000.00"), "3 x 24,000"),
+    ("MCG02", 150, Decimal("67500.00"), "3 x 22,500"),
+    ("MCG03", 160, Decimal("54000.00"), "3 x 18,000"),
+    ("MCG10", 164, Decimal("75000.00"), "3 x 25,000"),
+    ("MCF04", 165, Decimal("75000.00"), "3 x 25,000"),
+    ("MCF12", 166, Decimal("151965.00"), "3 x 50,655"),
+    ("MCF13", 167, Decimal("72000.00"), "3 x 24,000"),
+]
+
+# Periods to strike out entirely — (unit, tenant id, year, month, why)
+#
+# Voids every live payment in the period and removes the charge, so the rent
+# roll starts after it with a clean nil brought-forward.
+#
+# Used sparingly and never lightly: MCG02's June payment of 21,880 is a genuine
+# Co-op receipt ("GLOW BY ELLIE", 6 Jun), so discarding it reverses real income
+# out of the GL. Raised with Dr Osoro, who confirmed the statement's nil July
+# brought-forward is what the books should follow.
+DISCARD_PERIODS = [
+    ("MCG02", 150, 2026, 6, "statement carries nil forward into July; June is struck out"),
+]
+
 # Reported every run so it is not quietly forgotten.
 UNRESOLVED = [
     (
@@ -116,12 +149,14 @@ class Command(BaseCommand):
             return t, None
 
         # -- pre-flight ------------------------------------------------------
+        checks = (
+            [(tid, label) for label, tid, _w in VACATE]
+            + [(tid, label) for _k, label, tid, _s, _w in CHANNELS]
+            + [(tid, label) for label, tid, _a, _w in DEPOSITS]
+            + [(tid, label) for label, tid, _y, _m, _w in DISCARD_PERIODS]
+        )
         wrong = []
-        for label, tid, _why in VACATE:
-            _t, problem = resolve(tid, label)
-            if problem and "not found" not in problem:
-                wrong.append(problem)
-        for _key, label, tid, _src, _why in CHANNELS:
+        for tid, label in checks:
             _t, problem = resolve(tid, label)
             if problem and "not found" not in problem:
                 wrong.append(problem)
@@ -200,7 +235,31 @@ class Command(BaseCommand):
             if self.apply:
                 self._recut(pay, t, source, why)
 
-        # -- 4. Still open ------------------------------------------------------
+        # -- 4. Deposits --------------------------------------------------------
+        self._head("4. Rent security deposits the landlord has restated")
+        for label, tid, amount, why in DEPOSITS:
+            t, problem = resolve(tid, label)
+            if problem:
+                self._skip(f"{label}: {problem}")
+                continue
+            if t.deposit_paid == amount:
+                self._skip(f"{label} {t.full_name}: already {amount}")
+                continue
+            self._do(f"{label} {t.full_name}: deposit {t.deposit_paid} -> {amount}  ({why})")
+            if self.apply:
+                t.deposit_paid = amount
+                t.save(update_fields=["deposit_paid", "updated_at"])
+
+        # -- 5. Struck-out periods ----------------------------------------------
+        self._head("5. Periods struck out to follow the statement")
+        for label, tid, year, month, why in DISCARD_PERIODS:
+            t, problem = resolve(tid, label)
+            if problem:
+                self._skip(f"{label}: {problem}")
+                continue
+            self._discard_period(t, label, year, month, why)
+
+        # -- 6. Still open ------------------------------------------------------
         self._head("4. Answered but not actionable without a further confirmation")
         for title, detail in UNRESOLVED:
             self.stdout.write(self.style.NOTICE(f"  {title}"))
@@ -212,6 +271,46 @@ class Command(BaseCommand):
             ))
         else:
             self.stdout.write(self.style.SUCCESS(f"\nApplied {self.changes} change(s)."))
+
+    def _discard_period(self, tenant, label, year, month, why):
+        """Strike a whole period out: void its payments, remove its charge.
+
+        The payments are voided rather than deleted, so the receipt and its
+        mirror-image reversal both stay in the ledger and the cash that was
+        genuinely banked remains traceable. Only the Arrears row — a derived
+        charge, not a financial record — is actually removed, which is what
+        stops the period appearing in the rent roll at all.
+        """
+        from apps.payments.models import Arrears, Payment
+        from apps.payments.services import void_payment
+
+        payments = list(Payment.objects.filter(
+            tenant=tenant, period_year=year, period_month=month, voided_at__isnull=True,
+        ))
+        charge = Arrears.objects.filter(
+            tenant=tenant, period_year=year, period_month=month,
+        ).first()
+
+        if not payments and charge is None:
+            self._skip(f"{label} {tenant.full_name}: {month}/{year} already struck out")
+            return
+
+        banked = sum((p.amount for p in payments), Decimal("0.00"))
+        self._do(
+            f"{label} {tenant.full_name}: strike out {month}/{year} — "
+            f"void {len(payments)} payment(s) totalling {banked}"
+            + (f", remove charge of {charge.expected_rent + charge.expected_vat}" if charge else "")
+            + f"  ({why})"
+        )
+        if not self.apply:
+            return
+        with transaction.atomic():
+            for pay in payments:
+                void_payment(pay, reason=f"Period {month}/{year} struck out — {why}"[:255])
+            # Re-read: voiding re-derives the row, so take the current one.
+            Arrears.objects.filter(
+                tenant=tenant, period_year=year, period_month=month,
+            ).delete()
 
     def _recut(self, payment, tenant, source, why):
         """Void the mis-channelled payment and re-record it on the right one.
