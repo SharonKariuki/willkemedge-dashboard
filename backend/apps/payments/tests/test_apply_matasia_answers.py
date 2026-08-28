@@ -342,14 +342,146 @@ class TestDepositRule:
         "MCF04": D("25000"), "MCF12": D("50655"), "MCF13": D("24000"),
     }
 
-    def test_every_deposit_is_three_months_rent(self):
+    def test_every_deposit_is_three_months_rent_or_a_stated_exception(self):
+        """`deposit_paid` records what was received. Where that differs from the
+        rule the shortfall is a fact to keep, but it has to be written down —
+        an undocumented odd figure is how 390,780 survived a month unquestioned."""
         wrong = [
             f"{label}: {amount} != 3 x {self.RENTS[label]}"
             for label, _tid, amount, _why in cmd.DEPOSITS
-            if label in self.RENTS and amount != self.RENTS[label] * 3
+            if label in self.RENTS
+            and amount != self.RENTS[label] * 3
+            and label not in cmd.DEPOSIT_EXCEPTIONS
         ]
-        assert wrong == [], f"deposits off the 3x rule: {wrong}"
+        assert wrong == [], f"deposits off the 3x rule with no stated reason: {wrong}"
+
+    def test_every_exception_gives_a_reason(self):
+        blank = [k for k, v in cmd.DEPOSIT_EXCEPTIONS.items() if not (v or "").strip()]
+        assert blank == [], f"exceptions with no reason: {blank}"
 
     def test_no_duplicate_units(self):
         labels = [row[0] for row in cmd.DEPOSITS]
         assert len(labels) == len(set(labels)), f"a unit is listed twice: {labels}"
+
+
+class TestReallocate:
+    """Fortcom's 75,000 was booked as three months' rent. It was a 50,000
+    deposit plus 25,000 first month — a different thing entirely, and only the
+    deposit half should stay out of the rent roll."""
+
+    def _only(self, monkeypatch, reallocate=(), drop=()):
+        for name in ("VACATE", "CREATE_UNITS", "CHANNELS", "DEPOSITS", "DISCARD_PERIODS"):
+            monkeypatch.setattr(cmd, name, [])
+        monkeypatch.setattr(cmd, "REALLOCATE", list(reallocate))
+        monkeypatch.setattr(cmd, "DROP_CHARGES", list(drop))
+
+    def _split(self, tenant, ref):
+        """Three monthly rows, as the wrong reading left them."""
+        from apps.payments.services import process_payment
+
+        for month in (8, 9, 10):
+            process_payment(
+                tenant=tenant, amount=D("25000"), payment_date=_dt.date(2026, 8, 10),
+                period_month=month, period_year=2026, source="bank",
+                reference=ref, idempotency_key=f"{ref}#2026-{month:02d}",
+            )
+
+    def test_rebooks_as_deposit_plus_rent(self, arcade, monkeypatch):
+        tenant = arcade["payer"]
+        self._split(tenant, "REF-Q")
+        self._only(monkeypatch, reallocate=[(
+            "MCQ12", tenant.pk, "REF-Q",
+            [(D("50000"), (2026, 8), "deposit"), (D("25000"), (2026, 8), "rent")],
+            "deposit plus first month",
+        )])
+
+        call_command("apply_matasia_answers", "--apply")
+
+        live = _live(tenant).order_by("payment_type")
+        assert [(p.amount, p.payment_type, p.period_month) for p in live] == [
+            (D("50000.00"), "deposit", 8),
+            (D("25000.00"), "rent", 8),
+        ]
+
+    def test_the_amount_banked_is_never_changed(self, arcade, monkeypatch):
+        """A re-allocation redistributes; it must not invent or lose money."""
+        tenant = arcade["payer"]
+        self._split(tenant, "REF-Q")
+        self._only(monkeypatch, reallocate=[(
+            "MCQ12", tenant.pk, "REF-Q",
+            [(D("50000"), (2026, 8), "deposit")],  # only 50,000 of the 75,000
+            "wrong total",
+        )])
+
+        call_command("apply_matasia_answers", "--apply")
+
+        assert sum(p.amount for p in _live(tenant)) == D("75000.00"), "money was lost"
+
+    def test_originals_are_voided_not_deleted(self, arcade, monkeypatch):
+        tenant = arcade["payer"]
+        self._split(tenant, "REF-Q")
+        before = {p.pk for p in _live(tenant)}
+        self._only(monkeypatch, reallocate=[(
+            "MCQ12", tenant.pk, "REF-Q",
+            [(D("50000"), (2026, 8), "deposit"), (D("25000"), (2026, 8), "rent")],
+            "deposit plus first month",
+        )])
+
+        call_command("apply_matasia_answers", "--apply")
+
+        assert Payment.objects.filter(pk__in=before, voided_at__isnull=False).count() == 3
+
+    def test_rerun_is_a_no_op(self, arcade, monkeypatch):
+        tenant = arcade["payer"]
+        self._split(tenant, "REF-Q")
+        self._only(monkeypatch, reallocate=[(
+            "MCQ12", tenant.pk, "REF-Q",
+            [(D("50000"), (2026, 8), "deposit"), (D("25000"), (2026, 8), "rent")],
+            "deposit plus first month",
+        )])
+
+        call_command("apply_matasia_answers", "--apply")
+        call_command("apply_matasia_answers", "--apply")
+
+        assert _live(tenant).count() == 2
+
+
+class TestDropCharge:
+    def _only(self, monkeypatch, drop):
+        for name in ("VACATE", "CREATE_UNITS", "CHANNELS", "DEPOSITS", "DISCARD_PERIODS", "REALLOCATE"):
+            monkeypatch.setattr(cmd, name, [])
+        monkeypatch.setattr(cmd, "DROP_CHARGES", list(drop))
+
+    def test_removes_a_charge_no_cash_sits_against(self, arcade, monkeypatch):
+        from apps.payments.models import Arrears
+
+        tenant = arcade["payer"]
+        Arrears.objects.create(
+            tenant=tenant, period_year=2026, period_month=9,
+            expected_rent=D("25000"), expected_vat=D("4000"),
+            amount_paid=D(0), balance=D("29000"),
+        )
+        self._only(monkeypatch, [("MCQ12", tenant.pk, 2026, 9, "mis-split")])
+
+        call_command("apply_matasia_answers", "--apply")
+
+        assert not Arrears.objects.filter(tenant=tenant, period_month=9).exists()
+
+    def test_refuses_when_cash_sits_against_the_period(self, arcade, monkeypatch):
+        """Removing the charge would strand the payment on a month with nothing
+        left to settle."""
+        from apps.payments.models import Arrears
+
+        tenant = arcade["payer"]
+        Arrears.objects.create(
+            tenant=tenant, period_year=2026, period_month=9,
+            expected_rent=D("25000"), expected_vat=D("4000"),
+            amount_paid=D(0), balance=D("29000"),
+        )
+        pay = _pay(tenant, "25000", "REF-SEP")
+        Payment.objects.filter(pk=pay.pk).update(period_month=9)
+        self._only(monkeypatch, [("MCQ12", tenant.pk, 2026, 9, "mis-split")])
+
+        call_command("apply_matasia_answers", "--apply")
+
+        assert Arrears.objects.filter(tenant=tenant, period_month=9).exists()

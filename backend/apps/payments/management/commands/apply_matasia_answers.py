@@ -78,10 +78,42 @@ DEPOSITS = [
     ("MCG03", 160, Decimal("54000.00"), "3 x 18,000"),
     ("MCG05", 148, Decimal("259500.00"), "3 x 86,500 — was 390,780 from the old roll"),
     ("MCG10", 164, Decimal("75000.00"), "3 x 25,000"),
-    ("MCF01", 175, Decimal("75000.00"), "3 x 25,000 — was 50,000, two months"),
+    ("MCF01", 175, Decimal("50000.00"), "paid 50,000 on move-in — see DEPOSIT_EXCEPTIONS"),
     ("MCF04", 165, Decimal("75000.00"), "3 x 25,000"),
     ("MCF12", 166, Decimal("151965.00"), "3 x 50,655"),
     ("MCF13", 167, Decimal("72000.00"), "3 x 24,000"),
+]
+
+# Deposits deliberately outside the three-months rule — unit: why.
+#
+# The rule says what a commercial lease should take. `deposit_paid` records what
+# was actually received, and where the two differ the shortfall is a fact worth
+# keeping rather than a number to round up to policy.
+DEPOSIT_EXCEPTIONS = {
+    "MCF01": "Fortcom paid 50,000 with their first month, 25,000 short of 3 x 25,000",
+}
+
+# A payment booked on a wrong reading of what it was for —
+# (unit, tenant id, bank reference, [(amount, (year, month), payment type)], why)
+#
+# The original receipt and every replacement go through void-and-re-record, so
+# the bank credit, its reversal and the corrected rows all stay in the ledger.
+REALLOCATE = [
+    (
+        "MCF01", 175, "S48023247_10082026_2",
+        [
+            (Decimal("50000.00"), (2026, 8), "deposit"),
+            (Decimal("25000.00"), (2026, 8), "rent"),
+        ],
+        "75,000 was a 50,000 deposit plus 25,000 August rent, not three months' rent",
+    ),
+]
+
+# Charges that exist only because a payment was mis-allocated —
+# (unit, tenant id, year, month, why)
+DROP_CHARGES = [
+    ("MCF01", 175, 2026, 9, "raised by the mis-split; no billing has run for September"),
+    ("MCF01", 175, 2026, 10, "raised by the mis-split; no billing has run for October"),
 ]
 
 # Periods to strike out entirely — (unit, tenant id, year, month, why)
@@ -178,6 +210,8 @@ class Command(BaseCommand):
             + [(tid, label) for _k, label, tid, _s, _w in CHANNELS]
             + [(tid, label) for label, tid, _a, _w in DEPOSITS]
             + [(tid, label) for label, tid, _y, _m, _w in DISCARD_PERIODS]
+            + [(tid, label) for label, tid, _r, _a, _w in REALLOCATE]
+            + [(tid, label) for label, tid, _y, _m, _w in DROP_CHARGES]
         )
         wrong = []
         for tid, label in checks:
@@ -283,7 +317,24 @@ class Command(BaseCommand):
                 continue
             self._discard_period(t, label, year, month, why)
 
-        # -- 6. Still open ------------------------------------------------------
+        # -- 6. Re-allocate mis-read payments ------------------------------------
+        self._head("6. Payments booked on a wrong reading of what they were for")
+        for label, tid, ref, parts, why in REALLOCATE:
+            t, problem = resolve(tid, label)
+            if problem:
+                self._skip(f"{label}: {problem}")
+                continue
+            self._reallocate(t, label, ref, parts, why)
+
+        self._head("7. Charges that exist only because of a mis-allocation")
+        for label, tid, year, month, why in DROP_CHARGES:
+            t, problem = resolve(tid, label)
+            if problem:
+                self._skip(f"{label}: {problem}")
+                continue
+            self._drop_charge(t, label, year, month, why)
+
+        # -- 8. Still open ------------------------------------------------------
         self._head("4. Answered but not actionable without a further confirmation")
         for title, detail in UNRESOLVED:
             self.stdout.write(self.style.NOTICE(f"  {title}"))
@@ -335,6 +386,86 @@ class Command(BaseCommand):
             Arrears.objects.filter(
                 tenant=tenant, period_year=year, period_month=month,
             ).delete()
+
+    def _reallocate(self, tenant, label, ref, parts, why):
+        """Void every live row under a bank reference and re-book it as `parts`.
+
+        Keyed on the bank reference rather than a payment id, so it finds
+        whatever a previous wrong reading left behind — here three monthly rows
+        from a split that assumed quarterly rent.
+        """
+        from apps.payments.models import Payment
+        from apps.payments.services import process_payment, void_payment
+
+        live = list(Payment.objects.filter(
+            tenant=tenant, reference=ref, voided_at__isnull=True,
+        ).order_by("pk"))
+        wanted = sum(amount for amount, _period, _kind in parts)
+
+        already = {(p.amount, p.period_year, p.period_month, p.payment_type) for p in live}
+        target = {(a, y, m, k) for a, (y, m), k in parts}
+        if already == target:
+            self._skip(f"{label} {tenant.full_name}: already booked as {len(parts)} part(s)")
+            return
+        if not live:
+            self._skip(f"{label} {tenant.full_name}: nothing live under {ref}")
+            return
+
+        banked = sum((p.amount for p in live), Decimal("0.00"))
+        if banked != wanted:
+            self._skip(
+                f"{label} {tenant.full_name}: {ref} holds {banked} but the parts total "
+                f"{wanted} — refusing to change the amount banked"
+            )
+            return
+
+        breakdown = ", ".join(f"{a} {k} {m}/{y}" for a, (y, m), k in parts)
+        self._do(f"{label} {tenant.full_name}: {ref} {banked} -> {breakdown}  ({why})")
+        if not self.apply:
+            return
+        with transaction.atomic():
+            source = live[0].source
+            date = live[0].payment_date
+            for pay in live:
+                void_payment(pay, reason=f"Re-allocated — {why}"[:255])
+            for amount, (year, month), kind in parts:
+                process_payment(
+                    tenant=tenant, amount=amount, payment_date=date,
+                    period_month=month, period_year=year, source=source,
+                    reference=ref, idempotency_key=f"{ref}#{kind}-{year}-{month:02d}",
+                    payment_type=kind, notes=f"Re-allocated by apply_matasia_answers: {why}.",
+                )
+
+    def _drop_charge(self, tenant, label, year, month, why):
+        """Remove a charge that only exists because a payment was mis-allocated.
+
+        Guarded on the period being empty of cash: if money is sitting against
+        it the charge is doing real work and removing it would strand the
+        payment on a month with nothing to settle.
+        """
+        from apps.payments.models import Arrears, Payment
+
+        charge = Arrears.objects.filter(
+            tenant=tenant, period_year=year, period_month=month,
+        ).first()
+        if charge is None:
+            self._skip(f"{label} {tenant.full_name}: no charge for {month}/{year}")
+            return
+        held = Payment.objects.filter(
+            tenant=tenant, period_year=year, period_month=month, voided_at__isnull=True,
+        ).count()
+        if held:
+            self._skip(
+                f"{label} {tenant.full_name}: {month}/{year} still holds {held} payment(s) "
+                f"— not removing a charge that cash is sitting against"
+            )
+            return
+        self._do(
+            f"{label} {tenant.full_name}: drop {month}/{year} charge of "
+            f"{charge.expected_rent + charge.expected_vat}  ({why})"
+        )
+        if self.apply:
+            charge.delete()
 
     def _recut(self, payment, tenant, source, why):
         """Void the mis-channelled payment and re-record it on the right one.
