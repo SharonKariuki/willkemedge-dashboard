@@ -133,6 +133,12 @@
                         <td class="amt">{{ vat_on_rent }}</td>
                     </tr>
                     {% endif %}
+                    {% if payments_received_value %}
+                    <tr>
+                        <td>Less: Payments Received</td>
+                        <td class="amt">({{ payments_received }})</td>
+                    </tr>
+                    {% endif %}
                     <tr class="grand">
                         <td>Total KES Due:</td>
                         <td class="amt">{{ total_due }}</td>

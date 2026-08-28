@@ -278,6 +278,12 @@ def payment_statement_email_html(tenant_name: str, amount, reference: str, state
     ]
     if statement.get("is_business"):
         summary_rows.append(_row("16% VAT on Rent", statement["vat_on_rent"]))
+    # Mirrors the PDF: without this line the summary silently netted the
+    # tenant's payment into "Arrears / Others" and drove it negative.
+    if statement.get("payments_received_value"):
+        summary_rows.append(
+            _row("Less: Payments Received", f"({statement['payments_received']})")
+        )
     summary_rows.append(_row("Total KES Due:", statement["total_due"], bold=True))
 
     # ── Receipt breakdown — each line itemised with its COA code ──
