@@ -36,6 +36,9 @@ export interface MonthlyLedgerRow {
   total_due: string;
   paid: string;
   balance: string;
+  /** True when the row is a balance carried from before the books began rather
+   *  than a month that was billed — its figure sits in `brought_forward`. */
+  is_opening: boolean;
 }
 
 export interface TenantPaymentHistory {

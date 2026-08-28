@@ -124,3 +124,52 @@ class TestMonthlyLedger:
         assert len(rows) == 1
         assert rows[0]["period"] == "7/2026"
         assert rows[0]["brought_forward"] == "9000.00"
+
+
+class TestOpeningRow:
+    """A carried opening balance is stored as an Arrears row because that is the
+    only way to seed the roll-forward. It must not then read as rent: Elimisha's
+    July showed "Rent 20,000" against an actual rent of 22,500."""
+
+    def _opening(self, tenant, month, amount):
+        return Arrears.objects.create(
+            tenant=tenant, period_month=month, period_year=2026,
+            expected_rent=Decimal(amount), expected_vat=Decimal("0"),
+            amount_paid=Decimal("0"), balance=Decimal(amount),
+            waive_notes="Opening position carried from the 21 Aug 2026 statement.",
+        )
+
+    def test_opening_reports_as_brought_forward_not_rent(self, tenant):
+        self._opening(tenant, 7, "20000")
+
+        row = build_monthly_ledger(tenant, today=_dt.date(2026, 7, 20))[0]
+
+        assert Decimal(row["brought_forward"]) == Decimal("20000.00")
+        assert Decimal(row["rent"]) == Decimal("0.00"), "an opening balance read as rent"
+        assert row["is_opening"] is True
+
+    def test_the_total_is_unchanged_by_the_move(self, tenant):
+        self._opening(tenant, 7, "20000")
+
+        row = build_monthly_ledger(tenant, today=_dt.date(2026, 7, 20))[0]
+
+        assert Decimal(row["total_due"]) == Decimal("20000.00")
+
+    def test_it_still_carries_into_the_next_month(self, tenant):
+        """The whole point of the row — moving the figure must not break this."""
+        self._opening(tenant, 7, "20000")
+        _bill(tenant, 8, rent="22500")
+
+        rows = build_monthly_ledger(tenant, today=_dt.date(2026, 8, 20))
+        august = rows[-1]
+
+        assert Decimal(august["brought_forward"]) == Decimal("20000.00")
+        assert Decimal(august["total_due"]) == Decimal("42500.00")
+
+    def test_a_normal_month_is_not_flagged(self, tenant):
+        _bill(tenant, 7, rent="9000")
+
+        row = build_monthly_ledger(tenant, today=_dt.date(2026, 7, 20))[0]
+
+        assert row["is_opening"] is False
+        assert Decimal(row["rent"]) == Decimal("9000.00")
