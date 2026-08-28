@@ -124,6 +124,9 @@ export interface TenantDetail extends TenantListItem {
   id_number: string;
   kra_pin: string;
   email: string;
+  /** RESIDENTIAL | BUSINESS — commercial lettings are VAT-rated and take no
+   *  rent security deposit, so the detail page shows different cards. */
+  unit_classification: string;
   /** Name printed on the rent statement, e.g. a guarantor or company. */
   care_of: string;
   emergency_contact: string;

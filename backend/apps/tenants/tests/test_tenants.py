@@ -433,3 +433,48 @@ class TenantDetailPaymentFieldsTests(APITestCase):
         body = self.client.get(f"/api/tenants/{self.tenant.pk}/payment-history/").json()
         assert Decimal(body["total_paid"]) == Decimal("6000.00")
         assert [Decimal(p["amount"]) for p in body["payments"]] == [Decimal("6000.00")]
+
+
+class TenantClassificationExposureTests(APITestCase):
+    """The detail page drops the rent-security-deposit card and shows a VAT
+    column for commercial lettings, so it has to be able to tell them apart."""
+
+    @classmethod
+    def setUpTestData(cls):
+        from apps.buildings.models import UnitClassification
+        from apps.tenants.models import Tenant
+
+        cls.user = User.objects.create_user(
+            username="cls-admin", email="cls@test.com", password="testpass123!", role="owner"
+        )
+        building = Building.objects.create(name="Matasia Arcade", total_floors=2)
+
+        def let(label, classification, care_of=""):
+            unit = Unit.objects.create(
+                building=building, label=label, monthly_rent=Decimal("24000"),
+                classification=classification, status=UnitStatus.OCCUPIED_UNPAID,
+            )
+            return Tenant.objects.create(
+                first_name=label, last_name="Ltd", id_number=f"CLS-{label}",
+                phone="+254700000003", unit=unit, monthly_rent=Decimal("24000"),
+                care_of=care_of, move_in_date="2026-07-01",
+            )
+
+        cls.commercial = let("MCX01", UnitClassification.BUSINESS, care_of="Dennis Kerosi")
+        cls.residential = let("MRX01", UnitClassification.RESIDENTIAL)
+
+    def setUp(self):
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.user)
+
+    def test_commercial_letting_reports_business(self):
+        body = self.client.get(f"/api/tenants/{self.commercial.pk}/").json()
+        assert body["unit_classification"] == "BUSINESS"
+
+    def test_residential_letting_reports_residential(self):
+        body = self.client.get(f"/api/tenants/{self.residential.pk}/").json()
+        assert body["unit_classification"] == "RESIDENTIAL"
+
+    def test_contact_person_is_exposed_for_the_contact_card(self):
+        body = self.client.get(f"/api/tenants/{self.commercial.pk}/").json()
+        assert body["care_of"] == "Dennis Kerosi"
