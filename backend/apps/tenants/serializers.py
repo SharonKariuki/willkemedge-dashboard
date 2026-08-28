@@ -78,6 +78,11 @@ class TenantDetailSerializer(serializers.ModelSerializer):
     unit_label = serializers.CharField(source="unit.label", read_only=True)
     building_name = serializers.CharField(source="unit.building.name", read_only=True)
     building_id = serializers.IntegerField(source="unit.building.id", read_only=True)
+    # Commercial and residential lettings differ on the page: commercial is
+    # VAT-rated and takes no rent security deposit, so the detail view needs to
+    # know which it is rather than inferring it from whatever figures happen to
+    # be loaded.
+    unit_classification = serializers.CharField(source="unit.classification", read_only=True)
     status_display = serializers.CharField(source="get_status_display", read_only=True)
     documents = TenantDocumentSerializer(many=True, read_only=True)
     # Payment analytics
@@ -99,7 +104,7 @@ class TenantDetailSerializer(serializers.ModelSerializer):
         fields = [
             "id", "full_name", "first_name", "last_name", "id_number", "kra_pin",
             "phone", "email", "emergency_contact", "emergency_phone", "care_of",
-            "unit", "unit_label", "building_name", "building_id",
+            "unit", "unit_label", "building_name", "building_id", "unit_classification",
             "monthly_rent", "deposit_paid", "due_day",
 
             "deposit_refund_percentage", "deposit_refund_amount",

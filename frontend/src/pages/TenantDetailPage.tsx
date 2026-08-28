@@ -77,6 +77,7 @@ export default function TenantDetailPage() {
   // unit's classification so a unit reclassified mid-tenancy still shows the
   // VAT it was actually charged.
   const showVat = (history?.monthly_ledger ?? []).some((m) => Number(m.vat) > 0);
+  const isCommercial = tenant?.unit_classification === "BUSINESS";
   const updateTenant = useUpdateTenant(id ?? "");
   const moveOutNotice = useMoveOutNotice(id ?? "");
   const moveOut = useMoveOutTenant(id ?? "");
@@ -264,8 +265,10 @@ export default function TenantDetailPage() {
         </Card>
       )}
 
-      {/* Contact + finance summary */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      {/* Contact + finance summary. A commercial letting takes no rent security
+          deposit, so that card is dropped and the remaining three widen to fill
+          the row rather than leaving a gap. */}
+      <div className={cn("grid gap-4 sm:grid-cols-2", isCommercial ? "lg:grid-cols-3" : "lg:grid-cols-4")}>
         <Card padding="md">
           <p className="text-xs uppercase tracking-wider text-content-muted">Status</p>
           <div className="mt-2">
@@ -278,10 +281,12 @@ export default function TenantDetailPage() {
           <p className="text-xs uppercase tracking-wider text-content-muted">Monthly rent</p>
           <p className="mt-2 font-semibold tabular-nums text-content">{KES(tenant.monthly_rent)}</p>
         </Card>
-        <Card padding="md">
-          <p className="text-xs uppercase tracking-wider text-content-muted">Rent security deposit</p>
-          <p className="mt-2 font-semibold tabular-nums text-content">{KES(tenant.deposit_paid)}</p>
-        </Card>
+        {!isCommercial && (
+          <Card padding="md">
+            <p className="text-xs uppercase tracking-wider text-content-muted">Rent security deposit</p>
+            <p className="mt-2 font-semibold tabular-nums text-content">{KES(tenant.deposit_paid)}</p>
+          </Card>
+        )}
         <Card padding="md">
           <p className="text-xs uppercase tracking-wider text-content-muted">Arrears</p>
           <p className={cn("mt-2 font-semibold tabular-nums", inArrears ? "text-orange-600" : "text-sage-600")}>
@@ -290,13 +295,18 @@ export default function TenantDetailPage() {
         </Card>
       </div>
 
-      {/* Contact */}
+      {/* Contact. The statement names a contact person against the phone number
+          for company tenants — you ring the person, not the entity — so it sits
+          with the number rather than off on its own. */}
       <Card padding="md">
         <p className="mb-3 font-semibold text-content">Contact</p>
         <div className="flex flex-wrap gap-6 text-sm">
-          <a href={`tel:${tenant.phone}`} className="inline-flex items-center gap-2 text-sage-600">
-            <Phone className="h-4 w-4" /> {tenant.phone}
-          </a>
+          <span className="inline-flex items-center gap-2">
+            <a href={`tel:${tenant.phone}`} className="inline-flex items-center gap-2 text-sage-600">
+              <Phone className="h-4 w-4" /> {tenant.phone}
+            </a>
+            {tenant.care_of && <span className="text-content-muted">· {tenant.care_of}</span>}
+          </span>
           {tenant.email && (
             <a href={`mailto:${tenant.email}`} className="inline-flex items-center gap-2 text-sage-600">
               <Mail className="h-4 w-4" /> {tenant.email}
@@ -306,9 +316,6 @@ export default function TenantDetailPage() {
           {tenant.kra_pin && <span className="text-content-muted">KRA: {tenant.kra_pin}</span>}
         </div>
       </Card>
-
-      {/* KYC */}
-      <KycPanel tenant={tenant} />
 
       {/* Payment history */}
       <Card padding="none">
@@ -397,6 +404,10 @@ export default function TenantDetailPage() {
           </p>
         )}
       </Card>
+
+      {/* KYC last. It is reviewed once at onboarding, while the money above it
+          is what anyone opening this page is usually here to read. */}
+      <KycPanel tenant={tenant} />
 
       {reminding && <RemindModal tenant={tenant} onClose={() => setReminding(false)} />}
     </div>
