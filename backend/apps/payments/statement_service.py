@@ -242,14 +242,40 @@ def build_statement(tenant, *, statement_date: _dt.date | None = None, as_of: _d
     # the ledger rows do: a commercial unit is not necessarily VAT-rated.
     vat_on_rent = _money(current.expected_vat) if current is not None else ZERO
     total_due = balance
-    arrears_others = total_due - current_base - vat_on_rent
+
+    # Money received against the current period. The summary used to have no
+    # payments line at all, so "Arrears / Others" — derived as
+    # `total_due - rent - VAT` — silently absorbed whatever the tenant had paid
+    # and swung negative the moment they settled the month. Sidai Healthcare
+    # (MCF12) read "Arrears / Others -48,760" beside a current month of 50,655
+    # that had in fact been paid in full; 61 of 80 active tenants showed a
+    # negative figure there. Showing the payment on its own line lets the
+    # arrears line go back to meaning what it says.
+    from .models import Payment, PaymentType, UtilityCharge
+
+    payments_q = Payment.objects.filter(
+        tenant=tenant, voided_at__isnull=True
+    ).exclude(payment_type=PaymentType.DEPOSIT)
+    if current is not None:
+        payments_q = payments_q.filter(
+            period_year=current.period_year, period_month=current.period_month
+        )
+    else:
+        payments_q = payments_q.none()
+    if as_of:
+        payments_q = payments_q.filter(payment_date__lte=as_of)
+    payments_received = _money(payments_q.aggregate(t=Sum("amount"))["t"])
+
+    # Derived so the column always foots to `total_due`, which is the ledger's
+    # own closing balance. With the payment shown separately this resolves to
+    # the arrears genuinely brought forward from earlier periods.
+    arrears_others = total_due - current_base - vat_on_rent + payments_received
 
     # --- Receipt breakdown (Feature 7) ---------------------------------------
     # Five named figures for the SMS/email receipt, each sourced from real
     # records. These are informational: the authoritative amount owed remains
     # `total_due` ("Unpaid Balance"). They are additive to the account rather
     # than a re-derivation of the net balance.
-    from .models import Payment, PaymentType, UtilityCharge
 
     #  Security deposit held = deposit-type payments received (up to as_of).
     deposit_q = Payment.objects.filter(
@@ -315,6 +341,11 @@ def build_statement(tenant, *, statement_date: _dt.date | None = None, as_of: _d
         "current_month_rent": _fmt_money(current_base),
         "current_period_label": current_period_label,
         "vat_on_rent": _fmt_money(vat_on_rent),
+        "payments_received": _fmt_money(payments_received),
+        # Decimal("0.00") is falsy, so the template hides the row entirely for a
+        # tenant who has not yet paid this month — the summary then reads
+        # exactly as it always did.
+        "payments_received_value": payments_received,
         "total_due": _fmt_money(total_due),
         "total_due_whole": _fmt_money_whole(total_due),
         "total_due_value": total_due,
