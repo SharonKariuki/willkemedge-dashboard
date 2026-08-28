@@ -72,6 +72,11 @@ export default function TenantDetailPage() {
   const navigate = useNavigate();
   const { data: tenant, isLoading, isError, refetch } = useTenant(id ?? null);
   const { data: history } = usePaymentHistory(id ?? null);
+  // Commercial units carry 16% VAT and the statement bills it as its own
+  // column; residential is exempt. Drive it off the ledger rather than the
+  // unit's classification so a unit reclassified mid-tenancy still shows the
+  // VAT it was actually charged.
+  const showVat = (history?.monthly_ledger ?? []).some((m) => Number(m.vat) > 0);
   const updateTenant = useUpdateTenant(id ?? "");
   const moveOutNotice = useMoveOutNotice(id ?? "");
   const moveOut = useMoveOutTenant(id ?? "");
@@ -332,7 +337,10 @@ export default function TenantDetailPage() {
         )}
       </Card>
 
-      {/* Monthly rent roll — one row per month, extends itself as billing posts */}
+      {/* Monthly rent roll — one row per month, extends itself as billing posts.
+          VAT gets its own column for commercial units, matching the statement;
+          residential is exempt, so the column is hidden rather than showing a
+          row of dashes. */}
       <Card padding="none">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-hairline px-5 py-4">
           <h2 className="font-semibold text-content">Monthly rent roll</h2>
@@ -347,6 +355,7 @@ export default function TenantDetailPage() {
                 <TH>Month</TH>
                 <TH className="text-right">Arrears b/f</TH>
                 <TH className="text-right">Rent</TH>
+                {showVat && <TH className="text-right">16% VAT</TH>}
                 <TH className="text-right">Other charges</TH>
                 <TH className="text-right">Total due</TH>
                 <TH className="text-right">Payment made</TH>
@@ -356,12 +365,16 @@ export default function TenantDetailPage() {
             <TBody>
               {history.monthly_ledger.map((m) => {
                 const balance = Number(m.balance);
-                const rent = Number(m.rent) + Number(m.vat);
                 return (
                   <TR key={m.period}>
                     <TD className="whitespace-nowrap">{m.label}</TD>
                     <TD className="text-right tabular-nums text-content-muted">{KES(m.brought_forward)}</TD>
-                    <TD className="text-right tabular-nums">{KES(rent)}</TD>
+                    <TD className="text-right tabular-nums">{KES(m.rent)}</TD>
+                    {showVat && (
+                      <TD className="text-right tabular-nums text-content-muted">
+                        {Number(m.vat) ? KES(m.vat) : "—"}
+                      </TD>
+                    )}
                     <TD className="text-right tabular-nums text-content-muted">
                       {Number(m.other_charges) ? KES(m.other_charges) : "—"}
                     </TD>
