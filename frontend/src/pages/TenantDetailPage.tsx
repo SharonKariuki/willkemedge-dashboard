@@ -78,6 +78,14 @@ export default function TenantDetailPage() {
   // VAT it was actually charged.
   const showVat = (history?.monthly_ledger ?? []).some((m) => Number(m.vat) > 0);
   const isCommercial = tenant?.unit_classification === "BUSINESS";
+  // A commercial lease takes three months' rent as deposit. Only three of the
+  // twelve Matasia tenancies actually hold it, so the shortfall is shown against
+  // the recorded figure — a bare "KES 0" reads like a settled account rather
+  // than a deposit nobody collected. Positive = short. Residential terms vary,
+  // so no expectation is asserted there.
+  const depositGap = isCommercial
+    ? Number(tenant?.monthly_rent ?? 0) * 3 - Number(tenant?.deposit_paid ?? 0)
+    : null;
   const updateTenant = useUpdateTenant(id ?? "");
   const moveOutNotice = useMoveOutNotice(id ?? "");
   const moveOut = useMoveOutTenant(id ?? "");
@@ -265,10 +273,8 @@ export default function TenantDetailPage() {
         </Card>
       )}
 
-      {/* Contact + finance summary. A commercial letting takes no rent security
-          deposit, so that card is dropped and the remaining three widen to fill
-          the row rather than leaving a gap. */}
-      <div className={cn("grid gap-4 sm:grid-cols-2", isCommercial ? "lg:grid-cols-3" : "lg:grid-cols-4")}>
+      {/* Contact + finance summary */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card padding="md">
           <p className="text-xs uppercase tracking-wider text-content-muted">Status</p>
           <div className="mt-2">
@@ -281,12 +287,20 @@ export default function TenantDetailPage() {
           <p className="text-xs uppercase tracking-wider text-content-muted">Monthly rent</p>
           <p className="mt-2 font-semibold tabular-nums text-content">{KES(tenant.monthly_rent)}</p>
         </Card>
-        {!isCommercial && (
-          <Card padding="md">
-            <p className="text-xs uppercase tracking-wider text-content-muted">Rent security deposit</p>
-            <p className="mt-2 font-semibold tabular-nums text-content">{KES(tenant.deposit_paid)}</p>
-          </Card>
-        )}
+        <Card padding="md">
+          <p className="text-xs uppercase tracking-wider text-content-muted">Rent security deposit</p>
+          <p className="mt-2 font-semibold tabular-nums text-content">{KES(tenant.deposit_paid)}</p>
+          {depositGap !== null && depositGap !== 0 && (
+            <p className={cn(
+              "mt-1 text-xs tabular-nums",
+              depositGap > 0 ? "text-orange-600" : "text-content-muted",
+            )}>
+              {depositGap > 0
+                ? `${KES(depositGap)} short of 3× rent`
+                : `${KES(Math.abs(depositGap))} over 3× rent`}
+            </p>
+          )}
+        </Card>
         <Card padding="md">
           <p className="text-xs uppercase tracking-wider text-content-muted">Arrears</p>
           <p className={cn("mt-2 font-semibold tabular-nums", inArrears ? "text-orange-600" : "text-sage-600")}>
