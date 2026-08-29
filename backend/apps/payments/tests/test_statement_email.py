@@ -8,6 +8,7 @@ Covers:
   - an unconfigured mailbox is recorded as FAILED, never as a silent success
   - the master switch silences the scheduled run but not a manual send
   - the single and bulk API endpoints report per-tenant outcomes
+  - a batch sends over one SMTP connection rather than one per tenant
 """
 from datetime import date
 from decimal import Decimal
@@ -23,7 +24,7 @@ from apps.payments.models import (
     NotificationStatus,
     TenantNotification,
 )
-from apps.payments.statement_delivery import send_tenant_statement
+from apps.payments.statement_delivery import open_mail_connection, send_tenant_statement
 from apps.payments.tasks import send_monthly_statements
 from apps.tenants.models import Tenant, TenantStatus
 
@@ -294,3 +295,62 @@ class TestStatementEmailApi:
             "/api/tenants/email-statements/",
             {"tenant_ids": [tenant.id]}, format="json",
         ).status_code in (401, 403)
+
+
+class TestBatchedMailConnection:
+    """The SMTP handshake, not the PDF, is what makes a batch slow, so a run
+    opens one connection and every statement in it goes over that."""
+
+    def test_a_batch_reuses_one_connection(self, building):
+        _make_tenant(building, id_number="T1")
+        _make_tenant(building, id_number="T2", email="second@example.com")
+
+        with patch("apps.payments.notifications.send_email", return_value=True) as send:
+            send_monthly_statements(AS_AT.isoformat())
+
+        connections = [c.kwargs["connection"] for c in send.call_args_list]
+        assert len(connections) == 2
+        assert connections[0] is not None
+        assert connections[0] is connections[1]
+
+    def test_the_bulk_endpoint_reuses_one_connection(self, db, building):
+        user = User.objects.create_user(
+            username="admin2", email="a2@t.com", password="pw12345678!", role="owner"
+        )
+        client = APIClient()
+        client.force_authenticate(user=user)
+        first = _make_tenant(building, id_number="T1")
+        second = _make_tenant(building, id_number="T2", email="second@example.com")
+
+        with patch("apps.payments.notifications.send_email", return_value=True) as send:
+            client.post("/api/tenants/email-statements/",
+                        {"tenant_ids": [first.id, second.id]}, format="json")
+
+        connections = [c.kwargs["connection"] for c in send.call_args_list]
+        assert len(connections) == 2
+        assert connections[0] is not None and connections[0] is connections[1]
+
+    def test_a_single_send_still_opens_its_own_connection(self, building):
+        """A one-off send has nothing to amortise, so it keeps the default
+        per-message connection rather than managing one for a batch of one."""
+        tenant = _make_tenant(building)
+        with patch("apps.payments.notifications.send_email", return_value=True) as send:
+            send_tenant_statement(tenant, statement_date=AS_AT)
+
+        assert send.call_args.kwargs["connection"] is None
+
+    def test_no_credentials_yields_no_connection(self, settings):
+        """send_email refuses to send at all without credentials, so opening a
+        connection first would only raise somewhere less informative."""
+        settings.EMAIL_HOST_USER = ""
+        settings.EMAIL_HOST_PASSWORD = ""
+        with open_mail_connection() as connection:
+            assert connection is None
+
+    def test_a_connection_that_will_not_open_falls_back_rather_than_failing(self):
+        """One refused handshake must not take the whole run with it — each
+        statement can still try on its own."""
+        with patch("django.core.mail.get_connection") as get_conn:
+            get_conn.return_value.open.side_effect = OSError("connection refused")
+            with open_mail_connection() as connection:
+                assert connection is None

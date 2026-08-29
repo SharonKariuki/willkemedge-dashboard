@@ -168,11 +168,17 @@ def send_email(
     html_content: str,
     text_content: str = "",
     attachments: list[tuple[str, bytes, str]] | None = None,
+    connection=None,
 ) -> bool:
     """
     Send a transactional email via SMTP (Django's built-in mail backend).
 
     attachments : optional list of (filename, content_bytes, mimetype) tuples.
+    connection  : an open mail backend to send over. Left None, each message
+                  opens and closes its own SMTP connection, which is right for a
+                  one-off receipt and wasteful for a batch — a statement run
+                  pays the handshake once per tenant. Bulk callers open one via
+                  `statement_delivery.open_mail_connection` and pass it here.
 
     Returns True when the message was handed to the mail backend, False when no
     SMTP credentials are configured and the send was skipped. Callers that record
@@ -196,6 +202,7 @@ def send_email(
             body=text_content or "",
             from_email=from_email,
             to=[to_email],
+            connection=connection,
         )
         msg.attach_alternative(html_content, "text/html")
         for filename, content, mimetype in attachments or []:

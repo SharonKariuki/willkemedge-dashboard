@@ -1,15 +1,15 @@
 /**
- * Shared tenant UI: form field, KYC panel, and the rent-reminder (SMS/Email)
- * modal. Extracted so both the Tenants list and the Tenant detail page use the
- * same building blocks.
+ * Shared tenant UI: form field, KYC panel, the rent-reminder (SMS/Email) modal,
+ * and the statement-email confirmation. Extracted so the Tenants list, the
+ * Tenant detail page and the Property page use the same building blocks.
  */
-import { CheckCircle2, FileText, Phone, Send, ShieldCheck, Upload, XCircle, AlertTriangle } from "lucide-react";
+import { CheckCircle2, FileText, Mail, Phone, Send, ShieldCheck, Upload, XCircle, AlertTriangle } from "lucide-react";
 import { cloneElement, isValidElement, useEffect, useId, useMemo, useRef, useState } from "react";
 import toast from "react-hot-toast";
 
 import { Badge, Button, Modal } from "@/components/ui";
 import { useNotificationTemplates, useSendNotification } from "@/hooks/useNotifications";
-import { useRejectKyc, useUploadDocument, useVerifyKyc } from "@/hooks/useTenants";
+import { useEmailStatements, useRejectKyc, useUploadDocument, useVerifyKyc } from "@/hooks/useTenants";
 import { getErrorMessage } from "@/lib/apiError";
 import { cn } from "@/lib/cn";
 import type { KycStatus, TenantDetail, TenantListItem } from "@/lib/types";
@@ -399,6 +399,85 @@ export function RemindModal({ tenant, onClose }: { tenant: TenantListItem; onClo
           <Button type="button" onClick={handleSend} loading={send.isPending} disabled={!canSend}>
             <Send className="h-4 w-4" /> Send {channel === "both" ? "reminder" : channel === "email" ? "email" : "SMS"}
           </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// ─── Email statements to a chosen set of tenants ─────────────────────────────
+/** Confirmation step before statements leave the building. Sending is
+ *  outward-facing and cannot be recalled, so the office sees exactly who is
+ *  about to be written to before it fires. */
+export function EmailStatementsModal({
+  tenants, scopeLabel, onClose, onSent,
+}: {
+  tenants: TenantListItem[];
+  /** Names what the set is, when it came from somewhere other than hand-picked
+   *  rows — e.g. every current tenant in one property. */
+  scopeLabel?: string;
+  onClose: () => void;
+  onSent: () => void;
+}) {
+  const emailStatements = useEmailStatements();
+
+  const handleSend = async () => {
+    try {
+      const res = await emailStatements.mutateAsync(tenants.map((t) => t.id));
+      if (res.sent > 0) {
+        toast.success(
+          res.failed > 0
+            ? `${res.sent} statement${res.sent === 1 ? "" : "s"} sent · ${res.failed} failed`
+            : `${res.sent} statement${res.sent === 1 ? "" : "s"} sent`,
+        );
+      } else {
+        toast.error("No statements could be sent. Check the Notifications page for why.");
+      }
+      // Failures are on record either way, so the selection is cleared and the
+      // office follows them up from the notification history rather than
+      // guessing which of the ticked rows went out.
+      onSent();
+      onClose();
+    } catch (e) {
+      toast.error(getErrorMessage(e, "Failed to email the statements"));
+    }
+  };
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      size="md"
+      eyebrow="Rent statements"
+      title={`Email ${tenants.length} statement${tenants.length === 1 ? "" : "s"}`}
+      footer={
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" onClick={onClose} disabled={emailStatements.isPending}>
+            Cancel
+          </Button>
+          <Button onClick={handleSend} loading={emailStatements.isPending}>
+            <Mail className="h-4 w-4" /> Send now
+          </Button>
+        </div>
+      }
+    >
+      <div className="space-y-3">
+        <p className="text-sm text-ink-600 dark:text-ink-300">
+          {scopeLabel ? `${scopeLabel} — each` : "Each"} tenant gets their current rent
+          statement as a PDF attachment, showing the balance as at today.
+        </p>
+        <div className="max-h-56 overflow-y-auto rounded-md hairline p-2">
+          <div className="grid gap-1">
+            {tenants.map((t) => (
+              <div key={t.id} className="flex items-center justify-between gap-2 px-2 py-1 text-xs">
+                <span className="min-w-0 truncate font-medium text-ink-900 dark:text-white">
+                  {t.full_name}
+                  <span className="ml-1 font-normal text-ink-400">· {t.unit_label}</span>
+                </span>
+                <span className="shrink-0 truncate text-ink-500">{t.email}</span>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     </Modal>

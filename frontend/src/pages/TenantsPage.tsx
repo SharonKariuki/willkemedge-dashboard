@@ -19,11 +19,11 @@ import { z } from "zod";
 
 import {
   Badge, Button, Card, DatePicker, EmptyState, ErrorState, Input,
-  Modal, PageHeader, Skeleton, Table, TBody, TD, TH, THead, TR,
+  PageHeader, Skeleton, Table, TBody, TD, TH, THead, TR,
 } from "@/components/ui";
-import { Field, inputCls, KYC_TONE, RemindModal } from "@/features/tenants/shared";
+import { EmailStatementsModal, Field, inputCls, KYC_TONE, RemindModal } from "@/features/tenants/shared";
 import { useBuildings } from "@/hooks/useBuildings";
-import { useCreateTenant, useEmailStatements, useTenants } from "@/hooks/useTenants";
+import { useCreateTenant, useTenants } from "@/hooks/useTenants";
 import { useUnits } from "@/hooks/useUnits";
 import { getErrorMessage } from "@/lib/apiError";
 import { cn } from "@/lib/cn";
@@ -160,82 +160,6 @@ function FilterSelect({
   );
 }
 
-// ─── Email statements to a chosen set of tenants ─────────────────────────────
-/** Confirmation step before statements leave the building. Sending is
- *  outward-facing and cannot be recalled, so the office sees exactly who is
- *  about to be written to before it fires. */
-function EmailStatementsModal({
-  tenants, onClose, onSent,
-}: {
-  tenants: TenantListItem[];
-  onClose: () => void;
-  onSent: () => void;
-}) {
-  const emailStatements = useEmailStatements();
-
-  const handleSend = async () => {
-    try {
-      const res = await emailStatements.mutateAsync(tenants.map((t) => t.id));
-      if (res.sent > 0) {
-        toast.success(
-          res.failed > 0
-            ? `${res.sent} statement${res.sent === 1 ? "" : "s"} sent · ${res.failed} failed`
-            : `${res.sent} statement${res.sent === 1 ? "" : "s"} sent`,
-        );
-      } else {
-        toast.error("No statements could be sent. Check the Notifications page for why.");
-      }
-      // Failures are on record either way, so the selection is cleared and the
-      // office follows them up from the notification history rather than
-      // guessing which of the ticked rows went out.
-      onSent();
-      onClose();
-    } catch (e) {
-      toast.error(getErrorMessage(e, "Failed to email the statements"));
-    }
-  };
-
-  return (
-    <Modal
-      open
-      onClose={onClose}
-      size="md"
-      eyebrow="Rent statements"
-      title={`Email ${tenants.length} statement${tenants.length === 1 ? "" : "s"}`}
-      footer={
-        <div className="flex justify-end gap-2">
-          <Button variant="outline" onClick={onClose} disabled={emailStatements.isPending}>
-            Cancel
-          </Button>
-          <Button onClick={handleSend} loading={emailStatements.isPending}>
-            <Mail className="h-4 w-4" /> Send now
-          </Button>
-        </div>
-      }
-    >
-      <div className="space-y-3">
-        <p className="text-sm text-ink-600 dark:text-ink-300">
-          Each tenant gets their current rent statement as a PDF attachment, showing
-          the balance as at today.
-        </p>
-        <div className="max-h-56 overflow-y-auto rounded-md hairline p-2">
-          <div className="grid gap-1">
-            {tenants.map((t) => (
-              <div key={t.id} className="flex items-center justify-between gap-2 px-2 py-1 text-xs">
-                <span className="min-w-0 truncate font-medium text-ink-900 dark:text-white">
-                  {t.full_name}
-                  <span className="ml-1 font-normal text-ink-400">· {t.unit_label}</span>
-                </span>
-                <span className="shrink-0 truncate text-ink-500">{t.email}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    </Modal>
-  );
-}
-
 // ─── Main Page ───────────────────────────────────────────────────────────────
 export default function TenantsPage() {
   const navigate = useNavigate();
@@ -284,12 +208,20 @@ export default function TenantsPage() {
     () => (tenants ?? []).filter((t) => Boolean(t.email)),
     [tenants],
   );
+  // Select-all covers CURRENT tenants only. A former tenant can still be ticked
+  // by hand — they may owe money and a statement is fair — but a filter that
+  // includes moved-out records must not send them all a rent statement because
+  // someone swept the whole list.
+  const sweepable = useMemo(
+    () => emailable.filter((t) => t.status === "active" || t.status === "notice_given"),
+    [emailable],
+  );
   const selectedTenants = useMemo(
     () => emailable.filter((t) => selectedIds.includes(t.id)),
     [emailable, selectedIds],
   );
-  const allEmailableSelected =
-    emailable.length > 0 && selectedTenants.length === emailable.length;
+  const allSweepableSelected =
+    sweepable.length > 0 && sweepable.every((t) => selectedIds.includes(t.id));
 
   // A selection is only meaningful against the rows on screen: keeping ids after
   // a filter change would send to tenants the office can no longer see.
@@ -302,7 +234,7 @@ export default function TenantsPage() {
       prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id],
     );
   const toggleAll = () =>
-    setSelectedIds(allEmailableSelected ? [] : emailable.map((t) => t.id));
+    setSelectedIds(allSweepableSelected ? [] : sweepable.map((t) => t.id));
 
   const NO_EMAIL_HINT = "No email address on file — add one on the tenant page";
 
@@ -452,13 +384,13 @@ export default function TenantsPage() {
                     <TH className="w-10">
                       <input
                         type="checkbox"
-                        checked={allEmailableSelected}
+                        checked={allSweepableSelected}
                         onChange={toggleAll}
-                        disabled={emailable.length === 0}
-                        aria-label="Select all tenants with an email address"
-                        title={emailable.length === 0
-                          ? "No tenant in this list has an email address on file"
-                          : "Select all tenants with an email address"}
+                        disabled={sweepable.length === 0}
+                        aria-label="Select all current tenants with an email address"
+                        title={sweepable.length === 0
+                          ? "No current tenant in this list has an email address on file"
+                          : `Select all ${sweepable.length} current tenants with an email address`}
                         className="h-4 w-4 accent-sage-500"
                       />
                     </TH>

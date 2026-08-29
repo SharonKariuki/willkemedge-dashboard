@@ -111,6 +111,12 @@ nothing on a schedule.
    a closed month, only writes to tenants who have an email address on file, and
    sends each tenant at most one statement per month, so it is safe to re-run.
 
+   **`TENANT_NOTIFICATIONS_ENABLED=false` silences this job** along with receipts
+   and reminders — the run records each statement as PENDING and sends nothing.
+   Check that setting on Render before relying on the schedule. Sending from the
+   dashboard by hand is deliberately *not* silenced: a person chose it and is
+   watching the result.
+
 4. **Test** one:
    ```bash
    curl -H "Authorization: Bearer <CRON_TRIGGER_TOKEN>" https://<your-api-domain>/api/payments/cron/rent-reminders/
