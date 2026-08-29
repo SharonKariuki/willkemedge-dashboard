@@ -717,7 +717,11 @@ def send_monthly_statements(period_iso: str | None = None) -> dict:
     from apps.tenants.models import Tenant, TenantStatus
 
     from .models import NotificationStatus, TenantNotification
-    from .statement_delivery import send_tenant_statement, statement_dedupe_key
+    from .statement_delivery import (
+        open_mail_connection,
+        send_tenant_statement,
+        statement_dedupe_key,
+    )
 
     as_at = _statement_period(period_iso)
     counts = {"sent": 0, "failed": 0, "skipped": 0, "no_email": 0, "as_at": as_at.isoformat()}
@@ -725,24 +729,27 @@ def send_monthly_statements(period_iso: str | None = None) -> dict:
     tenants = Tenant.objects.filter(status=TenantStatus.ACTIVE).select_related(
         "unit", "unit__building"
     )
-    for tenant in tenants:
-        if not tenant.email or not tenant.unit_id:
-            counts["no_email"] += 1
-            continue
+    with open_mail_connection() as mail:
+        for tenant in tenants:
+            if not tenant.email or not tenant.unit_id:
+                counts["no_email"] += 1
+                continue
 
-        key = statement_dedupe_key(tenant.id, as_at)
-        already_sent = TenantNotification.objects.filter(
-            dedupe_key=key, status=NotificationStatus.SENT
-        ).exists()
-        if already_sent:
-            counts["skipped"] += 1
-            continue
+            key = statement_dedupe_key(tenant.id, as_at)
+            already_sent = TenantNotification.objects.filter(
+                dedupe_key=key, status=NotificationStatus.SENT
+            ).exists()
+            if already_sent:
+                counts["skipped"] += 1
+                continue
 
-        notification = send_tenant_statement(tenant, statement_date=as_at, dedupe_key=key)
-        if notification.status == NotificationStatus.SENT:
-            counts["sent"] += 1
-        else:
-            counts["failed"] += 1
+            notification = send_tenant_statement(
+                tenant, statement_date=as_at, dedupe_key=key, connection=mail
+            )
+            if notification.status == NotificationStatus.SENT:
+                counts["sent"] += 1
+            else:
+                counts["failed"] += 1
 
     logger.info(
         "send_monthly_statements (as at %s): %d sent, %d failed, %d already sent, "
