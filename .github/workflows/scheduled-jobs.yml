@@ -8,6 +8,10 @@ name: Scheduled jobs
 #   - secret   CRON_TRIGGER_TOKEN  (must equal CRON_TRIGGER_TOKEN in Render)
 #   - variable API_BASE_URL        (e.g. https://<your-api-domain>/api)
 #
+# monthly-statements deliberately runs on the 2nd, a day after monthly-arrears:
+# that job raises the month's rent, and a statement emailed before it has run
+# states a balance with the current month missing from it.
+#
 # NOTE: scheduled workflows only run from the repository's DEFAULT branch, so
 # this must be merged to that branch (main) to start firing. Times are UTC;
 # EAT = UTC+3.
@@ -19,6 +23,7 @@ on:
     - cron: "0 22 * * *"   # recalculate-statuses   01:00 EAT (next day)
     - cron: "0 15 * * *"   # daily-reconciliation   18:00 EAT
     - cron: "0 0 1 * *"    # monthly-arrears        1st, 03:00 EAT
+    - cron: "0 4 2 * *"    # monthly-statements     2nd, 07:00 EAT
   workflow_dispatch:
     inputs:
       job:
@@ -31,6 +36,7 @@ on:
           - recalculate-statuses
           - daily-reconciliation
           - monthly-arrears
+          - monthly-statements
 
 concurrency:
   group: scheduled-jobs
@@ -49,6 +55,7 @@ jobs:
             "0 22 * * *") slug="recalculate-statuses" ;;
             "0 15 * * *") slug="daily-reconciliation" ;;
             "0 0 1 * *")  slug="monthly-arrears" ;;
+            "0 4 2 * *")  slug="monthly-statements" ;;
             *)            slug="${{ github.event.inputs.job }}" ;;
           esac
           if [ -z "$slug" ]; then echo "Could not resolve a job slug"; exit 1; fi
@@ -63,7 +70,13 @@ jobs:
         run: |
           if [ -z "$TOKEN" ]; then echo "::error::CRON_TRIGGER_TOKEN secret is not set"; exit 1; fi
           if [ -z "$API_BASE_URL" ]; then echo "::error::API_BASE_URL variable is not set"; exit 1; fi
-          code=$(curl -sS -o response.txt -w "%{http_code}" --max-time 120 -X POST \
+          # monthly-statements renders a PDF per tenant, so it needs longer
+          # than the rest. If it is cut off part-way the run is still safe to
+          # repeat: each statement is deduped per tenant per month, so the
+          # next run resumes with whoever was not reached.
+          max_time=120
+          if [ "$SLUG" = "monthly-statements" ]; then max_time=600; fi
+          code=$(curl -sS -o response.txt -w "%{http_code}" --max-time "$max_time" -X POST \
             -H "Authorization: Bearer $TOKEN" \
             "${API_BASE_URL%/}/payments/cron/${SLUG}/")
           echo "job=$SLUG http_status=$code"

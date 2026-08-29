@@ -390,3 +390,94 @@ class TenantViewSet(viewsets.ModelViewSet):
             return response
         return Response({"detail": "PDF generation failed."}, status=500)
 
+
+    # ── Emailing the statement ───────────────────────────────────────────────
+    # The scheduled monthly run lives in payments.tasks.send_monthly_statements.
+    # These two are the manual path: the office picks who gets one and when.
+    # Both send with automatic=False, so a deliberate send from the dashboard is
+    # not silenced by TENANT_NOTIFICATIONS_ENABLED, and neither passes a
+    # dedupe_key — re-sending a statement on request is a normal thing to do.
+
+    @action(detail=True, methods=["post"], url_path="email-statement")
+    def email_statement(self, request, pk=None):
+        """POST /api/tenants/<id>/email-statement/ — email this tenant their statement."""
+        from apps.payments.notification_views import TenantNotificationSerializer
+        from apps.payments.statement_delivery import send_tenant_statement
+
+        tenant = self.get_object()
+        notification = send_tenant_statement(
+            tenant,
+            automatic=False,
+            created_by=request.user if request.user.is_authenticated else None,
+        )
+        sent = notification.status == "sent"
+        return Response(
+            {
+                "sent": 1 if sent else 0,
+                "failed": 0 if sent else 1,
+                "total": 1,
+                "notifications": [TenantNotificationSerializer(notification).data],
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+    @action(detail=False, methods=["post"], url_path="email-statements")
+    def email_statements(self, request):
+        """POST /api/tenants/email-statements/ — email a chosen set of tenants.
+
+        Body: {"tenant_ids": [1, 2, 3]}
+
+        Every id is reported on, including ones that could not be sent, so the
+        UI can name the tenants who need an email address rather than just
+        showing a count that does not add up.
+        """
+        from apps.payments.notification_views import TenantNotificationSerializer
+        from apps.payments.statement_delivery import send_tenant_statement
+
+        raw_ids = request.data.get("tenant_ids") or []
+        if not isinstance(raw_ids, list) or not raw_ids:
+            return Response(
+                {"detail": "Provide tenant_ids as a non-empty list."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            tenant_ids = [int(i) for i in raw_ids]
+        except (TypeError, ValueError):
+            return Response(
+                {"detail": "tenant_ids must be integers."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Cap the batch: each statement renders a PDF, and the request is
+        # synchronous. The whole roster is ~80, so this only ever trips on a
+        # malformed or malicious payload.
+        if len(tenant_ids) > 200:
+            return Response(
+                {"detail": "Too many tenants in one send — select 200 or fewer."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        tenants = Tenant.objects.filter(id__in=tenant_ids).select_related(
+            "unit", "unit__building"
+        )
+        if not tenants:
+            return Response(
+                {"detail": "No tenants matched."}, status=status.HTTP_400_BAD_REQUEST
+            )
+
+        user = request.user if request.user.is_authenticated else None
+        results = [
+            send_tenant_statement(tenant, automatic=False, created_by=user)
+            for tenant in tenants
+        ]
+        sent = sum(1 for n in results if n.status == "sent")
+
+        return Response(
+            {
+                "sent": sent,
+                "failed": len(results) - sent,
+                "total": len(results),
+                "notifications": TenantNotificationSerializer(results, many=True).data,
+            },
+            status=status.HTTP_201_CREATED,
+        )

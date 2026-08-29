@@ -20,7 +20,8 @@ import {
 } from "@/components/ui";
 import { Field, KycPanel, RemindModal, inputCls } from "@/features/tenants/shared";
 import {
-  usePaymentHistory, useMoveOutNotice, useMoveOutTenant, useTenant, useUpdateTenant,
+  useEmailStatement, usePaymentHistory, useMoveOutNotice, useMoveOutTenant, useTenant,
+  useUpdateTenant,
 } from "@/hooks/useTenants";
 import { getErrorMessage } from "@/lib/apiError";
 import { cn } from "@/lib/cn";
@@ -109,6 +110,7 @@ export default function TenantDetailPage() {
   const [mode, setMode] = useState<Mode>("view");
   const [reminding, setReminding] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const emailStatement = useEmailStatement();
 
   const editForm = useForm<EditFormValues>({ resolver: zodResolver(editSchema) });
   const noticeForm = useForm<NoticeFormValues>({
@@ -137,6 +139,24 @@ export default function TenantDetailPage() {
       });
     }
   }, [tenant, editForm]);
+
+  async function handleEmailStatement() {
+    if (!tenant?.email) {
+      toast.error("This tenant has no email address on file. Add one under Edit.");
+      return;
+    }
+    try {
+      const res = await emailStatement.mutateAsync(tenant.id);
+      if (res.sent > 0) {
+        toast.success(`Statement emailed to ${tenant.email}`);
+      } else {
+        const err = res.notifications?.[0]?.error;
+        toast.error(err ? `Could not send: ${err}` : "The statement could not be emailed.");
+      }
+    } catch (e) {
+      toast.error(getErrorMessage(e, "Failed to email the statement."));
+    }
+  }
 
   async function handleStatement() {
     setDownloading(true);
@@ -191,6 +211,17 @@ export default function TenantDetailPage() {
               <Button variant="outline" onClick={() => setMode("edit")}><Pencil className="h-4 w-4" /> Edit</Button>
               <Button variant="outline" onClick={handleStatement} loading={downloading}>
                 <Download className="h-4 w-4" /> Statement PDF
+              </Button>
+              <Button
+                variant="outline"
+                onClick={handleEmailStatement}
+                loading={emailStatement.isPending}
+                disabled={!tenant.email}
+                title={tenant.email
+                  ? `Email the statement to ${tenant.email}`
+                  : "No email address on file — add one under Edit"}
+              >
+                <Mail className="h-4 w-4" /> Email Statement
               </Button>
               <Button variant="outline" onClick={() => setMode("notice")}><AlertTriangle className="h-4 w-4" /> Notice</Button>
               <Button variant="danger" onClick={() => setMode("moveout")}><LogOut className="h-4 w-4" /> Move Out</Button>

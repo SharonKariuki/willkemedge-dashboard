@@ -20,10 +20,16 @@ red instead of failing silently.
 Schedule these to match the old Celery beat schedule (times are EAT):
 
     00:05, 1st of month   monthly-arrears
+    07:00, 2nd of month   monthly-statements
     00:30 daily           recalculate-statuses
     08:00 daily           rent-reminders
     09:00 daily           arrears-reminders
     any time daily        daily-reconciliation
+
+`monthly-statements` runs on the 2nd, not the 1st: `monthly-arrears` is what
+raises the month's rent, and a statement emailed before it has run states a
+balance with the current month missing from it. It accepts an optional
+`?period=YYYY-MM` to re-issue a closed month.
 
 `monthly-arrears` is the important one: it is the only thing that creates an
 Arrears row for a tenant who has *not* paid. Without it, defaulters produce no
@@ -43,6 +49,7 @@ from .tasks import (
     recalculate_all_statuses,
     send_arrears_reminders,
     send_daily_reconciliation,
+    send_monthly_statements,
     send_rent_reminders,
 )
 
@@ -56,6 +63,7 @@ JOBS = {
     "recalculate-statuses": recalculate_all_statuses,
     "monthly-arrears": generate_monthly_arrears,
     "daily-reconciliation": send_daily_reconciliation,
+    "monthly-statements": send_monthly_statements,
 }
 
 
@@ -105,10 +113,12 @@ class ScheduledJobTriggerView(APIView):
                 status=404,
             )
 
-        # send_daily_reconciliation is the only job that takes an argument.
+        # Two jobs take an optional date argument; the rest take none.
         args = ()
         if job == "daily-reconciliation":
             args = (request.query_params.get("date") or None,)
+        elif job == "monthly-statements":
+            args = (request.query_params.get("period") or None,)
 
         logger.info("Cron trigger running job=%s", job)
         result = task.apply(args=args).get()

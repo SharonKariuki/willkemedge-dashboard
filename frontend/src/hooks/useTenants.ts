@@ -188,3 +188,50 @@ export function useRejectKyc(id: number | string) {
     },
   });
 }
+
+/** Outcome of a statement email send — one entry per tenant that was asked for,
+ *  including the ones that could not be sent, so the UI can name them. */
+export interface StatementEmailResult {
+  sent: number;
+  failed: number;
+  total: number;
+  notifications: {
+    id: number;
+    tenant: number;
+    tenant_name: string;
+    unit_label: string;
+    subject: string;
+    status: "pending" | "sent" | "failed";
+    error: string;
+  }[];
+}
+
+/** Email one tenant their rent statement (PDF attached). */
+export function useEmailStatement() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (tenantId: number | string) => {
+      const { data } = await api.post(`/tenants/${tenantId}/email-statement/`);
+      return data as StatementEmailResult;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["notifications"] });
+    },
+  });
+}
+
+/** Email a chosen set of tenants their rent statements in one go. */
+export function useEmailStatements() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (tenantIds: number[]) => {
+      const { data } = await api.post("/tenants/email-statements/", {
+        tenant_ids: tenantIds,
+      });
+      return data as StatementEmailResult;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["notifications"] });
+    },
+  });
+}
