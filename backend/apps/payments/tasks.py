@@ -7,6 +7,7 @@ Tasks:
   generate_monthly_arrears   — 1st of month: create arrears records
   send_rent_reminders        — daily: SMS N days before each tenant's due day
   send_arrears_reminders     — daily: SMS on/after due day when rent unpaid
+  send_monthly_statements    — monthly: emailed rent statement PDF per tenant
   poll_bank_statement        — hourly fallback for banks without webhooks
 
 All tasks use bind=True + max_retries=3 with exponential backoff.
@@ -662,3 +663,90 @@ def send_arrears_reminders() -> int:
 
     logger.info("send_arrears_reminders: sent %d arrears reminders", sent)
     return sent
+
+
+# ---------------------------------------------------------------------------
+# Monthly rent statements — emailed PDF, one per tenant
+# ---------------------------------------------------------------------------
+
+def _statement_period(period_iso: str | None):
+    """Resolve the 'as at' date for a statement run.
+
+    Accepts YYYY-MM (the last day of that month, for backfilling a period that
+    has closed) or YYYY-MM-DD. Defaults to today, which is what the scheduled
+    run uses: a statement sent on the 2nd states the balance as at the 2nd.
+    """
+    import calendar
+    import datetime as _dt
+
+    if not period_iso:
+        return timezone.localdate()
+    try:
+        if len(period_iso) == 7:
+            year, month = int(period_iso[:4]), int(period_iso[5:7])
+            return _dt.date(year, month, calendar.monthrange(year, month)[1])
+        return _dt.date.fromisoformat(period_iso[:10])
+    except (ValueError, TypeError):
+        logger.warning(
+            "send_monthly_statements: bad period=%r — using today", period_iso
+        )
+        return timezone.localdate()
+
+
+@shared_task
+def send_monthly_statements(period_iso: str | None = None) -> dict:
+    """
+    Email every active tenant their rent statement with the PDF attached.
+
+    Schedule this a day *after* `monthly-arrears`: that job is what raises the
+    month's rent, and a statement sent before it runs states a balance with the
+    current month missing from it.
+
+    Idempotent per tenant per month via dedupe_key, so re-running the job — or a
+    scheduler that fires twice — does not send the same statement again. A
+    tenant whose send *failed* is retried on a re-run, which is the whole point
+    of keeping the failures on record.
+
+    Tenants with no email address are counted, not recorded: most of the roster
+    has no address on file yet, and writing a failure row for each of them every
+    month would bury the real failures.
+
+    Returns per-outcome counts, which the cron endpoint echoes in its response so
+    the scheduler's log says what actually happened.
+    """
+    from apps.tenants.models import Tenant, TenantStatus
+
+    from .models import NotificationStatus, TenantNotification
+    from .statement_delivery import send_tenant_statement, statement_dedupe_key
+
+    as_at = _statement_period(period_iso)
+    counts = {"sent": 0, "failed": 0, "skipped": 0, "no_email": 0, "as_at": as_at.isoformat()}
+
+    tenants = Tenant.objects.filter(status=TenantStatus.ACTIVE).select_related(
+        "unit", "unit__building"
+    )
+    for tenant in tenants:
+        if not tenant.email or not tenant.unit_id:
+            counts["no_email"] += 1
+            continue
+
+        key = statement_dedupe_key(tenant.id, as_at)
+        already_sent = TenantNotification.objects.filter(
+            dedupe_key=key, status=NotificationStatus.SENT
+        ).exists()
+        if already_sent:
+            counts["skipped"] += 1
+            continue
+
+        notification = send_tenant_statement(tenant, statement_date=as_at, dedupe_key=key)
+        if notification.status == NotificationStatus.SENT:
+            counts["sent"] += 1
+        else:
+            counts["failed"] += 1
+
+    logger.info(
+        "send_monthly_statements (as at %s): %d sent, %d failed, %d already sent, "
+        "%d with no email on file",
+        as_at, counts["sent"], counts["failed"], counts["skipped"], counts["no_email"],
+    )
+    return counts

@@ -168,11 +168,16 @@ def send_email(
     html_content: str,
     text_content: str = "",
     attachments: list[tuple[str, bytes, str]] | None = None,
-) -> None:
+) -> bool:
     """
     Send a transactional email via SMTP (Django's built-in mail backend).
 
     attachments : optional list of (filename, content_bytes, mimetype) tuples.
+
+    Returns True when the message was handed to the mail backend, False when no
+    SMTP credentials are configured and the send was skipped. Callers that record
+    the outcome need to tell those apart — without it, an unconfigured mailbox
+    logs every statement as delivered.
     """
     from_email = getattr(settings, "DEFAULT_FROM_EMAIL", "wilkem.ventures@gmail.com")
     user = getattr(settings, "EMAIL_HOST_USER", "")
@@ -183,7 +188,7 @@ def send_email(
             "Email skipped (EMAIL_HOST_USER/PASSWORD not set): to=%s subj=%s",
             to_email, subject,
         )
-        return
+        return False
 
     try:
         msg = EmailMultiAlternatives(
@@ -197,6 +202,7 @@ def send_email(
             msg.attach(filename, content, mimetype)
         msg.send(fail_silently=False)
         logger.info("Email sent to %s", to_email)
+        return True
     except Exception as exc:
         logger.error("Email failed to %s: %s", to_email, exc)
         raise
@@ -265,11 +271,18 @@ def _ledger_row(row: dict) -> str:
     )
 
 
-def payment_statement_email_html(tenant_name: str, amount, reference: str, statement: dict) -> str:
+def statement_email_html(
+    tenant_name: str, statement: dict, *, amount=None, reference: str = ""
+) -> str:
     """
     Full HTML rent statement that mirrors the PDF layout exactly:
     branded header, customer block + TOTAL BALANCE DUE, Statement Summary +
     Payment options, note, and the running-balance ledger.
+
+    ``amount`` is the payment that prompted the statement, when there is one.
+    A monthly statement run has no payment behind it, so it passes None and the
+    closing note asks for settlement rather than thanking the tenant for money
+    they have not sent.
     """
     # ── Statement Summary ──
     summary_rows = [
@@ -321,6 +334,23 @@ def payment_statement_email_html(tenant_name: str, amount, reference: str, state
     if statement.get("tenant_phone"):
         customer_lines.append(f'<div>Tel: {_e(statement["tenant_phone"])}</div>')
     customer_html = "".join(customer_lines)
+
+    # ── Closing note ──
+    # A payment-triggered receipt thanks the tenant for what they just sent; a
+    # monthly statement has no payment behind it and asks for settlement.
+    if amount is not None:
+        ref_html = f" (Ref: <b>{_e(reference)}</b>)" if reference else ""
+        closing_note = (
+            f"Thank you for your payment of <b>KES {amount:,.2f}</b>{ref_html}. "
+            "Your full rent statement above (also attached as a PDF) reflects "
+            "the updated balance."
+        )
+    else:
+        closing_note = (
+            "Please find your rent statement above, also attached as a PDF. "
+            f"The balance shown is <b>KES {_e(statement['total_due'])}</b>, "
+            f"payable on or before {_e(statement['due_date'])}."
+        )
 
     # ── Ledger ──
     ledger_rows_html = (
@@ -419,13 +449,17 @@ def payment_statement_email_html(tenant_name: str, amount, reference: str, state
 
   <p style="margin-top:14px;color:#475569;font-size:11px">
     Dear {_e(tenant_name)},<br>
-    Thank you for your payment of <b>KES {amount:,.2f}</b>{f' (Ref: <b>{_e(reference)}</b>)' if reference else ''}.
-    Your full rent statement above (also attached as a PDF) reflects the updated balance.
+    {closing_note}
     If you notice any discrepancy, please contact the management office.
   </p>
 
 </div>
 </body></html>"""
+
+
+def payment_statement_email_html(tenant_name: str, amount, reference: str, statement: dict) -> str:
+    """Payment-receipt flavour of :func:`statement_email_html`."""
+    return statement_email_html(tenant_name, statement, amount=amount, reference=reference)
 
 
 def custom_email_html(subject: str, body: str) -> str:
