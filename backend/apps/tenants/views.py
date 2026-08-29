@@ -432,7 +432,10 @@ class TenantViewSet(viewsets.ModelViewSet):
         showing a count that does not add up.
         """
         from apps.payments.notification_views import TenantNotificationSerializer
-        from apps.payments.statement_delivery import send_tenant_statement
+        from apps.payments.statement_delivery import (
+            open_mail_connection,
+            send_tenant_statement,
+        )
 
         raw_ids = request.data.get("tenant_ids") or []
         if not isinstance(raw_ids, list) or not raw_ids:
@@ -466,10 +469,16 @@ class TenantViewSet(viewsets.ModelViewSet):
             )
 
         user = request.user if request.user.is_authenticated else None
-        results = [
-            send_tenant_statement(tenant, automatic=False, created_by=user)
-            for tenant in tenants
-        ]
+        # One SMTP connection for the whole batch. The handshake, not the PDF,
+        # is what makes a property-wide send slow, and this request is
+        # synchronous — the office is watching a spinner while it runs.
+        with open_mail_connection() as mail:
+            results = [
+                send_tenant_statement(
+                    tenant, automatic=False, created_by=user, connection=mail
+                )
+                for tenant in tenants
+            ]
         sent = sum(1 for n in results if n.status == "sent")
 
         return Response(

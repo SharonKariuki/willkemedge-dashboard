@@ -3,15 +3,18 @@
  *
  * Middle of the Property → Unit → Tenant drill-down: the unit list for one
  * property. Occupied units link to the tenant detail page; vacant units are
- * shown but inert.
+ * shown but inert. Also the one place to email every current tenant in this
+ * property their rent statement in one go.
  */
-import { ArrowLeft, DoorOpen } from "lucide-react";
+import { ArrowLeft, DoorOpen, Mail } from "lucide-react";
+import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
 import {
-  Badge, Card, EmptyState, ErrorState, Skeleton,
+  Badge, Button, Card, EmptyState, ErrorState, Skeleton,
   Table, TBody, TD, TH, THead, TR,
 } from "@/components/ui";
+import { EmailStatementsModal } from "@/features/tenants/shared";
 import { useBuilding } from "@/hooks/useBuildings";
 import { useTenants } from "@/hooks/useTenants";
 
@@ -22,6 +25,7 @@ export default function BuildingDetailPage() {
   const navigate = useNavigate();
   const { data: building, isLoading, isError, refetch } = useBuilding(id ?? "");
   const { data: tenants } = useTenants(id ? { building: id } : undefined);
+  const [sendingStatements, setSendingStatements] = useState(false);
 
   if (isLoading) {
     return <div className="space-y-4">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-20" />)}</div>;
@@ -48,20 +52,50 @@ export default function BuildingDetailPage() {
   const units = building.units ?? [];
   const occupied = units.filter((u) => tenantByUnit.has(u.label)).length;
 
+  // Everyone in this property who can actually be written to. Sourced from the
+  // same current-occupant map as the table, so the button sends to exactly the
+  // tenants named on screen — never to a former one whose record still returns
+  // from the tenants endpoint.
+  const statementRecipients = [...tenantByUnit.values()].filter((t) => Boolean(t.email));
+  const withoutEmail = tenantByUnit.size - statementRecipients.length;
+
   return (
     <div className="space-y-6">
-      <div>
-        <button
-          onClick={() => navigate("/buildings")}
-          className="mb-2 inline-flex items-center gap-1 text-sm text-content-muted hover:text-content"
-        >
-          <ArrowLeft className="h-4 w-4" /> All properties
-        </button>
-        <h1 className="font-display text-2xl font-bold text-content sm:text-3xl">{building.name}</h1>
-        <p className="mt-1 text-sm text-content-muted">
-          {units.length} units · {occupied} occupied · {units.length - occupied} vacant
-          {building.property_type_display ? ` · ${building.property_type_display}` : ""}
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <button
+            onClick={() => navigate("/buildings")}
+            className="mb-2 inline-flex items-center gap-1 text-sm text-content-muted hover:text-content"
+          >
+            <ArrowLeft className="h-4 w-4" /> All properties
+          </button>
+          <h1 className="font-display text-2xl font-bold text-content sm:text-3xl">{building.name}</h1>
+          <p className="mt-1 text-sm text-content-muted">
+            {units.length} units · {occupied} occupied · {units.length - occupied} vacant
+            {building.property_type_display ? ` · ${building.property_type_display}` : ""}
+          </p>
+        </div>
+        <div className="text-right">
+          <Button
+            variant="outline"
+            onClick={() => setSendingStatements(true)}
+            disabled={statementRecipients.length === 0}
+            title={statementRecipients.length === 0
+              ? "No current tenant in this property has an email address on file"
+              : `Email a statement to ${statementRecipients.length} tenant(s) in this property`}
+          >
+            <Mail className="h-4 w-4" />
+            Email statements
+            {statementRecipients.length > 0 ? ` (${statementRecipients.length})` : ""}
+          </Button>
+          {withoutEmail > 0 && (
+            // Say what the button cannot reach. A count on its own reads as
+            // "everyone", and the gap is the whole roster today.
+            <p className="mt-1.5 text-[11px] text-content-muted">
+              {withoutEmail} tenant{withoutEmail === 1 ? " has" : "s have"} no email on file
+            </p>
+          )}
+        </div>
       </div>
 
       {units.length === 0 ? (
@@ -117,6 +151,15 @@ export default function BuildingDetailPage() {
             </TBody>
           </Table>
         </Card>
+      )}
+
+      {sendingStatements && (
+        <EmailStatementsModal
+          tenants={statementRecipients}
+          scopeLabel={`Every current tenant in ${building.name}`}
+          onClose={() => setSendingStatements(false)}
+          onSent={() => setSendingStatements(false)}
+        />
       )}
     </div>
   );

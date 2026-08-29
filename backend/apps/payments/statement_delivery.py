@@ -15,6 +15,7 @@ and retried rather than silently dropping out of the run.
 from __future__ import annotations
 
 import logging
+from contextlib import contextmanager
 
 from django.conf import settings
 from django.utils import timezone
@@ -22,6 +23,45 @@ from django.utils import timezone
 from .models import NotificationChannel, NotificationStatus, TenantNotification
 
 logger = logging.getLogger(__name__)
+
+
+@contextmanager
+def open_mail_connection():
+    """One SMTP connection held open for a whole batch.
+
+    Django opens and closes a connection per message by default. That is fine
+    for a single receipt and is the slowest part of a statement run — the
+    handshake dwarfs rendering the PDF — so a batch pays it once.
+
+    Yields None when no credentials are configured, which is exactly what
+    `send_email` expects for its own unconfigured path: it refuses to send
+    before it ever touches the connection.
+    """
+    from django.core.mail import get_connection
+
+    if not getattr(settings, "EMAIL_HOST_USER", "") or not getattr(
+        settings, "EMAIL_HOST_PASSWORD", ""
+    ):
+        yield None
+        return
+
+    connection = get_connection()
+    try:
+        connection.open()
+    except Exception as exc:
+        # Not fatal: fall back to a connection per message, which may still get
+        # through, and let each tenant record its own failure if it does not.
+        logger.warning("Could not open a shared mail connection (%s) — sending one at a time", exc)
+        yield None
+        return
+
+    try:
+        yield connection
+    finally:
+        try:
+            connection.close()
+        except Exception:  # noqa: BLE001 - closing must never mask the batch result
+            logger.debug("Ignoring error while closing the mail connection", exc_info=True)
 
 
 def statement_dedupe_key(tenant_id: int, period) -> str:
@@ -53,6 +93,7 @@ def send_tenant_statement(
     automatic: bool = True,
     created_by=None,
     dedupe_key: str = "",
+    connection=None,
 ) -> TenantNotification:
     """Email one tenant their rent statement with the PDF attached.
 
@@ -60,6 +101,9 @@ def send_tenant_statement(
     the reason, or PENDING when an automatic send was suppressed. Never raises
     on a per-tenant problem (no email, no unit, SMTP refusal), so one bad row
     cannot abort a batch; the caller reads `status` to count what happened.
+
+    `connection` is an open mail backend to send over, for batches that would
+    otherwise pay an SMTP handshake per tenant; see `open_mail_connection`.
 
     `automatic` marks a send the system decided to make on its own — the monthly
     run. Those are what TENANT_NOTIFICATIONS_ENABLED silences. A manual send
@@ -136,6 +180,7 @@ def send_tenant_statement(
             html,
             text_content=notification.body,
             attachments=attachments,
+            connection=connection,
         )
     except Exception as exc:
         notification.status = NotificationStatus.FAILED

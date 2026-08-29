@@ -25,17 +25,37 @@ const DASHBOARD = {
   alerts: [],
 };
 
+// Two tenants, one with an email address and one without: statements can only
+// be sent to the first, and the UI has to say so rather than silently dropping
+// the second from a batch.
 const TENANTS = [
   {
     id: 1, full_name: "Mercy Murunga", first_name: "Mercy", last_name: "Murunga",
-    phone: "+254700000001", unit: 1, unit_label: "DON1A",
+    phone: "+254700000001", email: "mercy.murunga@example.com", unit: 1, unit_label: "DON1A",
     building_name: "Wilkem Edge Apartments - Donholm", building_id: 1,
     monthly_rent: "12000.00", deposit_paid: "12000.00", status: "active",
     status_display: "Active", kyc_status: "verified", kyc_status_display: "Verified",
     balance: "0.00", payment_status: "paid", move_in_date: "2026-01-01",
     move_out_date: null, due_day: 5,
   },
+  {
+    id: 2, full_name: "Peter Kimani", first_name: "Peter", last_name: "Kimani",
+    phone: "+254700000002", email: "", unit: 2, unit_label: "DON1B",
+    building_name: "Wilkem Edge Apartments - Donholm", building_id: 1,
+    monthly_rent: "15000.00", deposit_paid: "15000.00", status: "active",
+    status_display: "Active", kyc_status: "pending", kyc_status_display: "Pending Review",
+    balance: "15000.00", payment_status: "in_arrears", move_in_date: "2026-02-01",
+    move_out_date: null, due_day: 5,
+  },
 ];
+
+const BUILDING = {
+  id: 1, name: "Wilkem Edge Apartments - Donholm", property_type_display: "Residential",
+  units: [
+    { id: 1, label: "DON1A", classification_display: "Residential", monthly_rent: "12000.00", status: "occupied_paid", status_display: "Paid" },
+    { id: 2, label: "DON1B", classification_display: "Residential", monthly_rent: "15000.00", status: "occupied_unpaid", status_display: "Unpaid" },
+  ],
+};
 
 export async function mockApi(page: Page) {
   await page.route("**/api/**", async (route) => {
@@ -53,11 +73,15 @@ export async function mockApi(page: Page) {
     if (path === "/auth/logout") return json({});
     if (path === "/dashboard/summary") return json(DASHBOARD);
     if (path === "/tenants" && method === "GET") return json(TENANTS);
-    if (path === "/tenants" && method === "POST") return json({ id: 2, ...TENANTS[0] }, 201);
+    if (path === "/tenants" && method === "POST") return json({ id: 3, ...TENANTS[0] }, 201);
+    if (path === "/tenants/email-statements" && method === "POST") {
+      return json({ sent: 1, failed: 0, total: 1, notifications: [] }, 201);
+    }
     if (path.startsWith("/tenants/") && path.endsWith("/payment-history")) {
       return json({ total_paid: "120000.00", total_arrears: "0.00", payments: [], arrears: [] });
     }
     if (path.startsWith("/tenants/")) return json(TENANTS[0]);
+    if (path === "/buildings/1") return json(BUILDING);
     if (path === "/buildings") return json(DASHBOARD.buildings.map((b) => ({ ...b, unit_count: b.total, occupied_count: b.occupied })));
     if (path === "/units") return json([]);
     if (path === "/payments" && method === "POST") return json({ id: 1, amount: "12000.00" }, 201);
