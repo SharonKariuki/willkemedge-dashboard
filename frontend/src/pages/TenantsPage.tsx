@@ -3,10 +3,13 @@
  * - Building / status / payment / KYC filters
  * - Rows and mobile cards navigate to the full tenant detail page (/tenants/:id)
  * - Per-tenant "Remind" (SMS / Email) for anyone in arrears
+ * - Tick tenants to email them their rent statement as a PDF. Only tenants with
+ *   an email address on file can be selected; the monthly run that covers
+ *   everyone lives in payments.tasks.send_monthly_statements.
  */
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
-  BellRing, ChevronDown, Download, Phone, Plus, Search, UserPlus, X,
+  BellRing, ChevronDown, Download, Mail, Phone, Plus, Search, UserPlus, X,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
@@ -16,11 +19,11 @@ import { z } from "zod";
 
 import {
   Badge, Button, Card, DatePicker, EmptyState, ErrorState, Input,
-  PageHeader, Skeleton, Table, TBody, TD, TH, THead, TR,
+  Modal, PageHeader, Skeleton, Table, TBody, TD, TH, THead, TR,
 } from "@/components/ui";
 import { Field, inputCls, KYC_TONE, RemindModal } from "@/features/tenants/shared";
 import { useBuildings } from "@/hooks/useBuildings";
-import { useCreateTenant, useTenants } from "@/hooks/useTenants";
+import { useCreateTenant, useEmailStatements, useTenants } from "@/hooks/useTenants";
 import { useUnits } from "@/hooks/useUnits";
 import { getErrorMessage } from "@/lib/apiError";
 import { cn } from "@/lib/cn";
@@ -157,6 +160,82 @@ function FilterSelect({
   );
 }
 
+// ─── Email statements to a chosen set of tenants ─────────────────────────────
+/** Confirmation step before statements leave the building. Sending is
+ *  outward-facing and cannot be recalled, so the office sees exactly who is
+ *  about to be written to before it fires. */
+function EmailStatementsModal({
+  tenants, onClose, onSent,
+}: {
+  tenants: TenantListItem[];
+  onClose: () => void;
+  onSent: () => void;
+}) {
+  const emailStatements = useEmailStatements();
+
+  const handleSend = async () => {
+    try {
+      const res = await emailStatements.mutateAsync(tenants.map((t) => t.id));
+      if (res.sent > 0) {
+        toast.success(
+          res.failed > 0
+            ? `${res.sent} statement${res.sent === 1 ? "" : "s"} sent · ${res.failed} failed`
+            : `${res.sent} statement${res.sent === 1 ? "" : "s"} sent`,
+        );
+      } else {
+        toast.error("No statements could be sent. Check the Notifications page for why.");
+      }
+      // Failures are on record either way, so the selection is cleared and the
+      // office follows them up from the notification history rather than
+      // guessing which of the ticked rows went out.
+      onSent();
+      onClose();
+    } catch (e) {
+      toast.error(getErrorMessage(e, "Failed to email the statements"));
+    }
+  };
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      size="md"
+      eyebrow="Rent statements"
+      title={`Email ${tenants.length} statement${tenants.length === 1 ? "" : "s"}`}
+      footer={
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" onClick={onClose} disabled={emailStatements.isPending}>
+            Cancel
+          </Button>
+          <Button onClick={handleSend} loading={emailStatements.isPending}>
+            <Mail className="h-4 w-4" /> Send now
+          </Button>
+        </div>
+      }
+    >
+      <div className="space-y-3">
+        <p className="text-sm text-ink-600 dark:text-ink-300">
+          Each tenant gets their current rent statement as a PDF attachment, showing
+          the balance as at today.
+        </p>
+        <div className="max-h-56 overflow-y-auto rounded-md hairline p-2">
+          <div className="grid gap-1">
+            {tenants.map((t) => (
+              <div key={t.id} className="flex items-center justify-between gap-2 px-2 py-1 text-xs">
+                <span className="min-w-0 truncate font-medium text-ink-900 dark:text-white">
+                  {t.full_name}
+                  <span className="ml-1 font-normal text-ink-400">· {t.unit_label}</span>
+                </span>
+                <span className="shrink-0 truncate text-ink-500">{t.email}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 // ─── Main Page ───────────────────────────────────────────────────────────────
 export default function TenantsPage() {
   const navigate = useNavigate();
@@ -171,6 +250,8 @@ export default function TenantsPage() {
   const [showForm, setShowForm] = useState(searchParams.get("new") === "1");
   const [remindTenant, setRemindTenant] = useState<TenantListItem | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [confirmingSend, setConfirmingSend] = useState(false);
 
   useEffect(() => { setSearch(searchParams.get("q") ?? ""); }, [searchParams]);
   useEffect(() => { setPayFilter(searchParams.get("payment_status") ?? ""); }, [searchParams]);
@@ -195,6 +276,35 @@ export default function TenantsPage() {
 
   const { data: tenants, isLoading, isError, refetch } = useTenants(filters);
   const { data: buildings } = useBuildings();
+
+  // Only tenants with an address can be sent to. Most of the roster has no email
+  // on file yet, so the row is shown but its tick box is disabled and says why,
+  // rather than letting the office select a send that can only fail.
+  const emailable = useMemo(
+    () => (tenants ?? []).filter((t) => Boolean(t.email)),
+    [tenants],
+  );
+  const selectedTenants = useMemo(
+    () => emailable.filter((t) => selectedIds.includes(t.id)),
+    [emailable, selectedIds],
+  );
+  const allEmailableSelected =
+    emailable.length > 0 && selectedTenants.length === emailable.length;
+
+  // A selection is only meaningful against the rows on screen: keeping ids after
+  // a filter change would send to tenants the office can no longer see.
+  useEffect(() => {
+    setSelectedIds([]);
+  }, [statusFilter, kycFilter, buildingFilter, payFilter, search]);
+
+  const toggleTenant = (id: number) =>
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id],
+    );
+  const toggleAll = () =>
+    setSelectedIds(allEmailableSelected ? [] : emailable.map((t) => t.id));
+
+  const NO_EMAIL_HINT = "No email address on file — add one on the tenant page";
 
   // Build building filter tabs from actual buildings
   const buildingTabs = useMemo(() => [
@@ -303,6 +413,25 @@ export default function TenantsPage() {
           </div>
         </div>
 
+        {selectedIds.length > 0 && (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-sage-500/10 px-4 py-3">
+            <p className="text-sm font-medium text-ink-900 dark:text-white">
+              {selectedIds.length} tenant{selectedIds.length === 1 ? "" : "s"} selected
+              <span className="ml-2 font-normal text-ink-500">
+                Each will be emailed their rent statement as a PDF.
+              </span>
+            </p>
+            <div className="flex items-center gap-2">
+              <Button variant="glass" size="sm" onClick={() => setSelectedIds([])}>
+                Clear
+              </Button>
+              <Button size="sm" onClick={() => setConfirmingSend(true)}>
+                <Mail className="h-4 w-4" /> Email statements
+              </Button>
+            </div>
+          </div>
+        )}
+
         {isLoading ? (
           <div className="space-y-2">{Array.from({length:5}).map((_,i) => <Skeleton key={i} className="h-14" />)}</div>
         ) : isError ? (
@@ -320,6 +449,19 @@ export default function TenantsPage() {
               <Table>
                 <THead>
                   <TR>
+                    <TH className="w-10">
+                      <input
+                        type="checkbox"
+                        checked={allEmailableSelected}
+                        onChange={toggleAll}
+                        disabled={emailable.length === 0}
+                        aria-label="Select all tenants with an email address"
+                        title={emailable.length === 0
+                          ? "No tenant in this list has an email address on file"
+                          : "Select all tenants with an email address"}
+                        className="h-4 w-4 accent-sage-500"
+                      />
+                    </TH>
                     <TH>Tenant</TH>
                     <TH>Building</TH>
                     <TH>Unit</TH>
@@ -348,6 +490,17 @@ export default function TenantsPage() {
                         }
                       }}
                     >
+                      <TD onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.includes(t.id)}
+                          onChange={() => toggleTenant(t.id)}
+                          disabled={!t.email}
+                          aria-label={`Select ${t.full_name} for a statement email`}
+                          title={t.email ? `Email statement to ${t.email}` : NO_EMAIL_HINT}
+                          className="h-4 w-4 accent-sage-500 disabled:cursor-not-allowed disabled:opacity-40"
+                        />
+                      </TD>
                       <TD>
                         <div className="flex items-center gap-3">
                           <img src={avatarFor(t.full_name)} alt="" aria-hidden className="h-9 w-9 rounded-full" />
@@ -414,6 +567,16 @@ export default function TenantsPage() {
                   }}
                 >
                   <div className="flex items-start gap-3">
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.includes(t.id)}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={() => toggleTenant(t.id)}
+                      disabled={!t.email}
+                      aria-label={`Select ${t.full_name} for a statement email`}
+                      title={t.email ? `Email statement to ${t.email}` : NO_EMAIL_HINT}
+                      className="mt-1 h-4 w-4 shrink-0 accent-sage-500 disabled:cursor-not-allowed disabled:opacity-40"
+                    />
                     <img src={avatarFor(t.full_name)} alt="" aria-hidden className="h-10 w-10 rounded-full" />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-start justify-between gap-2">
@@ -460,6 +623,14 @@ export default function TenantsPage() {
 
       {remindTenant && (
         <RemindModal tenant={remindTenant} onClose={() => setRemindTenant(null)} />
+      )}
+
+      {confirmingSend && selectedTenants.length > 0 && (
+        <EmailStatementsModal
+          tenants={selectedTenants}
+          onClose={() => setConfirmingSend(false)}
+          onSent={() => setSelectedIds([])}
+        />
       )}
     </>
   );

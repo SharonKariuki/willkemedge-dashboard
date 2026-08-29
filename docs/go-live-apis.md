@@ -103,6 +103,13 @@ nothing on a schedule.
    | `monthly-arrears` | Generate the month's arrears rows | 1st of month 00:30 |
    | `recalculate-statuses` | Refresh unit paid/unpaid/arrears status | daily 01:00 |
    | `daily-reconciliation` | Email the unmatched-credit summary | daily 18:00 |
+   | `monthly-statements` | Email every tenant their rent statement PDF | 2nd of month 07:00 |
+
+   `monthly-statements` runs the day *after* `monthly-arrears`, which is what
+   raises the month's rent — a statement sent before it states a balance with
+   the current month missing. It takes an optional `?period=YYYY-MM` to re-issue
+   a closed month, only writes to tenants who have an email address on file, and
+   sends each tenant at most one statement per month, so it is safe to re-run.
 
 4. **Test** one:
    ```bash
