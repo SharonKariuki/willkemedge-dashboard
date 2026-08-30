@@ -1,6 +1,7 @@
 """Tenant serializers — updated with deposit refund, notice, and edit fields."""
 from decimal import ROUND_HALF_UP, Decimal
 
+from django.utils import timezone
 from rest_framework import serializers
 
 from .models import DocumentType, Tenant, TenantDocument
@@ -15,6 +16,30 @@ def outstanding_balance(tenant):
     """Sum of the tenant's uncleared arrears balances."""
     from django.db.models import Sum
     return tenant.arrears.filter(is_cleared=False).aggregate(total=Sum("balance"))["total"] or 0
+
+
+def current_rent_roll_balance(tenant):
+    """Return the current month's net balance from the canonical rent roll.
+
+    ``Arrears.balance`` is deliberately non-negative and only represents rent
+    obligations. The tenant-list balance must also show utility charges and
+    overpayments, so it derives from the same roll-forward used on the tenant
+    detail page. This keeps a credit visible as a negative balance.
+    """
+    from apps.payments.monthly_ledger import build_monthly_ledger
+
+    today = timezone.localdate()
+    current_key = today.year * 12 + today.month - 1
+    rows = build_monthly_ledger(tenant, today=today)
+    current = next(
+        (
+            row
+            for row in reversed(rows)
+            if row["period_year"] * 12 + row["period_month"] - 1 <= current_key
+        ),
+        None,
+    )
+    return Decimal(current["balance"]) if current else Decimal("0.00")
 
 
 def live_payments(tenant):
@@ -67,7 +92,7 @@ class TenantListSerializer(serializers.ModelSerializer):
         return balance or 0
 
     def get_balance(self, obj):
-        return _money(self._outstanding(obj))
+        return _money(current_rent_roll_balance(obj))
 
     def get_payment_status(self, obj):
         return "in_arrears" if self._outstanding(obj) > 0 else "paid"

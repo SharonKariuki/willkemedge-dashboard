@@ -444,8 +444,10 @@ export default function TenantsPage() {
                       <TD className="font-mono text-xs">{t.phone}</TD>
                       <TD className="text-right font-medium tabular-nums">{Number(t.monthly_rent).toLocaleString()}</TD>
                       <TD className="text-right tabular-nums">
-                        <span className={cn("font-medium", t.payment_status === "in_arrears" ? "text-coral-600" : "text-sage-600")}>
-                          {Number(t.balance).toLocaleString()}
+                        <span className={cn("font-medium", Number(t.balance) > 0 ? "text-coral-600" : "text-sage-600")}>
+                          {Number(t.balance) < 0
+                            ? `${Math.abs(Number(t.balance)).toLocaleString()} cr`
+                            : Number(t.balance).toLocaleString()}
                         </span>
                       </TD>
                       <TD className="text-ink-500">{t.move_in_date}</TD>

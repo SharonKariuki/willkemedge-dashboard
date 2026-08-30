@@ -1,5 +1,7 @@
 """Tests for tenant lifecycle: create, move-in, move-out, document upload."""
+import datetime as dt
 from decimal import Decimal
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -374,6 +376,28 @@ class TenantArrearsFilterExportTests(APITestCase):
         body = resp.content.decode()
         assert "Owing Test" in body
         assert "Paidup Test" not in body
+
+    def test_list_balance_uses_the_rent_roll_and_preserves_a_credit(self):
+        from apps.payments.models import Payment, UtilityCharge
+
+        UtilityCharge.objects.create(
+            tenant=self.owing, posting_date=dt.date(2026, 8, 1),
+            period_month=8, period_year=2026, label="Water Usage", amount=Decimal("1200"),
+        )
+        Payment.objects.create(
+            tenant=self.owing, amount=Decimal("6750"), payment_date=dt.date(2026, 8, 3),
+            # The receipt settles the prior rent arrears, but remains August
+            # cash in the rent-roll balance.
+            period_month=5, period_year=2026, source="mpesa",
+        )
+
+        with patch("apps.tenants.serializers.timezone.localdate", return_value=dt.date(2026, 8, 21)):
+            rows = {r["full_name"]: r for r in self.client.get("/api/tenants/").json()}
+
+        assert Decimal(rows["Owing Test"]["balance"]) == Decimal("-550.00")
+        # Status remains governed by open rent arrears, not by a credit that
+        # happened to arrive after the current charge was raised.
+        assert rows["Owing Test"]["payment_status"] == "in_arrears"
 
 
 class TenantDetailPaymentFieldsTests(APITestCase):
