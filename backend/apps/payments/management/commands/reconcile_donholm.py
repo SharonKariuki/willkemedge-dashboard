@@ -221,7 +221,11 @@ class Command(BaseCommand):
         for label, tid, *_ in STATEMENT:
             self._step(tid, label, self._draw_down_credit)
 
-        self._head("6. Does the rebuilt August row match the sheet?")
+        self._head("6. Unit status follows the repaired position")
+        for label, tid, *_ in STATEMENT:
+            self._step(tid, label, self._refresh_unit_status)
+
+        self._head("7. Does the rebuilt August row match the sheet?")
         for label, tid, _bf, _rent, _other, paid, unpaid in STATEMENT:
             self._step(tid, label, self._verify_august, paid, unpaid)
 
@@ -588,6 +592,45 @@ class Command(BaseCommand):
             f"{label} {tenant.full_name}: {drawn} of credit applied to August "
             f"(balance now {arr.balance})"
         )
+
+    def _refresh_unit_status(self, tenant, label):
+        """Re-derive the units board from the repaired ledger, once it is whole.
+
+        ``_update_arrears`` recalculates the status as a side effect of every
+        period it touches, so the board ends up holding whichever half-repaired
+        state the last write happened to leave. DON1B is the case that shows it:
+        step 1 moves her August cash off July, which leaves July owing a month
+        and puts her in ARREARS — and step 2, which restates July and settles
+        it, is a July write, so it never revisits the status. She reads in
+        arrears on a roll that closes at zero.
+
+        Deriving it here, after every step has run, is the same rule the payment
+        path uses — the August obligation against what covers it, with unsettled
+        earlier months outranking both — applied once to the finished position.
+        """
+        from apps.buildings.services import recalculate_unit_status
+        from apps.payments.models import Arrears
+
+        year, month = AUG
+        if not self.apply:
+            self._note(f"{label} {tenant.full_name}: re-derived after --apply")
+            return
+
+        arr = Arrears.objects.filter(
+            tenant=tenant, period_year=year, period_month=month
+        ).first()
+        if arr is None:
+            self._skip(f"{label} {tenant.full_name}: no August row to derive from")
+            return
+
+        was = tenant.unit.status
+        unit = recalculate_unit_status(
+            tenant.unit, arr.covered, obligation=arr.expected_total
+        )
+        if unit.status == was:
+            self._skip(f"{label} {tenant.full_name}: already {was}")
+            return
+        self._do(f"{label} {tenant.full_name}: {was} -> {unit.status}")
 
     def _verify_august(self, tenant, label, paid, unpaid):
         """Rebuild the August row and hold it against the sheet.
