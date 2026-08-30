@@ -30,6 +30,7 @@ import { cn } from "@/lib/cn";
 import { downloadCsv } from "@/lib/downloadPdf";
 import { isNonNegativeAmountOrBlank, isPositiveAmount } from "@/lib/formValidators";
 import { avatarFor } from "@/lib/images";
+import { formatBalance } from "@/lib/money";
 import type { TenantListItem } from "@/lib/types";
 
 // ─── Create Tenant Form ──────────────────────────────────────────────────────
@@ -445,9 +446,7 @@ export default function TenantsPage() {
                       <TD className="text-right font-medium tabular-nums">{Number(t.monthly_rent).toLocaleString()}</TD>
                       <TD className="text-right tabular-nums">
                         <span className={cn("font-medium", Number(t.balance) > 0 ? "text-coral-600" : "text-sage-600")}>
-                          {Number(t.balance) < 0
-                            ? `${Math.abs(Number(t.balance)).toLocaleString()} cr`
-                            : Number(t.balance).toLocaleString()}
+                          {formatBalance(t.balance)}
                         </span>
                       </TD>
                       <TD className="text-ink-500">{t.move_in_date}</TD>
@@ -528,7 +527,11 @@ export default function TenantsPage() {
                           <Phone className="h-3 w-3" />{t.phone}
                         </a>
                         <p className={cn("font-medium tabular-nums", t.payment_status === "in_arrears" ? "text-coral-600" : "text-ink-900")}>
-                          {t.payment_status === "in_arrears" ? `KES ${Number(t.balance).toLocaleString()} due` : "Paid up"}
+                          {t.payment_status === "in_arrears"
+                            ? `KES ${formatBalance(t.balance)} due`
+                            : Number(t.balance) < 0
+                              ? `KES ${formatBalance(t.balance)}`
+                              : "Paid up"}
                         </p>
                       </div>
                       {t.payment_status === "in_arrears" && t.status !== "moved_out" && (

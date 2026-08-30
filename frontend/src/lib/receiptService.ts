@@ -48,6 +48,19 @@ const MONTH_NAMES = [
 ];
 
 /**
+ * "KES 3,000.00" when owed, "KES 3,000.00 cr" when the tenant is in credit.
+ *
+ * `outstanding_balance` now comes from the rent-roll balance, which can go
+ * negative — a tenant who has paid ahead. `formatKES` alone would print that
+ * as "KES -3,000.00" on a receipt handed to the tenant, which reads as an
+ * error rather than money in hand.
+ */
+function formatOutstandingBalance(amount: number | string): string {
+  const value = Number(amount);
+  return value < 0 ? `${formatKES(Math.abs(value))} cr` : formatKES(value);
+}
+
+/**
  * Build a ReceiptDisplay from a stored ReceiptData.
  *
  * Rendering contract (mirrors backend receipt_service.py):
@@ -90,7 +103,7 @@ export function buildReceiptDisplay(data: ReceiptData): ReceiptDisplay {
     lineItems,
     outstandingBalance:
       data.outstanding_balance != null
-        ? formatKES(data.outstanding_balance)
+        ? formatOutstandingBalance(data.outstanding_balance)
         : null,
     classificationLabel:
       data.unit_classification === "BUSINESS"

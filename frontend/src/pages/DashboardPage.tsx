@@ -42,6 +42,7 @@ import {
 import { cn } from "@/lib/cn";
 import { useDashboard } from "@/hooks/useDashboard";
 import { avatarFor, propertyImage } from "@/lib/images";
+import { formatKES } from "@/lib/money";
 
 // Chart palette — teal (income/occupied) + semantic status, no rainbow.
 const OCCUPANCY_COLORS = [
@@ -63,7 +64,7 @@ const TOOLTIP_STYLE = {
 } as const;
 
 function KES(n: number) {
-  return `KES ${Number(n || 0).toLocaleString()}`;
+  return formatKES(n);
 }
 
 function formatK(n: number) {

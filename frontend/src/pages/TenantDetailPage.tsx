@@ -27,8 +27,9 @@ import { getErrorMessage } from "@/lib/apiError";
 import { cn } from "@/lib/cn";
 import { downloadPdf } from "@/lib/downloadPdf";
 import { isNonNegativeAmountOrBlank, isPositiveAmount } from "@/lib/formValidators";
+import { formatBalanceKES, formatKES } from "@/lib/money";
 
-const KES = (n: string | number) => `KES ${Number(n || 0).toLocaleString()}`;
+const KES = formatKES;
 
 // ─── Edit / Notice / Move-out schemas ────────────────────────────────────────
 const editSchema = z.object({
@@ -375,7 +376,7 @@ export default function TenantDetailPage() {
         <Card padding="md">
           <p className="text-xs uppercase tracking-wider text-content-muted">Arrears</p>
           <p className={cn("mt-2 font-semibold tabular-nums", owedNow > 0 ? "text-orange-600" : "text-sage-600")}>
-            {owedNow < 0 ? `${KES(Math.abs(owedNow))} cr` : KES(owedNow)}
+            {formatBalanceKES(owedNow)}
           </p>
           {thisMonth && <p className="mt-1 text-xs text-content-muted">{thisMonth.label}</p>}
         </Card>
@@ -477,7 +478,7 @@ export default function TenantDetailPage() {
                       "text-right font-medium tabular-nums",
                       balance > 0 ? "text-orange-600" : "text-sage-600",
                     )}>
-                      {balance < 0 ? `${KES(Math.abs(balance))} cr` : KES(balance)}
+                      {formatBalanceKES(balance)}
                     </TD>
                   </TR>
                 );

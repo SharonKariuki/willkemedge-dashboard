@@ -11,7 +11,9 @@ from rest_framework.views import APIView
 
 from apps.buildings.models import OCCUPIED_UNIT_STATUSES, Building, Unit, UnitClassification
 from apps.expenses.models import Account, AccountType, Expense
+from apps.payments.aging import BUCKETS, aging_buckets
 from apps.payments.models import Arrears, Payment, PaymentType
+from apps.payments.monthly_ledger import current_balances
 from apps.payments.tax_service import TAX_RATE_BUSINESS
 from apps.tenants.models import Tenant
 
@@ -99,31 +101,136 @@ class AnnualIncomeSummaryView(APIView):
 
 
 class ArrearsReportView(APIView):
-    """GET /api/reports/arrears/"""
+    """GET /api/reports/arrears/ — who owes, and how much, one row per tenant.
+
+    This listed one row per open ``Arrears`` period, so a tenant three months
+    behind appeared three times and the total counted rent only. The landlord's
+    question is "who owes me money and how much", and the answer is the same
+    rent-roll balance the tenant's own statement closes on — water and other
+    charges included, cash in credit recognised.
+    """
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        arrears = Arrears.objects.filter(is_cleared=False).select_related(
-            "tenant", "tenant__unit", "tenant__unit__building"
-        ).order_by("-balance")
+        tenants = list(
+            Tenant.objects.select_related("unit", "unit__building").all()
+        )
+        balances = current_balances(tenants, today=timezone.localdate())
+
+        # The oldest period still open is what "since" means on the report.
+        oldest_open = {}
+        for a in Arrears.objects.filter(
+            tenant_id__in=[t.id for t in tenants], is_cleared=False
+        ).order_by("tenant_id", "period_year", "period_month"):
+            oldest_open.setdefault(a.tenant_id, a)
+
+        charged_paid = _charged_and_paid(tenants)
 
         rows = []
-        for a in arrears:
+        for tenant in tenants:
+            balance = balances.get(tenant.id, Decimal("0"))
+            if balance <= 0:
+                continue  # square, or in credit — not an arrear
+            period = oldest_open.get(tenant.id)
+            rent, vat, other, paid = charged_paid.get(
+                tenant.id, (Decimal("0"), Decimal("0"), Decimal("0"), Decimal("0"))
+            )
             rows.append({
-                "tenant": a.tenant.full_name,
-                "unit": f"{a.tenant.unit.building.name} — {a.tenant.unit.label}",
-                "period": f"{a.period_month}/{a.period_year}",
-                # Rent + VAT — the figure `balance` is measured against. Base
-                # rent alone made a commercial row fail to add up on screen.
-                "expected": float(a.expected_total),
-                "expected_rent": float(a.expected_rent),
-                "expected_vat": float(a.expected_vat),
-                "paid": float(a.amount_paid),
-                "balance": float(a.balance),
+                "tenant": tenant.full_name,
+                "unit": f"{tenant.unit.building.name} — {tenant.unit.label}",
+                "period": (
+                    f"{period.period_month}/{period.period_year}" if period else "—"
+                ),
+                # Rent + VAT, split out so a commercial row's obligation checks
+                # out on screen the same way the payment-history endpoint shows
+                # it, rather than one combined figure with no VAT line.
+                "expected": float(rent + vat + other),
+                "expected_rent": float(rent),
+                "expected_vat": float(vat),
+                "paid": float(paid),
+                "balance": float(balance),
             })
 
+        rows.sort(key=lambda r: -r["balance"])
         total_balance = sum(r["balance"] for r in rows)
         return Response({"total_balance": total_balance, "count": len(rows), "arrears": rows})
+
+
+def _charged_and_paid(tenants):
+    """``{tenant_id: (rent, vat, other, paid)}`` — the figures behind the balance.
+
+    Rent and VAT are kept apart so a commercial row's obligation checks out on
+    screen the way the payment-history endpoint shows it. ``other`` folds in
+    waivers (negative) and utility charges (positive) — line items the report
+    doesn't break out further, but that still belong in what was charged.
+    Shown beside the balance so rent + vat + other − paid is the balance,
+    with no unexplained figure.
+    """
+    from apps.payments.models import UtilityCharge
+
+    ids = [t.pk for t in tenants]
+    totals = {tid: [Decimal("0"), Decimal("0"), Decimal("0"), Decimal("0")] for tid in ids}
+
+    for row in (
+        Arrears.objects.filter(tenant_id__in=ids)
+        .values("tenant_id")
+        .annotate(rent=Sum("expected_rent"), vat=Sum("expected_vat"), waived=Sum("waived_amount"))
+    ):
+        totals[row["tenant_id"]][0] += row["rent"] or Decimal("0")
+        totals[row["tenant_id"]][1] += row["vat"] or Decimal("0")
+        totals[row["tenant_id"]][2] -= row["waived"] or Decimal("0")
+
+    for row in (
+        UtilityCharge.objects.filter(tenant_id__in=ids)
+        .values("tenant_id")
+        .annotate(total=Sum("amount"))
+    ):
+        totals[row["tenant_id"]][2] += row["total"] or Decimal("0")
+
+    for row in (
+        Payment.objects.filter(tenant_id__in=ids)
+        .filter(INCOME_PAYMENT_FILTER)
+        .values("tenant_id")
+        .annotate(total=Sum("amount"))
+    ):
+        totals[row["tenant_id"]][3] += row["total"] or Decimal("0")
+
+    return {tid: tuple(values) for tid, values in totals.items()}
+
+
+class AgingArrearsReportView(APIView):
+    """GET /api/reports/aging-arrears/ — outstanding balances by age.
+
+    The Reports page has had an "Aging Rent Balances" tab calling this route
+    since it was built; the endpoint was never written, so the tab has only
+    ever shown its error state. Buckets are cut from the rent roll and sum to
+    the balance the rest of the product reports.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        tenants = list(Tenant.objects.select_related("unit", "unit__building").all())
+        buckets = aging_buckets(tenants, today=timezone.localdate())
+
+        rows = []
+        for tenant in tenants:
+            aged = buckets.get(tenant.id)
+            if not aged:
+                continue
+            rows.append({
+                "tenant": tenant.full_name,
+                "unit": f"{tenant.unit.building.name} — {tenant.unit.label}",
+                "oldest_period": aged["oldest_period"],
+                **{name: float(aged[name]) for name in BUCKETS},
+                "total": float(aged["total"]),
+            })
+
+        rows.sort(key=lambda r: -r["total"])
+        return Response({
+            "grand_total": sum(r["total"] for r in rows),
+            "count": len(rows),
+            "aging": rows,
+        })
 
 
 class TenantPaymentHistoryView(APIView):

@@ -22,24 +22,25 @@ def current_rent_roll_balance(tenant):
     """Return the current month's net balance from the canonical rent roll.
 
     ``Arrears.balance`` is deliberately non-negative and only represents rent
-    obligations. The tenant-list balance must also show utility charges and
-    overpayments, so it derives from the same roll-forward used on the tenant
-    detail page. This keeps a credit visible as a negative balance.
+    obligations. The balance the product shows must also carry utility charges
+    and overpayments, so it comes from the same roll-forward the tenant detail
+    page draws. This keeps a credit visible as a negative balance.
     """
-    from apps.payments.monthly_ledger import build_monthly_ledger
+    from apps.payments.monthly_ledger import current_balance
 
-    today = timezone.localdate()
-    current_key = today.year * 12 + today.month - 1
-    rows = build_monthly_ledger(tenant, today=today)
-    current = next(
-        (
-            row
-            for row in reversed(rows)
-            if row["period_year"] * 12 + row["period_month"] - 1 <= current_key
-        ),
-        None,
-    )
-    return Decimal(current["balance"]) if current else Decimal("0.00")
+    return current_balance(tenant, today=timezone.localdate())
+
+
+def rent_roll_balances(tenants):
+    """``{tenant_id: balance}`` for a page of tenants, in three queries.
+
+    A list view that called :func:`current_rent_roll_balance` per row issued
+    three queries per tenant. Views pass this through the serializer context
+    instead.
+    """
+    from apps.payments.monthly_ledger import current_balances
+
+    return current_balances(tenants, today=timezone.localdate())
 
 
 def live_payments(tenant):
@@ -92,7 +93,14 @@ class TenantListSerializer(serializers.ModelSerializer):
         return balance or 0
 
     def get_balance(self, obj):
-        return _money(current_rent_roll_balance(obj))
+        return _money(self._rent_roll(obj))
+
+    def _rent_roll(self, obj):
+        """The rent-roll balance, from the view's batch when it supplied one."""
+        batch = self.context.get("rent_roll_balances")
+        if batch is not None and obj.pk in batch:
+            return batch[obj.pk]
+        return current_rent_roll_balance(obj)
 
     def get_payment_status(self, obj):
         return "in_arrears" if self._outstanding(obj) > 0 else "paid"
@@ -180,7 +188,13 @@ class TenantDetailSerializer(serializers.ModelSerializer):
         return _money(result)
 
     def get_total_arrears(self, obj):
-        return _money(outstanding_balance(obj))
+        """The rent-roll balance, so the detail page agrees with the list.
+
+        This was the uncleared ``Arrears.balance`` sum, which knows nothing of
+        utility charges and cannot go below zero — the same two blind spots
+        that made the list disagree with the roll printed underneath it.
+        """
+        return _money(current_rent_roll_balance(obj))
 
     def get_payment_status(self, obj):
         return "in_arrears" if outstanding_balance(obj) > 0 else "paid"
