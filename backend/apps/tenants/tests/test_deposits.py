@@ -10,7 +10,12 @@ from decimal import Decimal
 import pytest
 
 from apps.buildings.models import Building, Unit, UnitClassification, UnitStatus
-from apps.tenants.deposits import deposit_months, deposit_shortfall, expected_deposit
+from apps.tenants.deposits import (
+    deposit_months,
+    deposit_shortfall,
+    expected_deposit,
+    has_agreed_deposit,
+)
 from apps.tenants.models import Tenant, TenantStatus
 
 D = Decimal
@@ -87,6 +92,61 @@ class TestShortfall:
         tenant = portfolio["commercial"]
         tenant.deposit_paid = D("24000")
         assert deposit_shortfall(tenant) == D("48000.00")
+
+
+class TestAgreedDeposit:
+    """A deposit agreed at a figure the rule does not produce.
+
+    The card reported a shortfall against money nobody owed — a letting settled
+    at 14,000 on a 15,000 rent read as "1,000 short of 15,000". Setting the
+    agreed figure is what makes that stop.
+    """
+
+    def test_the_rule_governs_when_nothing_is_agreed(self, portfolio):
+        tenant = portfolio["residential"]
+        assert has_agreed_deposit(tenant) is False
+        assert expected_deposit(tenant) == D("20000.00")
+
+    def test_an_agreed_figure_replaces_the_rule(self, portfolio):
+        tenant = portfolio["residential"]
+        tenant.agreed_deposit = D("14000")
+        assert has_agreed_deposit(tenant) is True
+        assert expected_deposit(tenant) == D("14000.00")
+
+    def test_meeting_the_agreed_figure_clears_the_shortfall(self, portfolio):
+        tenant = portfolio["residential"]
+        tenant.monthly_rent = D("15000")
+        tenant.deposit_paid = D("14000")
+        assert deposit_shortfall(tenant) == D("1000.00")
+        tenant.agreed_deposit = D("14000")
+        assert deposit_shortfall(tenant) == D("0.00")
+
+    def test_falling_short_of_the_agreed_figure_still_shows(self, portfolio):
+        """The override moves the bar; it does not remove it."""
+        tenant = portfolio["residential"]
+        tenant.agreed_deposit = D("30000")
+        assert deposit_shortfall(tenant) == D("10000.00")
+
+    def test_zero_is_agreed_not_blank(self, portfolio):
+        """A deposit agreed at nothing is a decision, and must not fall back to
+        the rule — only ``None`` does that."""
+        tenant = portfolio["short"]
+        tenant.agreed_deposit = D("0")
+        assert has_agreed_deposit(tenant) is True
+        assert expected_deposit(tenant) == D("0.00")
+        assert deposit_shortfall(tenant) == D("0.00")
+
+    def test_an_agreed_figure_overrides_the_commercial_rule_too(self, portfolio):
+        tenant = portfolio["commercial"]
+        tenant.agreed_deposit = D("50000")
+        assert expected_deposit(tenant) == D("50000.00")
+        assert deposit_months(tenant) == 3  # the rule is unchanged underneath
+
+    def test_it_survives_a_round_trip(self, portfolio):
+        tenant = portfolio["residential"]
+        tenant.agreed_deposit = D("14000")
+        tenant.save(update_fields=["agreed_deposit"])
+        assert expected_deposit(Tenant.objects.get(pk=tenant.pk)) == D("14000.00")
 
 
 class TestTheRuleIsNotWrittenToTheTenant:

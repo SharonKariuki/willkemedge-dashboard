@@ -18,7 +18,9 @@ User = get_user_model()
 D = Decimal
 
 
-class DepositCardFieldsTests(APITestCase):
+class DepositApiTestCase(APITestCase):
+    """Shared setup: an authenticated owner and a building to let units in."""
+
     @classmethod
     def setUpTestData(cls):
         cls.user = User.objects.create_user(
@@ -47,6 +49,8 @@ class DepositCardFieldsTests(APITestCase):
         assert resp.status_code == status.HTTP_200_OK, resp.content
         return resp.json()
 
+
+class DepositCardFieldsTests(DepositApiTestCase):
     def test_residential_expects_one_months_rent(self):
         tenant = self._let("WED01", UnitClassification.RESIDENTIAL, "20000", "20000")
 
@@ -82,3 +86,69 @@ class DepositCardFieldsTests(APITestCase):
 
         tenant.refresh_from_db()
         assert tenant.deposit_paid == D("5000.00")
+
+
+class AgreedDepositTests(DepositApiTestCase):
+    """Editing the expected deposit by hand.
+
+    Some lettings were agreed at a figure the rule does not produce, and the
+    card reported them as short of money nobody owed. The edit form can now set
+    what was actually agreed, and clear it again.
+    """
+
+    def _edit(self, tenant, **fields):
+        resp = self.client.patch(f"/api/tenants/{tenant.id}/", fields, format="json")
+        assert resp.status_code == status.HTTP_200_OK, resp.content
+        return resp.json()
+
+    def test_setting_it_clears_a_shortfall_nobody_owed(self):
+        tenant = self._let("WED10", UnitClassification.RESIDENTIAL, "15000", "14000")
+        assert Decimal(str(self._detail(tenant)["deposit_shortfall"])) == D("1000.00")
+
+        self._edit(tenant, agreed_deposit="14000")
+
+        body = self._detail(tenant)
+        assert body["deposit_is_agreed"] is True
+        assert Decimal(str(body["expected_deposit"])) == D("14000.00")
+        assert Decimal(str(body["deposit_shortfall"])) == D("0.00")
+
+    def test_a_blank_box_returns_the_letting_to_the_rule(self):
+        """The form sends "" for an empty field; that must clear the override
+        rather than 400, and must not read as "agreed at zero"."""
+        tenant = self._let("WED11", UnitClassification.RESIDENTIAL, "15000", "14000")
+        self._edit(tenant, agreed_deposit="14000")
+
+        self._edit(tenant, agreed_deposit="")
+
+        body = self._detail(tenant)
+        assert body["agreed_deposit"] is None
+        assert body["deposit_is_agreed"] is False
+        assert Decimal(str(body["expected_deposit"])) == D("15000.00")
+
+    def test_an_override_does_not_touch_what_was_received(self):
+        tenant = self._let("WED12", UnitClassification.RESIDENTIAL, "15000", "14000")
+
+        self._edit(tenant, agreed_deposit="14000")
+
+        tenant.refresh_from_db()
+        assert tenant.deposit_paid == D("14000.00")
+        assert tenant.agreed_deposit == D("14000.00")
+
+    def test_a_negative_agreed_deposit_is_rejected(self):
+        tenant = self._let("WED13", UnitClassification.RESIDENTIAL, "15000", "14000")
+
+        resp = self.client.patch(
+            f"/api/tenants/{tenant.id}/", {"agreed_deposit": "-1"}, format="json",
+        )
+
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST, resp.content
+
+    def test_an_untouched_edit_leaves_the_override_alone(self):
+        """Saving the form without the field must not silently clear it."""
+        tenant = self._let("WED14", UnitClassification.RESIDENTIAL, "15000", "14000")
+        self._edit(tenant, agreed_deposit="14000")
+
+        self._edit(tenant, phone="+254700111222")
+
+        tenant.refresh_from_db()
+        assert tenant.agreed_deposit == D("14000.00")

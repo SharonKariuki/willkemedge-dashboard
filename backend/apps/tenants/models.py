@@ -62,6 +62,20 @@ class Tenant(models.Model):
     unit = models.ForeignKey(Unit, on_delete=models.PROTECT, related_name="tenants")
     monthly_rent = models.DecimalField(max_digits=10, decimal_places=2)
     deposit_paid = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    # What the landlord actually agreed with this tenant, where that differs
+    # from the rule in ``apps.tenants.deposits`` (one month's rent; three for a
+    # commercial letting). Some lettings were agreed at an odd figure long
+    # before the rule was written down, and holding them against the rule
+    # reported a shortfall that nobody owes. Blank means "use the rule" — that
+    # is the normal case, and the override is meant to stay rare.
+    agreed_deposit = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True,
+        validators=[MinValueValidator(0)],
+        help_text=(
+            "Deposit agreed with this tenant, if it differs from the standard "
+            "rule. Leave blank to use one month's rent (three if commercial)."
+        ),
+    )
     due_day = models.PositiveSmallIntegerField(
         default=5,
         validators=[MinValueValidator(1), MaxValueValidator(31)],

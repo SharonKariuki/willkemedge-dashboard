@@ -133,12 +133,17 @@ export interface TenantDetail extends TenantListItem {
   emergency_phone: string;
   /** Deposit actually received. Never adjusted to match the rule below. */
   deposit_paid: string;
-  /** Months of rent the deposit should be: 1, or 3 for a commercial letting. */
+  /** Months of rent the deposit should be: 1, or 3 for a commercial letting.
+   *  Meaningless when `deposit_is_agreed` — an agreed figure is not months. */
   deposit_months: number;
-  /** What the deposit should be under the rule — derived, not stored. */
+  /** What the deposit should be: the agreed figure if one was set, else the rule. */
   expected_deposit: number;
   /** How far `deposit_paid` falls short of `expected_deposit`; 0 if met. */
   deposit_shortfall: number;
+  /** A deposit agreed with this tenant in place of the rule; null = use the rule. */
+  agreed_deposit: string | null;
+  /** True when `expected_deposit` came from `agreed_deposit` rather than the rule. */
+  deposit_is_agreed: boolean;
   deposit_refund_percentage: number;
   deposit_refund_amount: string;
   due_day: number;
