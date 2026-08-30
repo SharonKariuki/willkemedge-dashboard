@@ -494,7 +494,8 @@ def post_utility_charge(charge, *, replace: bool = False) -> JournalEntry:
     """
     Post a water/utility charge billed to a tenant.
 
-    DR 1040 Accounts Receivable / CR 4150 Service Charge — Utilities Reimbursed
+    Positive: DR 1040 Accounts Receivable / CR 4150 Service Charge — Utilities Reimbursed
+    Negative: DR 4150 Service Charge — Utilities Reimbursed / CR 1040 Accounts Receivable
 
     Utility charges appeared on the tenant statement as "Other Charges" but were
     never posted to the general ledger, so recovered utility income was missing
@@ -503,10 +504,17 @@ def post_utility_charge(charge, *, replace: bool = False) -> JournalEntry:
     amt = charge.amount
     building = getattr(charge.tenant.unit, "building", None)
 
-    lines = [
-        (RENT_RECEIVABLE, amt, Decimal("0"), f"{charge.label} billed — {charge.tenant}"),
-        (SERVICE_CHARGE_UTILITIES, Decimal("0"), amt, "Service Charge / Utilities Reimbursed"),
-    ]
+    if amt < 0:
+        pos = abs(amt)
+        lines = [
+            (SERVICE_CHARGE_UTILITIES, pos, Decimal("0"), f"Credit note: {charge.label} — {charge.tenant}"),
+            (RENT_RECEIVABLE, Decimal("0"), pos, f"Credit note: {charge.label} — {charge.tenant}"),
+        ]
+    else:
+        lines = [
+            (RENT_RECEIVABLE, amt, Decimal("0"), f"{charge.label} billed — {charge.tenant}"),
+            (SERVICE_CHARGE_UTILITIES, Decimal("0"), amt, "Service Charge / Utilities Reimbursed"),
+        ]
 
     return _build_entry(
         date=charge.posting_date,
