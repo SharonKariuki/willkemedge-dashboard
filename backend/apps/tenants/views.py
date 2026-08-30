@@ -20,6 +20,7 @@ from .serializers import (
     TenantDocumentSerializer,
     TenantEditSerializer,
     TenantListSerializer,
+    current_rent_roll_balance,
 )
 from .services import FileValidationError, move_in_tenant, move_out_tenant, validate_upload
 
@@ -137,8 +138,9 @@ class TenantViewSet(viewsets.ModelViewSet):
         writer = csv.writer(response)
         writer.writerow(["Tenant", "Building", "Unit", "Balance", "Payment Status", "Status"])
         for t in qs:
-            balance = getattr(t, "outstanding_balance", None) or 0
-            payment_status = "In Arrears" if balance > 0 else "Paid"
+            balance = current_rent_roll_balance(t)
+            arrears_balance = getattr(t, "outstanding_balance", None) or 0
+            payment_status = "In Arrears" if arrears_balance > 0 else "Paid"
             writer.writerow([
                 t.full_name,
                 t.unit.building.name,
