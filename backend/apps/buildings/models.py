@@ -87,8 +87,8 @@ class Building(models.Model):
     contact_email = models.EmailField(blank=True)
 
     water_rate_per_unit = models.DecimalField(
-        max_digits=8, decimal_places=2, default=Decimal("150.00"),
-        help_text="Tariff charged per unit of water consumed (KES). Donholm bills at 150/unit.",
+        max_digits=8, decimal_places=2, default=Decimal("200.00"),
+        help_text="Tariff charged per unit of water consumed (KES). Donholm bills at 200/unit.",
     )
 
     paybill_number = models.CharField(
