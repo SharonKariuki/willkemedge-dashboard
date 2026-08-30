@@ -132,20 +132,17 @@ STATEMENT = [
     ("DON4B", 140,      D(0), D(20000),  D(1050), D(21050),      D(0)),
 ]
 
-# Rows the sheet cannot agree with, and why. Reported at the end so the
+# Rows the sheet cannot agree with, and why. Reported at the end so a
 # divergence is stated rather than discovered.
 #
-# The sheet is a snapshot taken on 21 Aug. Zachary Bwonda paid 21,000 on 26
-# August, five days after it was drawn, so his rebuilt August row shows that
-# cash and the sheet shows none. Forcing the sheet's figure would delete a real
-# payment; the difference is the sheet being out of date, not the ledger being
-# wrong.
-KNOWN_DIVERGENCE = {
-    "DON3A": (
-        "paid 21,000 on 26 Aug 2026, five days after the sheet was drawn — the "
-        "rebuilt row is right and the sheet is stale"
-    ),
-}
+# Empty, and worth saying why. DON3A used to sit here: Zachary Bwonda paid
+# 21,000 on 26 August, five days after the sheet was drawn, so the rebuilt row
+# showed cash the sheet knew nothing about. That was a comparison fault, not a
+# real divergence — step 7 now rebuilds the row AS AT the statement date, so
+# cash banked after it is correctly absent from the comparison and equally
+# correctly present in the roll the dashboard renders. The escape hatch stays
+# for a row that genuinely cannot agree.
+KNOWN_DIVERGENCE = {}
 
 
 class Command(BaseCommand):
@@ -221,7 +218,11 @@ class Command(BaseCommand):
         for label, tid, *_ in STATEMENT:
             self._step(tid, label, self._draw_down_credit)
 
-        self._head("6. Does the rebuilt August row match the sheet?")
+        self._head("6. Unit status follows the repaired position")
+        for label, tid, *_ in STATEMENT:
+            self._step(tid, label, self._refresh_unit_status)
+
+        self._head("7. Does the rebuilt August row match the sheet?")
         for label, tid, _bf, _rent, _other, paid, unpaid in STATEMENT:
             self._step(tid, label, self._verify_august, paid, unpaid)
 
@@ -319,7 +320,7 @@ class Command(BaseCommand):
 
         Derived from the payment dates rather than a hardcoded list, so it
         stays correct if the roster or the feed has moved since the sheet was
-        drawn; step 6 then holds the result against the sheet's total.
+        drawn; step 7 then holds the result against the sheet's total.
         """
         from apps.payments.services import _update_arrears
 
@@ -517,11 +518,21 @@ class Command(BaseCommand):
             _update_arrears(tenant, month, year)
 
     def _set_other_charges(self, tenant, label, amount):
-        """Post the sheet's 'Others Charges' column as a UtilityCharge.
+        """Bring August's 'Others Charges' to the sheet's figure.
 
         DON2B's figure is negative: the landlord is crediting the tenant, not
         billing her. It is posted as written — a credit note belongs on the
         statement in the column that caused it.
+
+        Where a charge has already been posted for August and disagrees with
+        the sheet, the difference goes on as its own line rather than the
+        existing row being rewritten. DON1A is the live case: a 900 meter
+        reading against a sheet saying 1,500. Overwriting would silently
+        discard a reading someone took; skipping — which is what this did
+        before — left her 600 short of the landlord's figure for good, and no
+        amount of re-running would close it. A balancing line keeps both
+        records: the reading stands, the adjustment says what it reconciles,
+        and the month totals to the sheet.
         """
         from apps.payments.models import UtilityCharge
 
@@ -529,31 +540,42 @@ class Command(BaseCommand):
         existing = UtilityCharge.objects.filter(
             tenant=tenant, period_year=year, period_month=month,
         )
-        current = sum((u.amount for u in existing), D(0))
-        if existing.exists():
-            if _money(current) == _money(amount):
-                self._skip(f"{label} {tenant.full_name}: already {amount}")
-            else:
-                self._skip(
-                    f"{label} {tenant.full_name}: has {current} of other charges but the "
-                    f"sheet says {amount} — leaving it for review rather than overwriting"
-                )
-            return
-        if amount == 0:
-            self._skip(f"{label} {tenant.full_name}: no other charges")
+        current = _money(sum((u.amount for u in existing), D(0)))
+        amount = _money(amount)
+        if current == amount:
+            self._skip(
+                f"{label} {tenant.full_name}: already {amount}"
+                if existing.exists()
+                else f"{label} {tenant.full_name}: no other charges"
+            )
             return
 
-        kind = "credit" if amount < 0 else "charge"
-        self._do(f"{label} {tenant.full_name}: August other {kind} {amount}")
+        if not existing.exists():
+            kind = "credit" if amount < 0 else "charge"
+            self._do(f"{label} {tenant.full_name}: August other {kind} {amount}")
+            note = (
+                "From the 21 Aug 2026 Donholm statement's 'Others Charges' column."
+            )
+            posted_label = OTHER_COSTS_LABEL
+        else:
+            self._do(
+                f"{label} {tenant.full_name}: August other charges {current} "
+                f"-> {amount} (adjusting line {amount - current})"
+            )
+            note = (
+                f"Adjustment to the 21 Aug 2026 Donholm statement's 'Others "
+                f"Charges' column: {current} was posted for August, the "
+                f"statement says {amount}. Posted as a balancing line so the "
+                f"original charge stays on the ledger."
+            )
+            posted_label = f"{OTHER_COSTS_LABEL} - statement adjustment"
+
         if self.apply:
             UtilityCharge.objects.create(
                 tenant=tenant, posting_date=_dt.date(year, month, 1),
                 period_year=year, period_month=month,
-                label=OTHER_COSTS_LABEL, amount=amount,
-                notes=(
-                    "From the 21 Aug 2026 Donholm statement's "
-                    "'Others Charges' column."
-                ),
+                label=posted_label, amount=amount - current,
+                notes=note,
             )
 
     def _draw_down_credit(self, tenant, label):
@@ -588,6 +610,45 @@ class Command(BaseCommand):
             f"{label} {tenant.full_name}: {drawn} of credit applied to August "
             f"(balance now {arr.balance})"
         )
+
+    def _refresh_unit_status(self, tenant, label):
+        """Re-derive the units board from the repaired ledger, once it is whole.
+
+        ``_update_arrears`` recalculates the status as a side effect of every
+        period it touches, so the board ends up holding whichever half-repaired
+        state the last write happened to leave. DON1B is the case that shows it:
+        step 1 moves her August cash off July, which leaves July owing a month
+        and puts her in ARREARS — and step 2, which restates July and settles
+        it, is a July write, so it never revisits the status. She reads in
+        arrears on a roll that closes at zero.
+
+        Deriving it here, after every step has run, is the same rule the payment
+        path uses — the August obligation against what covers it, with unsettled
+        earlier months outranking both — applied once to the finished position.
+        """
+        from apps.buildings.services import recalculate_unit_status
+        from apps.payments.models import Arrears
+
+        year, month = AUG
+        if not self.apply:
+            self._note(f"{label} {tenant.full_name}: re-derived after --apply")
+            return
+
+        arr = Arrears.objects.filter(
+            tenant=tenant, period_year=year, period_month=month
+        ).first()
+        if arr is None:
+            self._skip(f"{label} {tenant.full_name}: no August row to derive from")
+            return
+
+        was = tenant.unit.status
+        unit = recalculate_unit_status(
+            tenant.unit, arr.covered, obligation=arr.expected_total
+        )
+        if unit.status == was:
+            self._skip(f"{label} {tenant.full_name}: already {was}")
+            return
+        self._do(f"{label} {tenant.full_name}: {was} -> {unit.status}")
 
     def _verify_august(self, tenant, label, paid, unpaid):
         """Rebuild the August row and hold it against the sheet.
