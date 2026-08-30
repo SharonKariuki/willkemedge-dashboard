@@ -115,7 +115,11 @@ class Command(BaseCommand):
         three for a commercial letting — so the check and the tenant API cannot
         drift apart.
         """
-        from apps.tenants.deposits import deposit_months, expected_deposit
+        from apps.tenants.deposits import (
+            deposit_months,
+            expected_deposit,
+            has_agreed_deposit,
+        )
 
         check = Check(
             "security deposit matches the rule for the letting",
@@ -126,11 +130,17 @@ class Command(BaseCommand):
                 continue
             expected = expected_deposit(t)
             if t.deposit_paid != expected:
-                months = deposit_months(t)
+                # A manually agreed deposit is a figure, not months of rent —
+                # printing "1 x 15,000" against an agreed 14,000 would read as
+                # though the rule were still in force.
+                basis = (
+                    "agreed"
+                    if has_agreed_deposit(t)
+                    else f"{deposit_months(t)} x {t.monthly_rent}"
+                )
                 check.fail(
                     f"{self._label(t)} {t.full_name}",
-                    f"holds {t.deposit_paid}, expected {expected} "
-                    f"({months} x {t.monthly_rent})",
+                    f"holds {t.deposit_paid}, expected {expected} ({basis})",
                 )
         return check
 

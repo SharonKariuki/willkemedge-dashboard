@@ -40,6 +40,7 @@ const editSchema = z.object({
   care_of: z.string().optional(),
   monthly_rent: z.string().min(1, "Required").refine(isPositiveAmount, "Enter an amount greater than 0"),
   deposit_paid: z.string().optional().refine(isNonNegativeAmountOrBlank, "Enter a valid amount"),
+  agreed_deposit: z.string().optional().refine(isNonNegativeAmountOrBlank, "Enter a valid amount"),
   due_day: z.coerce.number().int().min(1).max(31).optional(),
   deposit_refund_percentage: z.coerce
     .number({ invalid_type_error: "Enter a number between 0 and 100" })
@@ -101,8 +102,15 @@ export default function TenantDetailPage() {
   // should be. Older API responses omit them; fall back rather than render NaN.
   const depositShortfall = Number(tenant?.deposit_shortfall ?? 0);
   const depositMonths = Number(tenant?.deposit_months ?? 1);
+  // A deposit can be agreed at a figure the rule does not produce — say a
+  // letting settled at 14,000 against a 15,000 rent. Where it has been, the
+  // card must say so rather than quoting months of rent that were never the
+  // basis of the agreement.
+  const depositAgreed = tenant?.deposit_is_agreed ?? false;
   // "1 month's rent" but "3 months' rent" — the apostrophe moves.
-  const depositRule = depositMonths === 1 ? "1 month's rent" : `${depositMonths} months' rent`;
+  const depositRule = depositAgreed
+    ? "agreed amount"
+    : depositMonths === 1 ? "1 month's rent" : `${depositMonths} months' rent`;
   const updateTenant = useUpdateTenant(id ?? "");
   const moveOutNotice = useMoveOutNotice(id ?? "");
   const moveOut = useMoveOutTenant(id ?? "");
@@ -131,6 +139,7 @@ export default function TenantDetailPage() {
         care_of: tenant.care_of ?? "",
         monthly_rent: String(tenant.monthly_rent),
         deposit_paid: String(tenant.deposit_paid),
+        agreed_deposit: tenant.agreed_deposit == null ? "" : String(tenant.agreed_deposit),
         deposit_refund_percentage: tenant.deposit_refund_percentage ?? 100,
         emergency_contact: tenant.emergency_contact ?? "",
         emergency_phone: tenant.emergency_phone ?? "",
@@ -242,7 +251,10 @@ export default function TenantDetailPage() {
       {mode === "edit" && (
         <Card padding="md">
           <form onSubmit={editForm.handleSubmit(async (v) => {
-            try { await updateTenant.mutateAsync(v as unknown as Record<string, unknown>); toast.success("Updated"); setMode("view"); }
+            // An empty box means "back to the rule". Send null rather than ""
+            // so the override is cleared instead of the field being ignored.
+            const payload = { ...v, agreed_deposit: v.agreed_deposit?.trim() ? v.agreed_deposit : null };
+            try { await updateTenant.mutateAsync(payload as unknown as Record<string, unknown>); toast.success("Updated"); setMode("view"); }
             catch (e) { toast.error(getErrorMessage(e, "Failed to update tenant")); }
           })} className="space-y-4">
             <p className="font-semibold text-content">Edit tenant details</p>
@@ -253,7 +265,18 @@ export default function TenantDetailPage() {
               <Field label="Phone" error={editForm.formState.errors.phone?.message}><input {...editForm.register("phone")} className={inputCls} /></Field>
               <Field label="Email" error={editForm.formState.errors.email?.message}><input {...editForm.register("email")} className={inputCls} /></Field>
               <Field label="Monthly rent (KES)" error={editForm.formState.errors.monthly_rent?.message}><input {...editForm.register("monthly_rent")} className={inputCls} /></Field>
-              <Field label="Rent security deposit (KES)"><input {...editForm.register("deposit_paid")} className={inputCls} /></Field>
+              <Field label="Rent security deposit (KES)" error={editForm.formState.errors.deposit_paid?.message}><input {...editForm.register("deposit_paid")} className={inputCls} /></Field>
+              {/* The override, not the default: blank leaves the letting on the
+                  rule (one month's rent, three commercial). It exists because
+                  some deposits were agreed at a figure the rule never produces,
+                  and holding those against it reported a shortfall nobody owed. */}
+              <Field
+                label="Agreed deposit — overrides the rule (KES)"
+                error={editForm.formState.errors.agreed_deposit?.message}
+                hint={`Leave blank to expect ${depositMonths === 1 ? "1 month's" : `${depositMonths} months'`} rent.`}
+              >
+                <input {...editForm.register("agreed_deposit")} className={inputCls} placeholder="Blank = use the rule" />
+              </Field>
               <Field label="Rent Due Day (1-31)" error={editForm.formState.errors.due_day?.message}><input type="number" min={1} max={31} {...editForm.register("due_day")} className={inputCls} /></Field>
               <Field label="Deposit refund % (for move-out)" error={editForm.formState.errors.deposit_refund_percentage?.message}>
                 <input type="number" min={0} max={100} {...editForm.register("deposit_refund_percentage")} className={inputCls} />
@@ -346,7 +369,7 @@ export default function TenantDetailPage() {
           <p className="mt-1 text-xs text-content-muted">
             {depositShortfall > 0
               ? `${KES(depositShortfall)} short of ${KES(tenant.expected_deposit)} (${depositRule})`
-              : depositRule}
+              : depositAgreed ? `${KES(tenant.expected_deposit)} agreed` : depositRule}
           </p>
         </Card>
         <Card padding="md">

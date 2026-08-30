@@ -18,6 +18,13 @@ VAT and receipt-layout logic already turns on.
 match this rule. Where the two differ the shortfall is a fact worth keeping,
 not a number to round up to policy — MCG05 sat at 390,780 against an expected
 259,500 for a month precisely because an odd figure went unquestioned.
+
+A letting may nonetheless have been agreed at a figure the rule does not
+produce. ``Tenant.agreed_deposit`` records that agreement, and where it is set
+it — not the rule — is what the deposit is held against, so the page stops
+reporting a shortfall against money nobody owes. It is an override, not a
+default: blank is the normal state and the rule below still governs everyone
+else.
 """
 from decimal import Decimal
 
@@ -29,11 +36,18 @@ RESIDENTIAL_MONTHS = 1
 COMMERCIAL_MONTHS = 3
 
 
+def has_agreed_deposit(tenant) -> bool:
+    """Whether this letting's deposit was agreed manually rather than by rule."""
+    return getattr(tenant, "agreed_deposit", None) is not None
+
+
 def deposit_months(tenant) -> int:
-    """How many months' rent this letting's deposit should be.
+    """How many months' rent this letting's deposit should be under the rule.
 
     A tenancy with no unit falls to the residential rule; it has no
-    classification to read and one month is the portfolio default.
+    classification to read and one month is the portfolio default. A manually
+    agreed deposit is not months of anything, so callers that describe the
+    figure to a reader should check ``has_agreed_deposit`` first.
     """
     from apps.buildings.models import UnitClassification
 
@@ -44,7 +58,9 @@ def deposit_months(tenant) -> int:
 
 
 def expected_deposit(tenant) -> Decimal:
-    """The deposit this letting should hold under the rule."""
+    """The deposit this letting should hold — the agreed figure, else the rule."""
+    if has_agreed_deposit(tenant):
+        return Decimal(tenant.agreed_deposit).quantize(CENTS)
     rent = tenant.monthly_rent or ZERO
     return (Decimal(rent) * deposit_months(tenant)).quantize(CENTS)
 

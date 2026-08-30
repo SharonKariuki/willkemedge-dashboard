@@ -18,8 +18,14 @@ export const inputCls =
   "w-full rounded-md bg-surface-raised hairline px-3 py-2.5 text-sm text-ink-900 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-sage-500/40";
 
 export function Field({
-  label, error, children, className,
-}: { label: string; error?: string; children: React.ReactNode; className?: string }) {
+  label, error, hint, children, className,
+}: {
+  label: string; error?: string;
+  /** Standing explanation of the field — what blank means, what the default is.
+   *  Shown under the control, and replaced by `error` when one is present. */
+  hint?: string;
+  children: React.ReactNode; className?: string;
+}) {
   const id = useId();
   // Associate the label with the control for assistive tech. The single child
   // control receives the generated id (unless it already has one).
@@ -32,7 +38,9 @@ export function Field({
     <div className={className}>
       <label htmlFor={id} className="mb-1 block text-[11px] font-medium uppercase tracking-[0.14em] text-ink-500">{label}</label>
       {control}
-      {error && <p className="mt-1 text-[11px] text-status-unpaid">{error}</p>}
+      {error
+        ? <p className="mt-1 text-[11px] text-status-unpaid">{error}</p>
+        : hint && <p className="mt-1 text-[11px] text-content-muted">{hint}</p>}
     </div>
   );
 }
