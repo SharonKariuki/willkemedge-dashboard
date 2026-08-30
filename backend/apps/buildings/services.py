@@ -100,6 +100,7 @@ def has_unsettled_earlier_months(unit: Unit) -> bool:
     from django.utils import timezone
 
     from apps.payments.models import Arrears
+    from apps.payments.services import available_credit
     from apps.tenants.models import Tenant, TenantStatus
 
     tenant_ids = list(
@@ -114,10 +115,29 @@ def has_unsettled_earlier_months(unit: Unit) -> bool:
     earlier = models.Q(period_year__lt=today.year) | models.Q(
         period_year=today.year, period_month__lt=today.month
     )
-    return (
+    open_by_tenant = {}
+    rows = (
         Arrears.objects
         .filter(earlier, tenant_id__in=tenant_ids, is_cleared=False, balance__gt=0)
-        .exists()
+        .values_list("tenant_id", "balance")
+    )
+    for tenant_id, balance in rows:
+        open_by_tenant[tenant_id] = open_by_tenant.get(tenant_id, Decimal("0")) + balance
+    if not open_by_tenant:
+        return False
+
+    # An open earlier row is not the same thing as money owed. Cash is
+    # allocated to the month it arrived, not to the oldest debt — that is what
+    # the statement reconciliations restated it to — so a tenant who overpaid
+    # this month still leaves last month's row open while being square, or
+    # ahead, overall. DON2A closed August 250 in credit and read "in arrears".
+    # Net the open rows against credit the tenant is actually carrying; a
+    # shortfall is real debt, and MCG10's 43,800 with nothing against it still
+    # is one.
+    tenants = Tenant.objects.in_bulk(open_by_tenant)
+    return any(
+        owed > available_credit(tenants[tenant_id])
+        for tenant_id, owed in open_by_tenant.items()
     )
 
 
