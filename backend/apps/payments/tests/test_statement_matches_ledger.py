@@ -12,7 +12,7 @@ from decimal import Decimal
 import pytest
 
 from apps.buildings.models import Building, Unit, UnitClassification, UnitStatus
-from apps.payments.models import Arrears
+from apps.payments.models import Arrears, Payment, PaymentSource
 from apps.payments.statement_service import build_statement
 from apps.tenants.models import Tenant, TenantStatus
 
@@ -107,3 +107,27 @@ class TestOpeningBalanceIsNotRent:
         st = build_statement(self._with_opening("MQB05"), statement_date=AS_OF, as_of=AS_OF)
 
         assert st["total_due_value"] == D("46100.00")
+
+
+@pytest.mark.django_db
+class TestReceiptMonthMatchesRentRoll:
+    def test_summary_counts_cash_in_the_month_received_not_the_fifo_period(self):
+        tenant = _let("MQB06", UnitClassification.RESIDENTIAL, "15000")
+        Arrears.objects.create(
+            tenant=tenant, period_month=6, period_year=2026,
+            expected_rent=D("15000"), expected_vat=D("0"),
+            amount_paid=D("0"), balance=D("15000"),
+        )
+        Arrears.objects.create(
+            tenant=tenant, period_month=8, period_year=2026,
+            expected_rent=D("15000"), expected_vat=D("0"),
+            amount_paid=D("16000"), balance=D("0"),
+        )
+        Payment.objects.create(
+            tenant=tenant, amount=D("16000"), payment_date=_dt.date(2026, 8, 3),
+            period_month=6, period_year=2026, source=PaymentSource.MPESA,
+        )
+
+        statement = build_statement(tenant, statement_date=AS_OF, as_of=AS_OF)
+
+        assert statement["payments_received"] == "16,000.00"

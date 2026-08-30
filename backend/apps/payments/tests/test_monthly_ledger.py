@@ -110,12 +110,60 @@ class TestMonthlyLedger:
         assert rows[0]["balance"] == "-3000.00"
         assert rows[1]["brought_forward"] == "-3000.00"
 
+    def test_receipt_stays_in_the_month_paid_even_when_it_settles_an_older_period(self, tenant):
+        """FIFO may settle June arrears with August cash, but the rent roll
+        and payment history must both show when the cash actually arrived.
+
+        This is the DON1A failure mode: showing the receipt in June/July made
+        August look unpaid despite a KES 16,000 August payment.
+        """
+        # The historical reconciliation preserves the old June cutover row but
+        # zeroes it after folding that opening position into July.
+        _bill(tenant, 6, rent="0")
+        _bill(tenant, 7, rent="7800", waive_notes="Opening position carried")
+        _bill(tenant, 8, rent="15000")
+        UtilityCharge.objects.create(
+            tenant=tenant, posting_date=_dt.date(2026, 8, 1), period_month=8,
+            period_year=2026, label="Water + Other Costs", amount=Decimal("1500"),
+        )
+        Payment.objects.create(
+            tenant=tenant, amount=Decimal("16000"), payment_date=_dt.date(2026, 8, 3),
+            # This is intentionally the FIFO allocation, not the receipt month.
+            period_month=6, period_year=2026, source=PaymentSource.MPESA,
+        )
+
+        rows = {
+            row["period"]: row
+            for row in build_monthly_ledger(tenant, months=0, today=_dt.date(2026, 8, 21))
+        }
+
+        assert rows["6/2026"]["paid"] == "0.00"
+        assert rows["8/2026"]["brought_forward"] == "7800.00"
+        assert rows["8/2026"]["rent"] == "15000.00"
+        assert rows["8/2026"]["other_charges"] == "1500.00"
+        assert rows["8/2026"]["paid"] == "16000.00"
+        assert rows["8/2026"]["balance"] == "8300.00"
+
     def test_row_exists_for_the_current_month_before_billing_runs(self, tenant):
         _bill(tenant, 6)
         rows = build_monthly_ledger(tenant, today=TODAY)
         assert [r["period"] for r in rows] == ["6/2026", "7/2026", "8/2026"]
         assert rows[-1]["rent"] == "0.00"
         assert rows[-1]["balance"] == "9000.00"
+
+    def test_as_of_excludes_cash_received_after_the_snapshot(self, tenant):
+        _bill(tenant, 8, rent="9000")
+        _pay(tenant, 8, "9000")
+        payment = Payment.objects.get(tenant=tenant)
+        payment.payment_date = _dt.date(2026, 8, 26)
+        payment.save(update_fields=["payment_date"])
+
+        row = build_monthly_ledger(
+            tenant, today=_dt.date(2026, 8, 30), as_of=_dt.date(2026, 8, 21)
+        )[0]
+
+        assert row["paid"] == "0.00"
+        assert row["balance"] == "9000.00"
 
     def test_months_window_keeps_the_carried_balance_correct(self, tenant):
         _bill(tenant, 6)

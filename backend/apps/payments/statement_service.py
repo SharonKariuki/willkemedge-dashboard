@@ -257,8 +257,12 @@ def build_statement(tenant, *, statement_date: _dt.date | None = None, as_of: _d
         tenant=tenant, voided_at__isnull=True
     ).exclude(payment_type=PaymentType.DEPOSIT)
     if current is not None:
+        # The statement and monthly rent roll report cash in the month it was
+        # received. ``period_*`` is retained for FIFO arrears allocation and
+        # must not make an August receipt disappear into a June/July summary.
         payments_q = payments_q.filter(
-            period_year=current.period_year, period_month=current.period_month
+            payment_date__year=current.period_year,
+            payment_date__month=current.period_month,
         )
     else:
         payments_q = payments_q.none()

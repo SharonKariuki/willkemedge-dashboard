@@ -10,6 +10,12 @@ through the current month. The rows are derived from stored records only —
 ``Payment`` for cash received — so the table extends itself when the monthly
 billing task posts the next period. Nothing to regenerate by hand.
 
+Payment allocation and cash receipt date are deliberately different concepts:
+the arrears subledger allocates a receipt to the debt it settles, while this
+cash-basis roll shows it in the calendar month it was received. A late payment
+therefore appears in its receipt month even when FIFO used it to settle an
+older arrears period.
+
 Roll-forward, per month:
 
     balance = arrears_b/f + rent + VAT + other charges - payments - waivers
@@ -21,7 +27,7 @@ is already expressed by the negative carry.
 
 Public API
 ----------
-build_monthly_ledger(tenant, *, months=24, today=None) -> list[dict]
+build_monthly_ledger(tenant, *, months=24, today=None, as_of=None) -> list[dict]
 """
 from __future__ import annotations
 
@@ -59,8 +65,19 @@ def _label(year: int, month: int) -> str:
         return f"{month}/{year}"
 
 
-def build_monthly_ledger(tenant, *, months: int = DEFAULT_MONTHS, today: _dt.date | None = None) -> list[dict]:
-    """Return the tenant's rent roll, oldest month first."""
+def build_monthly_ledger(
+    tenant,
+    *,
+    months: int = DEFAULT_MONTHS,
+    today: _dt.date | None = None,
+    as_of: _dt.date | None = None,
+) -> list[dict]:
+    """Return the tenant's rent roll, oldest month first.
+
+    ``as_of`` creates a historical snapshot by excluding cash and other
+    charges posted after that date. It intentionally does not rewrite or hide
+    a rent obligation for a period already being reconstructed.
+    """
     from .models import Arrears, Payment, PaymentType, UtilityCharge
 
     today = today or _dt.date.today()
@@ -70,7 +87,10 @@ def build_monthly_ledger(tenant, *, months: int = DEFAULT_MONTHS, today: _dt.dat
         charges[_key(arr.period_year, arr.period_month)] = arr
 
     other: dict[int, Decimal] = {}
-    for util in UtilityCharge.objects.filter(tenant=tenant):
+    utilities = UtilityCharge.objects.filter(tenant=tenant)
+    if as_of:
+        utilities = utilities.filter(posting_date__lte=as_of)
+    for util in utilities:
         k = _key(util.period_year, util.period_month)
         other[k] = other.get(k, ZERO) + _money(util.amount)
 
@@ -80,10 +100,16 @@ def build_monthly_ledger(tenant, *, months: int = DEFAULT_MONTHS, today: _dt.dat
     payments = (
         Payment.objects.filter(tenant=tenant, voided_at__isnull=True)
         .exclude(payment_type=PaymentType.DEPOSIT)
-        .only("amount", "period_month", "period_year")
+        .only("amount", "payment_date")
     )
+    if as_of:
+        payments = payments.filter(payment_date__lte=as_of)
     for pay in payments:
-        k = _key(pay.period_year, pay.period_month)
+        # ``period_*`` is the arrears-settlement allocation. The rent roll is
+        # a cash-received report, matching both the payment history and the
+        # landlord's monthly spreadsheet, so it keys receipts by their actual
+        # payment date instead.
+        k = _key(pay.payment_date.year, pay.payment_date.month)
         paid[k] = paid.get(k, ZERO) + _money(pay.amount)
 
     keys = set(charges) | set(other) | set(paid)
