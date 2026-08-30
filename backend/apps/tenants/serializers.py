@@ -89,6 +89,10 @@ class TenantDetailSerializer(serializers.ModelSerializer):
     deposit_months = serializers.SerializerMethodField()
     expected_deposit = serializers.SerializerMethodField()
     deposit_shortfall = serializers.SerializerMethodField()
+    # Set when the landlord agreed a figure the rule does not produce, in which
+    # case `expected_deposit` IS that figure and describing it as months of rent
+    # would be a lie.
+    deposit_is_agreed = serializers.SerializerMethodField()
     status_display = serializers.CharField(source="get_status_display", read_only=True)
     documents = TenantDocumentSerializer(many=True, read_only=True)
     # Payment analytics
@@ -113,6 +117,7 @@ class TenantDetailSerializer(serializers.ModelSerializer):
             "unit", "unit_label", "building_name", "building_id", "unit_classification",
             "monthly_rent", "deposit_paid", "due_day",
             "deposit_months", "expected_deposit", "deposit_shortfall",
+            "agreed_deposit", "deposit_is_agreed",
 
             "deposit_refund_percentage", "deposit_refund_amount",
             "move_in_date", "move_out_date",
@@ -139,6 +144,10 @@ class TenantDetailSerializer(serializers.ModelSerializer):
     def get_deposit_shortfall(self, obj):
         from apps.tenants.deposits import deposit_shortfall
         return _money(deposit_shortfall(obj))
+
+    def get_deposit_is_agreed(self, obj):
+        from apps.tenants.deposits import has_agreed_deposit
+        return has_agreed_deposit(obj)
 
     def get_total_paid(self, obj):
         from django.db.models import Sum
@@ -174,15 +183,29 @@ class TenantCreateSerializer(serializers.ModelSerializer):
 class TenantEditSerializer(serializers.ModelSerializer):
     """For admin editing of tenant details — rent, deposit, status."""
 
+    # An empty box means "back to the rule", not "agreed at zero" — a blank
+    # arrives from the form as "" and would otherwise be rejected outright.
+    agreed_deposit = serializers.DecimalField(
+        max_digits=10, decimal_places=2, min_value=0,
+        required=False, allow_null=True,
+    )
+
     class Meta:
         model = Tenant
         fields = [
             "first_name", "last_name", "kra_pin", "phone", "email",
             "emergency_contact", "emergency_phone", "care_of",
-            "monthly_rent", "deposit_paid", "due_day", "deposit_refund_percentage",
+            "monthly_rent", "deposit_paid", "agreed_deposit", "due_day",
+            "deposit_refund_percentage",
             "notes",
 
         ]
+
+    def to_internal_value(self, data):
+        if data.get("agreed_deposit") in ("", " "):
+            data = data.copy()
+            data["agreed_deposit"] = None
+        return super().to_internal_value(data)
 
 
 class MoveOutNoticeSerializer(serializers.Serializer):
