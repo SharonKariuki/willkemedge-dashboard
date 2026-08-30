@@ -49,7 +49,7 @@ DEFAULTS = {
     "bank_account": "01136069098300",
     "bank_branch": "Karen Branch",
     "due_day_ordinal": "5th",
-    "water_rate": 150,
+    "water_rate": 200,
 }
 
 

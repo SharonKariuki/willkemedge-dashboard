@@ -306,7 +306,7 @@ class TenantArrearsFilterExportTests(APITestCase):
 
     @classmethod
     def setUpTestData(cls):
-        from apps.payments.models import Arrears
+        from apps.payments.models import Arrears, Payment
         from apps.tenants.models import Tenant
 
         cls.user = User.objects.create_user(
@@ -325,12 +325,22 @@ class TenantArrearsFilterExportTests(APITestCase):
                 monthly_rent=Decimal(rent), move_in_date="2026-04-01",
             )
 
-        # In arrears: uncleared balance of 5000
+        # Every shilling an arrears row reports as settled has a receipt behind
+        # it in production — ``amount_paid`` is only ever moved by recording a
+        # ``Payment``. The rent-roll balance derives from those receipts rather
+        # than from the subledger, so a fixture that records settlement on the
+        # arrears row alone reads as a tenant who never paid.
+
+        # In arrears: billed 15,000, paid 10,000, uncleared balance of 5,000
         cls.owing = _tenant("B1", "Owing", "15000")
         Arrears.objects.create(
             tenant=cls.owing, period_month=5, period_year=2026,
             expected_rent=Decimal("15000"), amount_paid=Decimal("10000"),
             balance=Decimal("5000"), is_cleared=False,
+        )
+        Payment.objects.create(
+            tenant=cls.owing, amount=Decimal("10000"), payment_date=dt.date(2026, 5, 20),
+            period_month=5, period_year=2026, source="mpesa",
         )
         # Paid up: an arrears row that is fully cleared (balance ignored)
         cls.paid = _tenant("B2", "Paidup", "12000")
@@ -338,6 +348,10 @@ class TenantArrearsFilterExportTests(APITestCase):
             tenant=cls.paid, period_month=5, period_year=2026,
             expected_rent=Decimal("12000"), amount_paid=Decimal("12000"),
             balance=Decimal("0"), is_cleared=True,
+        )
+        Payment.objects.create(
+            tenant=cls.paid, amount=Decimal("12000"), payment_date=dt.date(2026, 5, 18),
+            period_month=5, period_year=2026, source="mpesa",
         )
 
     def setUp(self):
