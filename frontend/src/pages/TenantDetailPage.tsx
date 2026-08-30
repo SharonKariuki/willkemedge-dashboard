@@ -97,10 +97,14 @@ export default function TenantDetailPage() {
     ?? [...ledger].reverse().find((m) => monthKey(m.period_year, m.period_month) <= nowKey)
     ?? null;
   const owedNow = Number(thisMonth?.balance ?? 0);
-  // Both derived by the backend from one rule (apps/tenants/deposits.py) so the
+  // Derived by the backend from one rule (apps/tenants/deposits.py) so the
   // page, the integrity check and the API cannot drift on what a deposit
   // should be. Older API responses omit them; fall back rather than render NaN.
-  const depositShortfall = Number(tenant?.deposit_shortfall ?? 0);
+  //
+  // The card states the rule; it does not chase the gap. `deposit_shortfall` is
+  // still served and `check_data_integrity` still reports on it — a deposit
+  // below the rule is worth knowing — but a tenant page is not the place to
+  // dun a figure the landlord may well have agreed to.
   const depositMonths = Number(tenant?.deposit_months ?? 1);
   // A deposit can be agreed at a figure the rule does not produce — say a
   // letting settled at 14,000 against a 15,000 rent. Where it has been, the
@@ -358,18 +362,14 @@ export default function TenantDetailPage() {
           <p className="mt-2 font-semibold tabular-nums text-content">{KES(tenant.monthly_rent)}</p>
         </Card>
         {/* The rule is one month's rent — three for a commercial letting — and
-            the card states it against what is actually held. Showing the held
-            figure alone gave nothing to judge it by, so a residential deposit
-            sitting at zero looked no different from one paid in full. */}
+            the card names it under the figure held, so the reader knows what
+            the deposit was meant to be. Where a different figure was agreed,
+            Edit records it and the card shows that instead. */}
         <Card padding="md">
           <p className="text-xs uppercase tracking-wider text-content-muted">Rent security deposit</p>
-          <p className={cn("mt-2 font-semibold tabular-nums", depositShortfall > 0 ? "text-orange-600" : "text-content")}>
-            {KES(tenant.deposit_paid)}
-          </p>
+          <p className="mt-2 font-semibold tabular-nums text-content">{KES(tenant.deposit_paid)}</p>
           <p className="mt-1 text-xs text-content-muted">
-            {depositShortfall > 0
-              ? `${KES(depositShortfall)} short of ${KES(tenant.expected_deposit)} (${depositRule})`
-              : depositAgreed ? `${KES(tenant.expected_deposit)} agreed` : depositRule}
+            {depositAgreed ? `${KES(tenant.expected_deposit)} agreed` : depositRule}
           </p>
         </Card>
         <Card padding="md">
