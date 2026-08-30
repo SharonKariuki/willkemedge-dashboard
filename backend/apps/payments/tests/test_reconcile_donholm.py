@@ -22,6 +22,7 @@ import pytest
 from django.core.management import call_command
 from django.core.management.base import CommandError
 
+from apps.accounts.models import FinancialAuditLog
 from apps.buildings.models import Building, Unit, UnitClassification, UnitStatus
 from apps.payments.management.commands import reconcile_donholm as cmd
 from apps.payments.models import Arrears, Payment, UtilityCharge
@@ -212,6 +213,16 @@ class TestAugustCash:
             tenant=donholm["misfiled"], voided_at__isnull=False
         ).exists(), "cash was voided rather than re-allocated"
 
+    def test_allocation_repairs_are_audited(self, donholm, monkeypatch):
+        _stmt(monkeypatch, donholm.values(), only={"DON1A"})
+
+        call_command("reconcile_donholm", "--apply")
+
+        logs = FinancialAuditLog.objects.filter(action="payment.reallocate")
+        assert logs.count() == 2
+        assert all(log.old_values["payment_date"] == "2026-08-03" for log in logs)
+        assert all(log.new_values == {"period_month": 8, "period_year": 2026} for log in logs)
+
     def test_july_dated_cash_stays_put(self, donholm, monkeypatch):
         """DON3B's 30 July payment is not August cash and must not move to August."""
         _stmt(monkeypatch, donholm.values(), only={"DON3B"})
@@ -337,3 +348,19 @@ class TestReconciles:
         assert {key: _roll(t)["8/2026"] for key, t in donholm.items()} == before
         assert Payment.objects.count() == payments
         assert UtilityCharge.objects.count() == len(donholm)
+
+    def test_unit_statuses_follow_the_repaired_arrears_state(self, donholm, monkeypatch):
+        _stmt(monkeypatch, donholm.values())
+
+        call_command("reconcile_donholm", "--apply")
+
+        misfiled = donholm["misfiled"].unit
+        credit = donholm["credit"].unit
+        owing = donholm["owing"].unit
+        misfiled.refresh_from_db()
+        credit.refresh_from_db()
+        owing.refresh_from_db()
+
+        assert misfiled.status == UnitStatus.ARREARS
+        assert credit.status == UnitStatus.OCCUPIED_PAID
+        assert owing.status == UnitStatus.ARREARS

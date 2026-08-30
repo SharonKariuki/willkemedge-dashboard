@@ -272,6 +272,39 @@ class Command(BaseCommand):
             .exclude(payment_type=PaymentType.DEPOSIT)
         )
 
+    @staticmethod
+    def _record_allocation_repair(payment, *, old_period, new_period, reason):
+        """Make every exceptional historical payment re-allocation traceable.
+
+        A reconciliation is the rare, reviewed exception to the normal rule
+        that payment allocations are immutable. The receipt's amount, date and
+        tenant are never changed; this log records the allocation correction
+        that lets the arrears subledger agree with the authoritative snapshot.
+        """
+        from apps.accounts import audit
+
+        audit.record(
+            action="payment.reallocate",
+            object_type="payment",
+            object_id=payment.pk,
+            summary=(
+                f"Reallocated KES {payment.amount} for {payment.tenant} from "
+                f"{old_period[1]}/{old_period[0]} to {new_period[1]}/{new_period[0]} "
+                f"by Donholm 21 Aug 2026 reconciliation: {reason}"
+            ),
+            old_values={
+                "period_month": old_period[1],
+                "period_year": old_period[0],
+                "payment_date": payment.payment_date,
+                "amount": payment.amount,
+                "tenant_id": payment.tenant_id,
+            },
+            new_values={
+                "period_month": new_period[1],
+                "period_year": new_period[0],
+            },
+        )
+
     # -- steps --------------------------------------------------------------
 
     def _repoint_august_cash(self, tenant, label):
@@ -314,12 +347,19 @@ class Command(BaseCommand):
         touched = {AUG}
         with transaction.atomic():
             for pay in misfiled:
-                touched.add((pay.period_year, pay.period_month))
+                old_period = (pay.period_year, pay.period_month)
+                touched.add(old_period)
                 pay.period_year, pay.period_month = year, month
                 # The post_save signal re-posts the journal entry, which keys on
                 # the payment and dates itself from payment_date — so only its
                 # memo, which names the period, is restated.
                 pay.save(update_fields=["period_year", "period_month"])
+                self._record_allocation_repair(
+                    pay,
+                    old_period=old_period,
+                    new_period=AUG,
+                    reason="cash received during August must settle the August roll period",
+                )
             for period_year, period_month in sorted(touched):
                 _update_arrears(tenant, period_month, period_year)
 
@@ -386,9 +426,16 @@ class Command(BaseCommand):
         with transaction.atomic():
             moved_from = set()
             for pay in strays:
-                moved_from.add((pay.period_year, pay.period_month))
+                old_period = (pay.period_year, pay.period_month)
+                moved_from.add(old_period)
                 pay.period_year, pay.period_month = jul_year, jul_month
                 pay.save(update_fields=["period_year", "period_month"])
+                self._record_allocation_repair(
+                    pay,
+                    old_period=old_period,
+                    new_period=JUL,
+                    reason="pre-August opening position is represented by the July brought-forward row",
+                )
 
             Arrears.objects.update_or_create(
                 tenant=tenant, period_year=jul_year, period_month=jul_month,
@@ -560,7 +607,10 @@ class Command(BaseCommand):
             (
                 r
                 for r in build_monthly_ledger(
-                    tenant, months=0, today=_dt.date(year, month, 21)
+                    tenant,
+                    months=0,
+                    today=STATEMENT_DATE,
+                    as_of=STATEMENT_DATE,
                 )
                 if (r["period_year"], r["period_month"]) == (year, month)
             ),
