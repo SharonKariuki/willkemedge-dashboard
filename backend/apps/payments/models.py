@@ -11,6 +11,7 @@ Transaction is the auditable financial record that stores every tax-derived
 value at write time so reads never recalculate derived figures.
 """
 import datetime as _dt
+from decimal import Decimal
 
 from django.conf import settings
 from django.db import models
@@ -268,6 +269,23 @@ class UtilityCharge(models.Model):
     def __str__(self) -> str:
         return f"{self.label} {self.period_month}/{self.period_year} — KES {self.amount}"
 
+    def rate_per_unit(self):
+        """The tariff this charge was actually billed at, or None.
+
+        Derived from the stored amount and units rather than read off the
+        building, so a charge raised when water cost 150 keeps saying 150 after
+        the tariff moves to 200. The statement is a record of what was charged,
+        not a re-pricing of it. Only an exact division is reported — a figure
+        that does not divide cleanly is not a per-unit rate and claiming one
+        would invite a tenant to check the arithmetic and find it wrong.
+        """
+        if not self.units or self.amount is None:
+            return None
+        rate = (Decimal(self.amount) / Decimal(self.units)).quantize(Decimal("0.01"))
+        if rate * Decimal(self.units) != Decimal(self.amount):
+            return None
+        return rate
+
     def description(self) -> str:
         """Render the multi-line description used in the rent statement ledger."""
         try:
@@ -277,7 +295,12 @@ class UtilityCharge(models.Model):
         first = f"{self.label} {period_short}"
         if self.units is not None:
             units_int = int(self.units) if self.units == self.units.to_integral_value() else self.units
-            first += f" ({units_int} Units)"
+            rate = self.rate_per_unit()
+            if rate is None:
+                first += f" ({units_int} Units)"
+            else:
+                rate_text = f"{int(rate):,}" if rate == rate.to_integral_value() else f"{rate:,.2f}"
+                first += f" ({units_int} Units @ KES {rate_text})"
         extra = []
         if self.opening_reading is not None:
             extra.append(f"Opening Reading: {int(self.opening_reading) if self.opening_reading == self.opening_reading.to_integral_value() else self.opening_reading}")

@@ -18,6 +18,7 @@ from apps.buildings.models import (
     UnitStatus,
 )
 from apps.payments.models import Arrears, Payment, PaymentType
+from apps.payments.monthly_ledger import current_balances
 from apps.payments.tax_service import TAX_RATE_BUSINESS
 from apps.tenants.models import Tenant, TenantStatus
 
@@ -46,10 +47,19 @@ class DashboardSummaryView(APIView):
         occupied = Unit.objects.filter(status__in=OCCUPIED_UNIT_STATUSES).count()
         active_tenants = Tenant.objects.filter(status=TenantStatus.ACTIVE).count()
 
-        # Real-time arrears: sum all uncleared balances
-        total_arrears = Arrears.objects.filter(is_cleared=False).aggregate(
-            total=Sum("balance")
-        )["total"] or Decimal("0")
+        # Real-time arrears, read from the rent roll rather than from
+        # ``Arrears.balance``. The subledger tracks rent obligations only and is
+        # clamped at zero, so it missed water and other charges entirely and
+        # counted a tenant sitting in credit as square. Tenants in hand are
+        # excluded rather than netted off: a credit on one tenancy does not pay
+        # down what another owes, and netting understated what is collectable.
+        active_tenant_ids = list(
+            Tenant.objects.filter(status=TenantStatus.ACTIVE).values_list("id", flat=True)
+        )
+        rent_roll = current_balances(active_tenant_ids, today=timezone.localdate())
+        total_arrears = sum(
+            (balance for balance in rent_roll.values() if balance > 0), Decimal("0")
+        )
 
         # --- Monthly rent collection ---
         # Expected rent is stored VAT-exclusive (base) for commercial units, but
@@ -160,24 +170,43 @@ class DashboardSummaryView(APIView):
         # --- Real-time Alerts (overdue, partial, move-out, maintenance) ---
         alerts = []
 
-        # 1. Overdue tenants with arrears — show each with amount & due date
-        overdue_qs = (
-            Arrears.objects.filter(is_cleared=False)
-            .select_related("tenant", "tenant__unit", "tenant__unit__building")
-            .order_by("-balance")[:8]
-        )
-        for a in overdue_qs:
-            # Use tenant's custom due_day or default to 5th
-            due_day = getattr(a.tenant, "due_day", 5)
-            due_date_str = f"{due_day:02d}/{a.period_month:02d}/{a.period_year}"
+        # 1. Overdue tenants — the amount is the rent-roll balance, so the
+        # alert states what the tenant's statement states. Driving this off
+        # uncleared Arrears rows raised an alert per open period (one tenant,
+        # three alerts) and dunned tenants who were in credit overall.
+        owing_ids = [tid for tid, balance in rent_roll.items() if balance > 0]
+        owing_tenants = {
+            t.id: t
+            for t in Tenant.objects.filter(id__in=owing_ids).select_related(
+                "unit", "unit__building"
+            )
+        }
+        # The due date shown is the oldest period still open, which is the one
+        # the tenant is actually late on.
+        oldest_open = {}
+        for a in (
+            Arrears.objects.filter(tenant_id__in=owing_ids, is_cleared=False)
+            .order_by("tenant_id", "period_year", "period_month")
+        ):
+            oldest_open.setdefault(a.tenant_id, a)
+
+        for tenant_id in sorted(owing_ids, key=lambda tid: -rent_roll[tid])[:8]:
+            tenant = owing_tenants.get(tenant_id)
+            if tenant is None:
+                continue
+            due_day = getattr(tenant, "due_day", 5)
+            period = oldest_open.get(tenant_id)
+            month = period.period_month if period else current_month
+            year = period.period_year if period else current_year
+            due_date_str = f"{due_day:02d}/{month:02d}/{year}"
             alerts.append({
                 "type": "overdue",
                 "message": (
-                    f"{a.tenant.full_name} owes KES {a.balance:,.0f} "
+                    f"{tenant.full_name} owes KES {rent_roll[tenant_id]:,.0f} "
                     f"(Due {due_date_str}) — "
-                    f"{a.tenant.unit.building.name} {a.tenant.unit.label}"
+                    f"{tenant.unit.building.name} {tenant.unit.label}"
                 ),
-                "tenant_id": a.tenant_id,
+                "tenant_id": tenant_id,
             })
 
 

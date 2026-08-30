@@ -72,4 +72,9 @@ describe("buildReceiptDisplay", () => {
     const display = buildReceiptDisplay(makeReceipt({ outstanding_balance: "2500" }));
     expect(display.outstandingBalance).toBe("KES 2,500.00");
   });
+
+  it("formats a credit outstanding balance with a 'cr' suffix, not a minus sign", () => {
+    const display = buildReceiptDisplay(makeReceipt({ outstanding_balance: "-1500" }));
+    expect(display.outstandingBalance).toBe("KES 1,500.00 cr");
+  });
 });

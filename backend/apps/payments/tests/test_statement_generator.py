@@ -63,7 +63,7 @@ class TestBuildContext:
         ctx = build_context(UNIT_3A)
         # 1449 - 1445 = 4 units @ 150 = 600
         water = ctx["rows"][7]
-        assert water["description_lines"][0] == "Water usage - Feb. '26 (4 units)"
+        assert water["description_lines"][0] == "Water usage - Feb. '26 (4 units @ KES 150)"
         assert water["description_lines"][1] == "Opening Reading: 1445"
         assert water["description_lines"][2] == "Closing Reading: 1449"
         assert water["invoice_amount"] == "600"

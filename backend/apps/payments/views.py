@@ -369,17 +369,16 @@ class TransactionViewSet(viewsets.ReadOnlyModelViewSet):
         """
         txn = self.get_object()
 
-        # Fetch outstanding balance from latest arrears if available.
+        # What the tenant still owes, as the rent roll reports it. This read
+        # the newest uncleared Arrears row, which is one month's rent shortfall
+        # rather than a balance — it ignored every older open period, every
+        # water charge, and any credit in hand, so the figure printed on the
+        # receipt disagreed with the statement emailed the same day.
         outstanding = None
         try:
-            from .models import Arrears
-            latest_arrears = (
-                Arrears.objects.filter(tenant=txn.tenant, is_cleared=False)
-                .order_by("-period_year", "-period_month")
-                .first()
-            )
-            if latest_arrears:
-                outstanding = latest_arrears.balance
+            from .monthly_ledger import current_balance
+
+            outstanding = current_balance(txn.tenant)
         except Exception:
             pass
 
