@@ -99,7 +99,14 @@ def _row_description(txn: dict) -> tuple[list[str], Decimal, Decimal]:
         units = closing - opening
         invoice = (units * rate) if txn.get("amount") in (None, "") else _dec(txn.get("amount"))
         label = txn.get("label") or txn.get("description") or "Water usage"
-        lines = [f"{label} ({_int_if_whole(units)} units)"]
+        # State the tariff the line was priced at. A statement that shows units
+        # and a total but not the rate between them cannot be checked by the
+        # person receiving it, which is the one thing a statement is for.
+        priced_at = rate if units and (units * rate) == invoice else None
+        lines = [
+            f"{label} ({_int_if_whole(units)} units"
+            + (f" @ KES {_whole(priced_at)})" if priced_at is not None else ")")
+        ]
         if txn.get("opening_reading") is not None:
             lines.append(f"Opening Reading: {_int_if_whole(opening)}")
         if txn.get("closing_reading") is not None:

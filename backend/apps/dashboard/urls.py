@@ -5,6 +5,7 @@ from .views import DashboardSummaryView
 from .views_reports import (
     AccountingDashboardView,
     AnnualIncomeSummaryView,
+    AgingArrearsReportView,
     ArrearsReportView,
     ExpenseBreakdownReportView,
     MonthlyCollectionReportView,
@@ -22,6 +23,7 @@ urlpatterns = [
     path("reports/monthly-collection/", MonthlyCollectionReportView.as_view(), name="monthly-collection"),
     path("reports/annual-income/", AnnualIncomeSummaryView.as_view(), name="annual-income"),
     path("reports/arrears/", ArrearsReportView.as_view(), name="arrears-report"),
+    path("reports/aging-arrears/", AgingArrearsReportView.as_view(), name="aging-arrears-report"),
     path("reports/tenant-history/<int:tenant_id>/", TenantPaymentHistoryView.as_view(), name="tenant-history"),
     path("reports/occupancy/", OccupancyHistoryView.as_view(), name="occupancy"),
     path("reports/move-log/", MoveInOutLogView.as_view(), name="move-log"),

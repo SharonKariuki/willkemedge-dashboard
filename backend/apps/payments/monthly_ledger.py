@@ -28,6 +28,14 @@ is already expressed by the negative carry.
 Public API
 ----------
 build_monthly_ledger(tenant, *, months=24, today=None, as_of=None) -> list[dict]
+current_balance(tenant, *, today=None) -> Decimal
+current_balances(tenants, *, today=None) -> dict[int, Decimal]
+
+``current_balance`` is the figure the roll closes the current month on, and is
+the one balance the whole product reports — the tenant list and detail page,
+the dashboard arrears total, the arrears report and the receipt footer all read
+it, so a credit shows as a credit everywhere rather than only where somebody
+remembered to look past ``Arrears.balance``.
 """
 from __future__ import annotations
 
@@ -163,3 +171,81 @@ def build_monthly_ledger(
         })
 
     return rows[-months:] if months and months > 0 else rows
+
+
+def _upto_current_period(today: _dt.date):
+    """Q matching a stored ``period_year``/``period_month`` at or before now."""
+    from django.db.models import Q
+
+    return Q(period_year__lt=today.year) | Q(
+        period_year=today.year, period_month__lte=today.month
+    )
+
+
+def current_balances(tenants, *, today: _dt.date | None = None) -> dict[int, Decimal]:
+    """Return ``{tenant_id: balance}`` as the rent roll reports it today.
+
+    The roll-forward is cumulative, so the current month's closing balance is
+    just everything charged up to this month less everything received up to
+    this month — the intermediate rows cancel. Computing it as three aggregates
+    therefore gives the same figure ``build_monthly_ledger`` ends on, without
+    building a 24-row roll per tenant: a tenant list, a dashboard total and the
+    arrears report all read many tenants at once, and one roll each was the
+    difference between three queries and three hundred.
+
+    Accepts tenants or tenant ids. A tenant with nothing on file balances at
+    zero rather than going missing from the result.
+    """
+    from django.db.models import DecimalField, F, Sum, Value
+    from django.db.models.functions import Coalesce
+
+    from .models import Arrears, Payment, PaymentType, UtilityCharge
+
+    ids = [t.pk if hasattr(t, "pk") else int(t) for t in tenants]
+    if not ids:
+        return {}
+
+    today = today or _dt.date.today()
+    upto = _upto_current_period(today)
+    # Cash is keyed by the month it was received, exactly as the roll keys it.
+    first_of_next_month = (today.replace(day=1) + _dt.timedelta(days=32)).replace(day=1)
+    zero = Value(ZERO, output_field=DecimalField(max_digits=14, decimal_places=2))
+
+    def _by_tenant(queryset, expression) -> dict[int, Decimal]:
+        return {
+            row["tenant_id"]: _money(row["total"])
+            for row in queryset.values("tenant_id").annotate(total=Sum(expression))
+        }
+
+    charged = _by_tenant(
+        Arrears.objects.filter(tenant_id__in=ids).filter(upto),
+        Coalesce(F("expected_rent"), zero)
+        + Coalesce(F("expected_vat"), zero)
+        - Coalesce(F("waived_amount"), zero),
+    )
+    other = _by_tenant(
+        UtilityCharge.objects.filter(tenant_id__in=ids).filter(upto), F("amount")
+    )
+    # Deposits are a refundable liability and voided payments never arrived —
+    # the same two exclusions the roll makes.
+    received = _by_tenant(
+        Payment.objects.filter(
+            tenant_id__in=ids,
+            voided_at__isnull=True,
+            payment_date__lt=first_of_next_month,
+        ).exclude(payment_type=PaymentType.DEPOSIT),
+        F("amount"),
+    )
+
+    return {
+        tid: _money(
+            charged.get(tid, ZERO) + other.get(tid, ZERO) - received.get(tid, ZERO)
+        )
+        for tid in ids
+    }
+
+
+def current_balance(tenant, *, today: _dt.date | None = None) -> Decimal:
+    """The one-tenant form of :func:`current_balances`."""
+    tenant_id = tenant.pk if hasattr(tenant, "pk") else int(tenant)
+    return current_balances([tenant_id], today=today).get(tenant_id, ZERO)

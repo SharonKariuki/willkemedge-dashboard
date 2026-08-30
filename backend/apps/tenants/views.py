@@ -20,7 +20,7 @@ from .serializers import (
     TenantDocumentSerializer,
     TenantEditSerializer,
     TenantListSerializer,
-    current_rent_roll_balance,
+    rent_roll_balances,
 )
 from .services import FileValidationError, move_in_tenant, move_out_tenant, validate_upload
 
@@ -107,6 +107,32 @@ class TenantViewSet(viewsets.ModelViewSet):
 
         return qs
 
+    def get_serializer_context(self):
+        """Price the whole page's balances in one go.
+
+        ``TenantListSerializer`` falls back to a per-row lookup when this is
+        absent, which is correct but issues three queries a tenant. Batching
+        here keeps the list at three queries however long it gets.
+        """
+        context = super().get_serializer_context()
+        if self.action == "list":
+            page = getattr(self, "_page_for_balances", None)
+            if page is not None:
+                context["rent_roll_balances"] = rent_roll_balances(page)
+        return context
+
+    def paginate_queryset(self, queryset):
+        page = super().paginate_queryset(queryset)
+        self._page_for_balances = page if page is not None else list(queryset)
+        return page
+
+    def list(self, request, *args, **kwargs):
+        # An unpaginated list never reaches paginate_queryset with a page, so
+        # make sure the batch is primed either way.
+        if getattr(self, "_page_for_balances", None) is None and self.paginator is None:
+            self._page_for_balances = list(self.filter_queryset(self.get_queryset()))
+        return super().list(request, *args, **kwargs)
+
     def get_serializer_class(self):
         if self.action == "retrieve":
             return TenantDetailSerializer
@@ -132,13 +158,14 @@ class TenantViewSet(viewsets.ModelViewSet):
 
         from django.http import HttpResponse
 
-        qs = self.get_queryset()
+        qs = list(self.get_queryset())
+        balances = rent_roll_balances(qs)
         response = HttpResponse(content_type="text/csv")
         response["Content-Disposition"] = 'attachment; filename="tenants.csv"'
         writer = csv.writer(response)
         writer.writerow(["Tenant", "Building", "Unit", "Balance", "Payment Status", "Status"])
         for t in qs:
-            balance = current_rent_roll_balance(t)
+            balance = balances.get(t.pk, Decimal("0.00"))
             arrears_balance = getattr(t, "outstanding_balance", None) or 0
             payment_status = "In Arrears" if arrears_balance > 0 else "Paid"
             writer.writerow([

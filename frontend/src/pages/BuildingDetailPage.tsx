@@ -17,8 +17,9 @@ import {
 import { EmailStatementsModal } from "@/features/tenants/shared";
 import { useBuilding } from "@/hooks/useBuildings";
 import { useTenants } from "@/hooks/useTenants";
+import { formatBalanceKES, formatKES } from "@/lib/money";
 
-const KES = (n: string | number) => `KES ${Number(n || 0).toLocaleString()}`;
+const KES = formatKES;
 
 export default function BuildingDetailPage() {
   const { id } = useParams();
@@ -138,7 +139,7 @@ export default function BuildingDetailPage() {
                     <TD className="text-right tabular-nums">
                       {tenant ? (
                         <span className={tenant.payment_status === "in_arrears" ? "text-orange-600" : "text-sage-600"}>
-                          {KES(tenant.balance)}
+                          {formatBalanceKES(tenant.balance)}
                         </span>
                       ) : "—"}
                     </TD>
