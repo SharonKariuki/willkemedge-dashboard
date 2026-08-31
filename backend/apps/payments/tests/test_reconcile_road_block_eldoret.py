@@ -256,14 +256,14 @@ class TestStatementPdf:
 
 @pytest.mark.django_db
 class TestRowsThatCannotResolve:
-    """Production lets two units to somebody the statement never mentions.
+    """A unit let to somebody the statement never mentions blocks its own row.
 
-    RB109 is occupied by Daniel Otieno where the sheet says Diana Ochola, and
-    RB401 by Sheila Khaemba Namusonge where it says Noah Omollo. Neither is a
-    displaced tenant the realignment step knows about, so both fail pre-flight
-    — and pre-flight used to abort the entire command under --apply, which is
-    why every other row on the property, Sarah & Hussein Hamisi's included,
-    stayed unreconciled through several production runs.
+    This is what production hit: RB109 and RB401 were on file under tenants
+    the sheet does not name, and pre-flight aborted the entire command under
+    --apply, so every other row on the property — Sarah & Hussein Hamisi's
+    included — stayed unreconciled through several production runs. Those two
+    units are now settled by ``RELET``, so the general case is exercised on
+    units the realignment steps say nothing about.
     """
 
     @staticmethod
@@ -278,8 +278,8 @@ class TestRowsThatCannotResolve:
         )
 
     def test_an_unresolvable_row_no_longer_blocks_the_property(self, road_block):
-        self._occupy("RB109", "Daniel", "Otieno")
-        self._occupy("RB401", "Sheila", "Namusonge")
+        self._occupy("RB103", "Daniel", "Otieno")
+        self._occupy("RB110", "Sheila", "Namusonge")
 
         call_command("reconcile_road_block_eldoret", "--apply", verbosity=0)
 
@@ -289,9 +289,9 @@ class TestRowsThatCannotResolve:
         assert _money(august["balance"]) == D("0.00")
 
     def test_the_rest_of_the_sheet_still_reproduces(self, road_block):
-        self._occupy("RB109", "Daniel", "Otieno")
-        self._occupy("RB401", "Sheila", "Namusonge")
-        blocked = {"RB109", "RB401"}
+        self._occupy("RB103", "Daniel", "Otieno")
+        self._occupy("RB110", "Sheila", "Namusonge")
+        blocked = {"RB103", "RB110"}
 
         call_command("reconcile_road_block_eldoret", "--apply", verbosity=0)
 
@@ -314,7 +314,7 @@ class TestRowsThatCannotResolve:
 
     def test_the_occupier_of_a_blocked_unit_is_left_alone(self, road_block):
         """No figure from the sheet may land on a tenant it does not name."""
-        intruder = self._occupy("RB109", "Daniel", "Otieno")
+        intruder = self._occupy("RB103", "Daniel", "Otieno")
 
         call_command("reconcile_road_block_eldoret", "--apply", verbosity=0)
 
@@ -322,21 +322,22 @@ class TestRowsThatCannotResolve:
         assert not Payment.objects.filter(tenant=intruder).exists()
 
     def test_the_blocked_rows_are_reported_at_the_end(self, road_block):
-        self._occupy("RB109", "Daniel", "Otieno")
-        self._occupy("RB401", "Sheila", "Namusonge")
+        self._occupy("RB103", "Daniel", "Otieno")
+        self._occupy("RB110", "Sheila", "Namusonge")
         out = StringIO()
 
         call_command("reconcile_road_block_eldoret", "--apply", stdout=out)
 
         tail = out.getvalue().split("NOT RECONCILED")[-1]
-        assert "RB109" in tail and "Daniel Otieno" in tail
-        assert "RB401" in tail and "Sheila Namusonge" in tail
+        assert "RB103" in tail and "Daniel Otieno" in tail
+        assert "RB110" in tail and "Sheila Namusonge" in tail
 
     def test_a_property_that_resolves_nowhere_still_aborts(self, road_block, monkeypatch):
         """Wrong building or wrong database — that is not a per-row question."""
-        # Step 0c would otherwise mint the four tenants the statement names but
-        # the database lacks, leaving those rows resolving on their own.
+        # Steps 0b2 and 0c would otherwise seat the tenants the statement names
+        # but the database lacks, leaving those rows resolving on their own.
         monkeypatch.setattr(cmd, "NEW_TENANTS", [])
+        monkeypatch.setattr(cmd, "RELET", [])
         Tenant.objects.filter(unit__building=road_block).update(
             status=TenantStatus.MOVED_OUT
         )
@@ -415,3 +416,108 @@ class TestProductionSubledgerShape:
             payment_date__year=2026, payment_date__month=8,
         )
         assert sum(p.amount for p in received) == D("8300.00")
+
+
+@pytest.mark.django_db
+class TestReLetting:
+    """RB109 and RB401 are on file under tenants the sheet never mentions.
+
+    The landlord settled it on 31 Aug 2026: the statement is right, the
+    database is stale. Both units go to the tenant the sheet names — moved
+    across if that tenant is already on file, created from the sheet if not —
+    and the sitting tenant is moved out rather than deleted.
+    """
+
+    @staticmethod
+    def _sit(label, first, last):
+        """Put a stale tenant on ``label``, keeping the history it carries.
+
+        Production's stale occupants have their own arrears and receipts, so
+        the fixture's tenant is renamed rather than replaced — deleting one
+        would take a history the real thing still has.
+        """
+        sitting = _tenant(label)
+        sitting.first_name, sitting.last_name = first, last
+        sitting.save(update_fields=["first_name", "last_name"])
+        return sitting
+
+    def test_the_statement_tenant_is_created_when_not_on_file(self, road_block):
+        stale = self._sit("RB109", "Daniel", "Otieno")
+
+        call_command("reconcile_road_block_eldoret", "--apply", verbosity=0)
+
+        assert _tenant("RB109").full_name == "Diana Ochola"
+        stale.refresh_from_db()
+        assert stale.status == TenantStatus.MOVED_OUT
+
+    def test_a_re_let_row_then_reconciles_to_the_sheet(self, road_block):
+        self._sit("RB109", "Daniel", "Otieno")
+
+        call_command("reconcile_road_block_eldoret", "--apply", verbosity=0)
+
+        row = _row(_tenant("RB109"))  # sheet: b/f 207, rent 5,000, paid 0
+        assert _money(row["brought_forward"]) == D("207.00")
+        assert _money(row["rent"]) == D("5000.00")
+        assert _money(row["balance"]) == D("5207.00")
+
+    def test_an_existing_record_is_moved_not_duplicated(self, road_block):
+        """Moving keeps the tenant's own arrears history; a copy would split it."""
+        self._sit("RB109", "Daniel", "Otieno")
+        spare = Unit.objects.create(
+            building=Unit.objects.get(label="RB109").building, label="RB998",
+            monthly_rent=D("5000"), classification=UnitClassification.RESIDENTIAL,
+            status=UnitStatus.OCCUPIED_UNPAID,
+        )
+        existing = Tenant.objects.create(
+            first_name="Diana", last_name="Ochola", id_number="ID-DIANA-REAL",
+            phone="+254102574415", unit=spare, monthly_rent=D("5000"),
+            deposit_paid=D(0), move_in_date="2026-06-16", status=TenantStatus.ACTIVE,
+        )
+
+        call_command("reconcile_road_block_eldoret", "--apply", verbosity=0)
+
+        assert Tenant.objects.filter(first_name="Diana", last_name="Ochola").count() == 1
+        existing.refresh_from_db()
+        assert existing.unit.label == "RB109"
+
+    def test_a_tenant_with_no_phone_on_the_sheet_is_not_invented(self, road_block):
+        """RB401's incoming tenant has no number on the statement image.
+
+        Nobody is evicted for a replacement that cannot be seated: the unit
+        would be left with no tenant at all, which is worse than the stale
+        name it has now. The row is reported under NOT RECONCILED instead.
+        """
+        sheila = self._sit("RB401", "Sheila", "Khaemba Namusonge")
+        out = StringIO()
+
+        call_command("reconcile_road_block_eldoret", "--apply", stdout=out)
+
+        assert not Tenant.objects.filter(first_name="Noah", last_name="Omollo").exists()
+        sheila.refresh_from_db()
+        assert sheila.status == TenantStatus.ACTIVE
+        assert "no phone number" in out.getvalue()
+        assert "RB401" in out.getvalue().split("NOT RECONCILED")[-1]
+
+    def test_somebody_the_sheet_houses_elsewhere_is_never_evicted(self, road_block):
+        """A re-let must not throw out a tenant the statement accounts for."""
+        unit = Unit.objects.get(label="RB109")
+        Tenant.objects.filter(unit=unit).update(status=TenantStatus.MOVED_OUT)
+        tabitha = _tenant("RB103")
+        tabitha.unit = unit
+        tabitha.save(update_fields=["unit"])
+
+        call_command("reconcile_road_block_eldoret", "--apply", verbosity=0)
+
+        tabitha.refresh_from_db()
+        assert tabitha.status == TenantStatus.ACTIVE
+        assert tabitha.unit.label == "RB109"
+
+    def test_re_letting_is_idempotent(self, road_block):
+        self._sit("RB109", "Daniel", "Otieno")
+        call_command("reconcile_road_block_eldoret", "--apply", verbosity=0)
+
+        out = StringIO()
+        call_command("reconcile_road_block_eldoret", "--apply", stdout=out)
+
+        assert "already let to Diana Ochola" in out.getvalue()
+        assert Tenant.objects.filter(first_name="Diana", last_name="Ochola").count() == 1
