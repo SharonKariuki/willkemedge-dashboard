@@ -336,8 +336,6 @@ def statement_email_html(
         customer_lines.append(f'<div>c/o {_e(statement["care_of"])}</div>')
     if statement.get("kra_pin"):
         customer_lines.append(f'<div>PIN: {_e(statement["kra_pin"])}</div>')
-    if statement.get("id_number"):
-        customer_lines.append(f'<div>ID Card: {_e(statement["id_number"])}</div>')
     if statement.get("tenant_phone"):
         customer_lines.append(f'<div>Tel: {_e(statement["tenant_phone"])}</div>')
     customer_html = "".join(customer_lines)

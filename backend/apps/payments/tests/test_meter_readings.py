@@ -130,6 +130,24 @@ class TestPostsToLedgerAndStatement:
         assert legs["1040"] == (Decimal("2250.00"), Decimal("0.00"))
         assert legs["4150"] == (Decimal("0.00"), Decimal("2250.00"))
 
+    def test_description_omits_the_meter_readings(self, tenant, client):
+        """Readings are stored and price the charge, but stay off the statement."""
+        client.post("/api/utility-charges/reading/", {
+            "tenant": tenant.id, "period_month": 1, "period_year": 2026,
+            "opening_reading": "1194", "closing_reading": "1209",
+        }, format="json")
+        charge = UtilityCharge.objects.get(tenant=tenant)
+
+        # The readings are still on the record ...
+        assert charge.opening_reading == Decimal("1194.00")
+        assert charge.closing_reading == Decimal("1209.00")
+        # ... but the tenant-facing line is a single row with no dial figures.
+        description = charge.description()
+        assert "\n" not in description
+        assert "Opening Reading" not in description
+        assert "Closing Reading" not in description
+        assert "(15 Units" in description
+
     def test_charge_shows_as_other_charges_on_the_statement(self, tenant, client):
         client.post("/api/utility-charges/reading/", {
             "tenant": tenant.id, "period_month": 1, "period_year": 2026,

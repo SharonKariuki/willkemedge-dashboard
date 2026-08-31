@@ -365,7 +365,6 @@ def build_statement(tenant, *, statement_date: _dt.date | None = None, as_of: _d
         "tenant_name": tenant.full_name,
         "care_of": getattr(tenant, "care_of", "") or "",
         "kra_pin": tenant.kra_pin or "",
-        "id_number": tenant.id_number or "",
         "tenant_phone": tenant.phone or "",
         "unit_label": unit.label,
         "unit_descriptor": _unit_descriptor(tenant),
