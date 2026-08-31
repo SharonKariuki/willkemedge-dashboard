@@ -19,9 +19,11 @@ rent roll must reproduce the landlord's 21-08-2026 sheet.
 """
 import datetime as _dt
 from decimal import Decimal
+from io import StringIO
 
 import pytest
 from django.core.management import call_command
+from django.core.management.base import CommandError
 
 from apps.buildings.models import Building, Unit, UnitClassification, UnitStatus
 from apps.payments.management.commands import reconcile_road_block_eldoret as cmd
@@ -250,3 +252,166 @@ class TestStatementPdf:
         st = build_statement(_tenant("RB308"), statement_date=AUG_31)
         brought = [r for r in st["rows"] if "brought forward" in r["description"].lower()]
         assert [r["invoice_amount"] for r in brought] == ["29,500.00"]
+
+
+@pytest.mark.django_db
+class TestRowsThatCannotResolve:
+    """Production lets two units to somebody the statement never mentions.
+
+    RB109 is occupied by Daniel Otieno where the sheet says Diana Ochola, and
+    RB401 by Sheila Khaemba Namusonge where it says Noah Omollo. Neither is a
+    displaced tenant the realignment step knows about, so both fail pre-flight
+    — and pre-flight used to abort the entire command under --apply, which is
+    why every other row on the property, Sarah & Hussein Hamisi's included,
+    stayed unreconciled through several production runs.
+    """
+
+    @staticmethod
+    def _occupy(label, first, last):
+        """Re-let ``label`` to someone the statement does not name."""
+        unit = Unit.objects.get(label=label)
+        Tenant.objects.filter(unit=unit).update(status=TenantStatus.MOVED_OUT)
+        return Tenant.objects.create(
+            first_name=first, last_name=last, id_number=f"ID-INTRUDER-{label}",
+            phone="+254700000001", unit=unit, monthly_rent=unit.monthly_rent,
+            deposit_paid=D(0), move_in_date="2026-06-16", status=TenantStatus.ACTIVE,
+        )
+
+    def test_an_unresolvable_row_no_longer_blocks_the_property(self, road_block):
+        self._occupy("RB109", "Daniel", "Otieno")
+        self._occupy("RB401", "Sheila", "Namusonge")
+
+        call_command("reconcile_road_block_eldoret", "--apply", verbosity=0)
+
+        august = _row(_tenant("RB101"))
+        assert _money(august["brought_forward"]) == D("0.00")
+        assert _money(august["rent"]) == D("8300.00")
+        assert _money(august["balance"]) == D("0.00")
+
+    def test_the_rest_of_the_sheet_still_reproduces(self, road_block):
+        self._occupy("RB109", "Daniel", "Otieno")
+        self._occupy("RB401", "Sheila", "Namusonge")
+        blocked = {"RB109", "RB401"}
+
+        call_command("reconcile_road_block_eldoret", "--apply", verbosity=0)
+
+        wrong = []
+        for label, name, bf, rent, other, paid, _total, _balance in cmd.STATEMENT:
+            if label in blocked:
+                continue
+            row = _row(_tenant(label))
+            expected = {
+                "brought_forward": _money(bf),
+                "rent": _money(rent),
+                "other_charges": _money(other),
+                "paid": _money(paid),
+                "balance": _money(bf + rent + other - paid),
+            }
+            got = {k: _money(row[k]) for k in expected}
+            if got != expected:
+                wrong.append(f"{label} {name}: {got} != {expected}")
+        assert not wrong, "\n".join(wrong)
+
+    def test_the_occupier_of_a_blocked_unit_is_left_alone(self, road_block):
+        """No figure from the sheet may land on a tenant it does not name."""
+        intruder = self._occupy("RB109", "Daniel", "Otieno")
+
+        call_command("reconcile_road_block_eldoret", "--apply", verbosity=0)
+
+        assert not Arrears.objects.filter(tenant=intruder).exists()
+        assert not Payment.objects.filter(tenant=intruder).exists()
+
+    def test_the_blocked_rows_are_reported_at_the_end(self, road_block):
+        self._occupy("RB109", "Daniel", "Otieno")
+        self._occupy("RB401", "Sheila", "Namusonge")
+        out = StringIO()
+
+        call_command("reconcile_road_block_eldoret", "--apply", stdout=out)
+
+        tail = out.getvalue().split("NOT RECONCILED")[-1]
+        assert "RB109" in tail and "Daniel Otieno" in tail
+        assert "RB401" in tail and "Sheila Namusonge" in tail
+
+    def test_a_property_that_resolves_nowhere_still_aborts(self, road_block, monkeypatch):
+        """Wrong building or wrong database — that is not a per-row question."""
+        # Step 0c would otherwise mint the four tenants the statement names but
+        # the database lacks, leaving those rows resolving on their own.
+        monkeypatch.setattr(cmd, "NEW_TENANTS", [])
+        Tenant.objects.filter(unit__building=road_block).update(
+            status=TenantStatus.MOVED_OUT
+        )
+
+        with pytest.raises(CommandError, match="not one statement row resolves"):
+            call_command("reconcile_road_block_eldoret", "--apply", verbosity=0)
+
+
+@pytest.mark.django_db
+class TestProductionSubledgerShape:
+    """RB101 exactly as the live database holds her, read 31 Aug 2026.
+
+        ARR 6  8300.00 paid 8300.00  balance 0.00
+        ARR 7  8300.00 paid 8300.00  balance 0.00     <- August's cash, FIFO'd
+        (no August arrears row at all)
+
+    The subledger settled July with the receipt that arrived in August, while
+    the cash-basis roll reports that receipt in August — so the roll shows July
+    unpaid and August opening at 8,300 against a rent of nil, which is what the
+    landlord queried. The general fixture raises an August arrears row instead,
+    so this shape is pinned separately.
+    """
+
+    @pytest.fixture
+    def rb101_as_in_production(self, road_block):
+        from apps.payments.services import process_payment
+
+        tenant = _tenant("RB101")
+        # Transaction.payment is PROTECTed, so the postings go before the cash.
+        Transaction.objects.filter(tenant=tenant).delete()
+        Payment.objects.filter(tenant=tenant).delete()
+        Arrears.objects.filter(tenant=tenant).delete()
+        for month in (6, 7):
+            Arrears.objects.create(
+                tenant=tenant, period_year=2026, period_month=month,
+                expected_rent=D("8300"), expected_vat=D(0), amount_paid=D(0),
+                balance=D("8300"), is_cleared=False,
+            )
+        process_payment(
+            tenant=tenant, amount=D("8300"), payment_date=_dt.date(2026, 6, 20),
+            period_month=6, period_year=2026, source="mpesa",
+            reference="PROD-JUN-RB101", idempotency_key="PROD-JUN-RB101",
+        )
+        # Received in August, allocated by the subledger against July.
+        process_payment(
+            tenant=tenant, amount=D("8300"), payment_date=_dt.date(2026, 8, 12),
+            period_month=7, period_year=2026, source="bank",
+            reference="PROD-AUG-RB101", idempotency_key="PROD-AUG-RB101",
+        )
+        return tenant
+
+    def test_the_fixture_reproduces_what_the_landlord_queried(self, rb101_as_in_production):
+        assert not Arrears.objects.filter(
+            tenant=rb101_as_in_production, period_year=2026, period_month=8
+        ).exists()
+        august = _row(rb101_as_in_production)
+        assert _money(august["brought_forward"]) == D("8300.00")
+        assert _money(august["rent"]) == D("0.00")
+
+    def test_the_command_puts_her_row_right(self, rb101_as_in_production):
+        call_command("reconcile_road_block_eldoret", "--apply", verbosity=0)
+
+        july = _row(rb101_as_in_production, month=7)
+        august = _row(rb101_as_in_production)
+        assert july["is_opening"] and _money(july["balance"]) == D("0.00")
+        assert _money(august["brought_forward"]) == D("0.00")
+        assert _money(august["rent"]) == D("8300.00")
+        assert _money(august["paid"]) == D("8300.00")
+        assert _money(august["balance"]) == D("0.00")
+
+    def test_her_august_cash_is_not_banked_twice(self, rb101_as_in_production):
+        call_command("reconcile_road_block_eldoret", "--apply", verbosity=0)
+
+        received = Payment.objects.filter(
+            tenant=rb101_as_in_production, voided_at__isnull=True,
+            payment_date__year=2026, payment_date__month=8,
+        )
+        assert sum(p.amount for p in received) == D("8300.00")
