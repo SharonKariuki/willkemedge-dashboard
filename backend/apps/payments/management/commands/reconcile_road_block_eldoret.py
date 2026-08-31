@@ -60,6 +60,12 @@ Two separate problems on this property, both fixed here:
    posts only the difference between what is banked and what the statement
    reports, and never removes a receipt that exceeds it.
 
+A statement row whose unit is let to somebody the statement never mentions
+is reconciled by neither: it is skipped, and listed under NOT RECONCILED at
+the end of the run for the landlord to settle. Only a total pre-flight
+failure — not one row on the property resolving — aborts, since that means
+the wrong building or the wrong database, not a disagreement about one unit.
+
 DRY-RUN BY DEFAULT. Nothing is written without --apply. Re-running is safe
 (every step is idempotent — it detects and skips work already done).
 
@@ -265,23 +271,34 @@ class Command(BaseCommand):
         for label in VACANT_UNITS:
             self._set_vacant(label)
 
-        # Pre-flight: every statement row must now resolve to the named tenant
-        # on the named unit before any financial data is touched.
+        # Pre-flight: report which statement rows resolve to the named tenant on
+        # the named unit. A row that does not resolve is skipped by every
+        # financial step below — ``_step`` re-resolves before each write, so no
+        # figure can land on a tenant the statement did not name — which means
+        # one unresolvable row costs that row, not the property. Aborting the
+        # whole run instead (what this used to do under --apply) left all 51
+        # Road Block rows unreconciled because two units are let to someone the
+        # statement doesn't mention.
         self._head("Pre-flight: statement rows resolve to the right tenant")
-        wrong = []
+        self.unresolved = []
         for label, name, *_ in STATEMENT:
-            tenant, problem = self._resolve(label, name)
+            _tenant, problem = self._resolve(label, name)
             if problem:
-                wrong.append(problem)
-        if wrong:
-            if self.apply:
-                raise CommandError(
-                    "Pre-flight failed after step 0 — refusing to touch financial data:\n  "
-                    + "\n  ".join(wrong)
-                )
-            for w in wrong:
-                self._skip(w)
-            self._note("(dry-run: steps 0a-0d above haven't been written yet, so this is expected)")
+                self.unresolved.append(problem)
+                self._skip(problem)
+        if len(self.unresolved) == len(STATEMENT):
+            # Nothing at all lines up: the wrong building matched, or this is
+            # not the database the statement describes. Reconciling row by row
+            # from there would be writing into the dark.
+            raise CommandError(
+                "Pre-flight failed — not one statement row resolves to its tenant. "
+                "Refusing to touch financial data:\n  " + "\n  ".join(self.unresolved)
+            )
+        if self.unresolved and not self.apply:
+            self._note(
+                "(dry-run: steps 0a-0d above haven't been written yet, so a row waiting "
+                "on a move or a create resolves once --apply runs)"
+            )
 
         self._head("1. Unit base rent (August 2026 figure)")
         for label, _name, _bf, rent, *_ in STATEMENT:
@@ -313,6 +330,19 @@ class Command(BaseCommand):
             ))
         else:
             self.stdout.write(self.style.SUCCESS(f"\nApplied {self.changes} change(s)."))
+
+        # Printed last so it survives the couple of hundred lines above it.
+        # These rows are a question for the landlord — the statement names a
+        # tenant the database does not hold on that unit — not something for
+        # this command to guess at.
+        if self.unresolved:
+            self._head(f"NOT RECONCILED — {len(self.unresolved)} row(s) need a decision")
+            for problem in self.unresolved:
+                self.stdout.write(self.style.WARNING(f"  {problem}"))
+            self.stdout.write(
+                "  Every other row was reconciled. Settle who occupies these units — "
+                "correct the statement, or move the tenant — then re-run."
+            )
 
     # -- plumbing ---------------------------------------------------------
 
