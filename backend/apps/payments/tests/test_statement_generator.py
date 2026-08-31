@@ -64,9 +64,20 @@ class TestBuildContext:
         # 1449 - 1445 = 4 units @ 150 = 600
         water = ctx["rows"][7]
         assert water["description_lines"][0] == "Water usage - Feb. '26 (4 units @ KES 150)"
-        assert water["description_lines"][1] == "Opening Reading: 1445"
-        assert water["description_lines"][2] == "Closing Reading: 1449"
         assert water["invoice_amount"] == "600"
+
+    def test_water_readings_stay_off_the_statement(self):
+        """The readings price the line but are not shown to the tenant."""
+        ctx = build_context(UNIT_3A)
+        water = ctx["rows"][7]
+        assert water["description_lines"] == [
+            "Water usage - Feb. '26 (4 units @ KES 150)"
+        ]
+
+    def test_id_card_is_not_in_the_context(self):
+        """ID Card was dropped from the statement; nothing should reintroduce it."""
+        ctx = build_context(UNIT_3A)
+        assert "id_number" not in ctx
 
     def test_negative_balance_flagged(self):
         ctx = build_context(UNIT_3A)

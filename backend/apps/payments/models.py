@@ -227,9 +227,11 @@ class UtilityCharge(models.Model):
 
     Designed to render lines like:
         "Water Usage Feb. '26"                            3,700
-        "Water usage - Mar. '26 (7 units)
-         Opening Reading: 1449
-         Closing Reading: 1456"                           1,050
+        "Water usage - Mar. '26 (7 units @ KES 150)"      1,050
+
+    Meter readings are stored on the charge but deliberately kept off the
+    statement: the tenant-facing document shows the consumption and what it
+    cost, not the raw dial figures behind it.
     """
 
     tenant = models.ForeignKey(
@@ -287,7 +289,7 @@ class UtilityCharge(models.Model):
         return rate
 
     def description(self) -> str:
-        """Render the multi-line description used in the rent statement ledger."""
+        """Render the description used in the rent statement ledger."""
         try:
             period_short = _dt.date(self.period_year, self.period_month, 1).strftime("%b. '%y")
         except ValueError:
@@ -301,12 +303,7 @@ class UtilityCharge(models.Model):
             else:
                 rate_text = f"{int(rate):,}" if rate == rate.to_integral_value() else f"{rate:,.2f}"
                 first += f" ({units_int} Units @ KES {rate_text})"
-        extra = []
-        if self.opening_reading is not None:
-            extra.append(f"Opening Reading: {int(self.opening_reading) if self.opening_reading == self.opening_reading.to_integral_value() else self.opening_reading}")
-        if self.closing_reading is not None:
-            extra.append(f"Closing Reading: {int(self.closing_reading) if self.closing_reading == self.closing_reading.to_integral_value() else self.closing_reading}")
-        return "\n".join([first, *extra])
+        return first
 
 
 # ---------------------------------------------------------------------------

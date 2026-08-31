@@ -17,7 +17,7 @@ Input shape (see the module docstring example in the management command)::
 
     {
       "tenant_name": "John Doe", "unit": "4B",
-      "pin": "A00...", "id_number": "123...", "phone": "0712...",
+      "pin": "A00...", "phone": "0712...",
       "month": "June-2026", "statement_date": "4 June 2026",
       "opening_balance": 0,                       # optional, default 0
       "transactions": [
@@ -39,7 +39,7 @@ from pathlib import Path
 # Donholm defaults, matching the official template. Any can be overridden per
 # statement via the input dict (or a nested "building" block).
 DEFAULTS = {
-    "entity_name": "WILKEM EDGE APARTMENTS",
+    "entity_name": "WILKEM VENTURES COMPANY LIMITED",
     "entity_location": "DONHOLM ESTATE, NAIROBI",
     "postal_address": "BOX 66741 - 00800 NAIROBI",
     "contact_phone": "+254 722 527234 | +254 732 527234",
@@ -86,8 +86,9 @@ def _row_description(txn: dict) -> tuple[list[str], Decimal, Decimal]:
     """Return (description_lines, invoice_amount, payments) for one transaction.
 
     A water transaction (``type: "water"`` or opening/closing readings present)
-    has its consumption and charge computed here and rendered as the multi-line
-    '<label> (N units) / Opening Reading / Closing Reading' block.
+    has its consumption and charge computed here and rendered as a single
+    '<label> (N units @ KES rate)' line. The readings themselves drive the
+    consumption but are kept off the statement.
     """
     is_water = txn.get("type") == "water" or (
         txn.get("opening_reading") is not None and txn.get("closing_reading") is not None
@@ -107,10 +108,6 @@ def _row_description(txn: dict) -> tuple[list[str], Decimal, Decimal]:
             f"{label} ({_int_if_whole(units)} units"
             + (f" @ KES {_whole(priced_at)})" if priced_at is not None else ")")
         ]
-        if txn.get("opening_reading") is not None:
-            lines.append(f"Opening Reading: {_int_if_whole(opening)}")
-        if txn.get("closing_reading") is not None:
-            lines.append(f"Closing Reading: {_int_if_whole(closing)}")
         return lines, invoice, _dec(txn.get("payments"))
 
     desc = str(txn.get("description", ""))
@@ -164,7 +161,6 @@ def build_context(data: dict) -> dict:
     return {
         "tenant_name": data.get("tenant_name", ""),
         "pin": data.get("pin", ""),
-        "id_number": data.get("id_number", ""),
         "phone": data.get("phone", ""),
         "unit": unit,
         "unit_descriptor": data.get("unit_descriptor") or (f"Unit {unit}" if unit else ""),
