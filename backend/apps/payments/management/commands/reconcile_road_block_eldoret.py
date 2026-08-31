@@ -276,7 +276,7 @@ class Command(BaseCommand):
         # financial step below — ``_step`` re-resolves before each write, so no
         # figure can land on a tenant the statement did not name — which means
         # one unresolvable row costs that row, not the property. Aborting the
-        # whole run instead (what this used to do under --apply) left all 32
+        # whole run instead (what this used to do under --apply) left all 51
         # Road Block rows unreconciled because two units are let to someone the
         # statement doesn't mention.
         self._head("Pre-flight: statement rows resolve to the right tenant")
