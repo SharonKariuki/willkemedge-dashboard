@@ -325,7 +325,7 @@ def statement_email_html(
     if statement.get("has_paybill"):
         pb = _e(statement["paybill_number"])
         acct = _e(statement.get("paybill_account") or "")
-        acct_html = f" Account: <b>{acct}</b>" if acct else ""
+        acct_html = f", Account No. <b>{acct}</b>" if acct else ""
         pay_rows.append(f'<tr><td colspan="2" style="padding:3px 6px">Or through Paybill No. <b>{pb}</b>{acct_html} ;</td></tr>')
     if not pay_rows:
         pay_rows.append('<tr><td colspan="2" style="padding:3px 6px">Please contact the management office for payment details.</td></tr>')
@@ -336,8 +336,6 @@ def statement_email_html(
         customer_lines.append(f'<div>c/o {_e(statement["care_of"])}</div>')
     if statement.get("kra_pin"):
         customer_lines.append(f'<div>PIN: {_e(statement["kra_pin"])}</div>')
-    if statement.get("id_number"):
-        customer_lines.append(f'<div>ID Card: {_e(statement["id_number"])}</div>')
     if statement.get("tenant_phone"):
         customer_lines.append(f'<div>Tel: {_e(statement["tenant_phone"])}</div>')
     customer_html = "".join(customer_lines)
