@@ -199,6 +199,16 @@ AT_SENDER_ID = config("AT_SENDER_ID", default="")
 # date is within this many days.
 RENT_REMINDER_LEAD_DAYS = config("RENT_REMINDER_LEAD_DAYS", default=3, cast=int)
 
+# Day of the month the billing cycle rolls forward on. From this day the system
+# raises and states the FOLLOWING month: the 25th of August bills and emails
+# September, which is what tenants asked for — the statement arrives before the
+# month it covers, not after it has started. See apps/payments/billing_calendar.py.
+#
+# The external scheduler must fire monthly-arrears and monthly-statements on the
+# same day (.github/workflows/scheduled-jobs.yml); changing this alone only moves
+# what the jobs compute, not when they run.
+STATEMENT_RUN_DAY = config("STATEMENT_RUN_DAY", default=25, cast=int)
+
 # Email — SMTP (Gmail by default; swap host/port for any other SMTP provider)
 EMAIL_BACKEND = config(
     "EMAIL_BACKEND",

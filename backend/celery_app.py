@@ -33,7 +33,21 @@ app.conf.beat_schedule = {
         "task": "apps.payments.tasks.recalculate_all_statuses",
         "schedule": crontab(hour=0, minute=30),
     },
-    # 1st of each month at 00:05 EAT — create fresh arrears records
+    # 25th at 06:30 EAT — raise NEXT month's rent, ahead of the statement run.
+    # See apps/payments/billing_calendar.py for why the cycle runs a month
+    # ahead of the calendar. Production has no beat process — the real
+    # scheduler is .github/workflows/scheduled-jobs.yml — so these two must be
+    # kept in step with it.
+    "advance-generate-arrears": {
+        "task": "apps.payments.tasks.generate_monthly_arrears",
+        "schedule": crontab(hour=6, minute=30, day_of_month=25),
+    },
+    # 25th at 07:00 EAT — email every tenant next month's statement
+    "advance-send-statements": {
+        "task": "apps.payments.tasks.send_monthly_statements",
+        "schedule": crontab(hour=7, minute=0, day_of_month=25),
+    },
+    # 1st of each month at 00:05 EAT — catch-up for any month the 25th missed
     "monthly-generate-arrears": {
         "task": "apps.payments.tasks.generate_monthly_arrears",
         "schedule": crontab(hour=0, minute=5, day_of_month=1),

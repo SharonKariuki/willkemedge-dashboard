@@ -61,13 +61,21 @@ def _at_message_id(receipt: dict) -> str:
 
 
 def _current_balance(tenant: Tenant) -> Decimal:
-    """Total unpaid balance across all open arrears rows."""
+    """Total unpaid balance across the open arrears rows that have fallen due.
+
+    Periods after the current month are excluded. Billing runs a month ahead of
+    the calendar (see billing_calendar), so from the 25th every tenant carries a
+    row for next month; counting it here would have every reminder SMS quote a
+    balance a full month's rent too high for the last week of every month.
+    """
     from django.db.models import Sum
 
     from .models import Arrears
+    from .monthly_ledger import upto_current_period
 
     total = (
         Arrears.objects.filter(tenant=tenant, is_cleared=False)
+        .filter(upto_current_period(timezone.localdate()))
         .aggregate(total=Sum("balance"))
         .get("total")
     )

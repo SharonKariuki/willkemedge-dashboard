@@ -17,23 +17,33 @@ Jobs run **synchronously** via `.apply()`, so they work with no broker and no
 worker, and a failure surfaces as a 500 — which makes the scheduler's run show
 red instead of failing silently.
 
-Schedule these to match the old Celery beat schedule (times are EAT):
+Schedule (times are EAT; see .github/workflows/scheduled-jobs.yml):
 
-    00:05, 1st of month   monthly-arrears
-    07:00, 2nd of month   monthly-statements
+    06:30, 25th of month  monthly-arrears        (raises NEXT month)
+    07:00, 25th of month  monthly-statements     (emails NEXT month)
+    00:05, 1st of month   monthly-arrears        (catch-up)
     00:30 daily           recalculate-statuses
     08:00 daily           rent-reminders
     09:00 daily           arrears-reminders
     any time daily        daily-reconciliation
 
-`monthly-statements` runs on the 2nd, not the 1st: `monthly-arrears` is what
-raises the month's rent, and a statement emailed before it has run states a
-balance with the current month missing from it. It accepts an optional
-`?period=YYYY-MM` to re-issue a closed month.
+The two monthly jobs run a month ahead of the calendar, at tenants' request: on
+25 August they raise and email September, so the bill arrives before the month
+it covers rather than after it has started. `apps/payments/billing_calendar.py`
+owns that rule and lists what else depends on it.
+
+Order matters on the 25th. `monthly-arrears` is what raises the month's rent,
+and a statement emailed before it has run states a balance with the stated month
+missing from it — hence the half hour between them.
+
+`monthly-statements` accepts an optional `?period=YYYY-MM` to re-issue a month;
+without it the job bills whichever month the cycle is on.
 
 `monthly-arrears` is the important one: it is the only thing that creates an
 Arrears row for a tenant who has *not* paid. Without it, defaulters produce no
 arrears record at all and stay invisible to the reminders and the arrears report.
+It bills every month a tenant is short of, so the 1st-of-month run is a free
+safety net for a 25th that failed.
 """
 import hmac
 import logging
