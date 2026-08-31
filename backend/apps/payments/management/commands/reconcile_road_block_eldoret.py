@@ -60,11 +60,17 @@ Two separate problems on this property, both fixed here:
    posts only the difference between what is banked and what the statement
    reports, and never removes a receipt that exceeds it.
 
-A statement row whose unit is let to somebody the statement never mentions
-is reconciled by neither: it is skipped, and listed under NOT RECONCILED at
-the end of the run for the landlord to settle. Only a total pre-flight
-failure — not one row on the property resolving — aborts, since that means
-the wrong building or the wrong database, not a disagreement about one unit.
+Two further units — RB109 and RB401 — were let in the database to tenants the
+sheet never mentions (Daniel Otieno and Sheila Khaemba Namusonge). The
+landlord settled it on 31 Aug 2026: the statement is right and the database is
+stale, so step 0b2 re-lets both to the tenant the sheet names. See ``RELET``.
+
+A statement row whose unit is still let to somebody the statement never
+mentions is reconciled by neither: it is skipped, and listed under NOT
+RECONCILED at the end of the run for the landlord to settle. Only a total
+pre-flight failure — not one row on the property resolving — aborts, since
+that means the wrong building or the wrong database, not a disagreement about
+one unit.
 
 DRY-RUN BY DEFAULT. Nothing is written without --apply. Re-running is safe
 (every step is idempotent — it detects and skips work already done).
@@ -136,6 +142,25 @@ NEW_TENANTS = [
     ("RB202", "Harun", "Ndiritu", "+254716747741", ""),
     ("RB203", "Mariane", "Mukabwa", "+254111739203", ""),
     ("RB208", "Michael", "Kalume", "+254797742172", ""),
+]
+
+# Units the statement RE-LETS: the tenant sitting on them in the database is
+# not named anywhere on the sheet, and the sheet gives the unit to somebody
+# else. The landlord confirmed (31 Aug 2026) that the statement is right and
+# the database is stale, so the sitting tenant moves out and the statement's
+# tenant takes the unit — moved across if they are already on file, created
+# from the sheet's own details if they are not.
+#
+# Keyed by name rather than by primary key (as MOVES and VACATE are), because
+# these two rows were found by reading a production dry-run rather than the
+# import, and a pk read off one database is not portable to another.
+#
+#   unit, tenant sitting on it now (exact full name), incoming phone (E.164),
+#   incoming kra_pin  — the last two are used only if the incoming tenant has
+#   to be created; "" means the sheet did not give it.
+RELET = [
+    ("RB109", "Daniel Otieno", "+254102574415", ""),
+    ("RB401", "Sheila Khaemba Namusonge", "", ""),
 ]
 
 # Units the statement shows vacant.
@@ -262,6 +287,10 @@ class Command(BaseCommand):
         self._head("0b. Move displaced tenants to their correct unit")
         for tid, from_label, to_label in MOVES:
             self._move(tid, from_label, to_label)
+
+        self._head("0b2. Re-let units the database has under the wrong tenant")
+        for label, sitting_name, phone, kra_pin in RELET:
+            self._relet(label, sitting_name, phone, kra_pin)
 
         self._head("0c. Create tenants missing from the database")
         for label, first, last, phone, kra_pin in NEW_TENANTS:
@@ -424,6 +453,162 @@ class Command(BaseCommand):
             if tenant.id_number.upper() == f"PENDING-{from_label}".upper():
                 tenant.id_number = f"PENDING-{to_label.upper()}"
             tenant.save(update_fields=["unit", "id_number", "updated_at"])
+
+    @staticmethod
+    def _on_the_statement(name):
+        """Does the sheet house this person, on any unit?"""
+        wanted = name.strip().lower()
+        return any(wanted == n.strip().lower() for _label, n, *_ in STATEMENT)
+
+    def _relet(self, label, sitting_name, phone, kra_pin):
+        """Give a unit to the tenant the statement names.
+
+        The sitting tenant is marked moved out — never deleted, so their
+        history stays on file — and the statement's tenant takes the unit.
+        Guarded twice over: the unit must actually be let to the person this
+        table expects, and that person must not be housed anywhere else on the
+        sheet, so a re-let can never evict somebody the statement accounts for.
+        """
+        from apps.tenants.models import Tenant, TenantStatus
+
+        unit = self._unit(label)
+        if unit is None:
+            self._skip(f"{label}: unit not found")
+            return
+        incoming = next(
+            (n for lbl, n, *_ in STATEMENT if lbl.upper() == label.upper()), None
+        )
+        if incoming is None:
+            self._skip(f"{label}: not on the statement")
+            return
+
+        sitting = Tenant.objects.filter(unit=unit, status=TenantStatus.ACTIVE).first()
+        if sitting and sitting.full_name.strip().lower() == incoming.strip().lower():
+            self._skip(f"{label}: already let to {incoming}")
+            return
+        if sitting and sitting.full_name.strip().lower() != sitting_name.strip().lower():
+            self._skip(
+                f"{label}: let to '{sitting.full_name}', this step expects "
+                f"'{sitting_name}' — unexpected state, leaving alone"
+            )
+            return
+        if sitting and self._on_the_statement(sitting.full_name):
+            self._skip(
+                f"{label}: '{sitting.full_name}' is housed elsewhere on the statement "
+                "— not evicting them"
+            )
+            return
+
+        # Who takes the unit is settled BEFORE anybody is moved out. Evicting
+        # first and failing to seat a replacement would leave the unit with no
+        # tenant at all — nobody to bill, and a row that reads as vacant when
+        # the statement says it is let.
+        mover, problem = self._seat_plan(label, unit, incoming, phone)
+        if problem:
+            self._skip(problem)
+            return
+
+        if sitting:
+            reason = (
+                f"Not on the 21 Aug 2026 Road Block statement anywhere; {label} is "
+                f"let to {incoming} on it"
+            )
+            self._do(f"{label} {sitting.full_name}: mark moved out — {reason}")
+            if self.apply:
+                sitting.status = TenantStatus.MOVED_OUT
+                sitting.move_out_date = AUG_POST
+                sitting.move_out_notes = reason
+                sitting.save(
+                    update_fields=["status", "move_out_date", "move_out_notes", "updated_at"]
+                )
+
+        self._seat(label, unit, incoming, mover, phone, kra_pin)
+
+    def _seat_plan(self, label, unit, incoming, phone):
+        """Decide how ``incoming`` gets onto ``unit``, without writing anything.
+
+        Returns ``(tenant_to_move, problem)`` — an existing record to move
+        across, or ``None`` to create one, or a problem describing why neither
+        is possible.
+
+        Moving beats creating: an existing record carries the tenant's own
+        Arrears history, and a duplicate would split their account in two. A
+        record is only a candidate if it is not currently sitting on some other
+        unit the statement accounts for — that tenant belongs where they are.
+        """
+        from apps.tenants.models import Tenant, TenantStatus
+
+        first, _, last = incoming.partition(" ")
+        spoken_for = {lbl.upper() for lbl, *_ in STATEMENT} - {label.upper()}
+        candidates = [
+            t for t in Tenant.objects.filter(
+                first_name__iexact=first, last_name__iexact=last
+            ).select_related("unit")
+            if not (
+                t.status == TenantStatus.ACTIVE
+                and t.unit is not None
+                and t.unit.label.upper() in spoken_for
+            )
+        ]
+
+        if len(candidates) > 1:
+            return None, (
+                f"{label}: {len(candidates)} records named '{incoming}' — leaving for "
+                "review rather than guessing which one belongs here"
+            )
+        if candidates:
+            return candidates[0], None
+        if not phone:
+            # A tenant there is no way to contact is not a record worth
+            # inventing, and it is not worth evicting the sitting tenant for.
+            # The row stays as it is and is reported at the end of the run.
+            return None, (
+                f"{label}: '{incoming}' is not on file and the statement image gives "
+                "no phone number — supply one to seat them"
+            )
+        return None, None
+
+    def _seat(self, label, unit, incoming, mover, phone, kra_pin):
+        """Carry out the plan from :meth:`_seat_plan`."""
+        from apps.tenants.models import Tenant, TenantStatus
+
+        first, _, last = incoming.partition(" ")
+        rent = next(
+            (r for lbl, _n, _bf, r, *_ in STATEMENT if lbl.upper() == label.upper()),
+            unit.monthly_rent,
+        )
+
+        if mover is not None:
+            was = mover.unit.label if mover.unit else "no unit"
+            self._do(f"{label}: move {incoming} here from {was} (#{mover.pk})")
+            if self.apply:
+                mover.unit = unit
+                mover.status = TenantStatus.ACTIVE
+                mover.monthly_rent = rent
+                mover.move_out_date = None
+                if mover.id_number.upper().startswith("PENDING-"):
+                    mover.id_number = f"PENDING-{label.upper()}"
+                mover.save(update_fields=[
+                    "unit", "status", "monthly_rent", "move_out_date", "id_number",
+                    "updated_at",
+                ])
+            return
+
+        self._do(f"{label}: create tenant {incoming} ({phone})")
+        if self.apply:
+            Tenant.objects.create(
+                first_name=first, last_name=last,
+                id_number=f"PENDING-{label.upper()}",
+                kra_pin=kra_pin, phone=phone,
+                unit=unit, monthly_rent=rent,
+                deposit_paid=D(0),
+                move_in_date=_dt.date(2026, 6, 16),
+                status=TenantStatus.ACTIVE, due_day=5,
+                notes=(
+                    "Created from the 21 Aug 2026 Road Block statement — the unit was "
+                    "on file under a tenant the statement does not name."
+                ),
+            )
 
     def _create_tenant(self, label, first, last, phone, kra_pin):
         from apps.tenants.models import Tenant, TenantStatus
