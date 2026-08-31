@@ -26,7 +26,7 @@ from __future__ import annotations
 import datetime as _dt
 from decimal import Decimal
 
-from django.db.models import Q, Sum
+from django.db.models import Sum
 
 from apps.buildings.models import UnitClassification
 from apps.expenses.coa import (
@@ -100,8 +100,19 @@ def _ordinal(n: int) -> str:
     return f"{n}{suffix}"
 
 
-def _build_ledger(tenant, *, is_business: bool, as_of: _dt.date | None):
-    """Return (rows, final_balance). Rows are dicts ready for the template."""
+def _build_ledger(
+    tenant,
+    *,
+    is_business: bool,
+    as_of: _dt.date | None,
+    period_start: _dt.date | None = None,
+):
+    """Return (rows, final_balance, brought_forward).
+
+    Rows are dicts ready for the template. ``brought_forward`` is the running
+    balance the moment before ``period_start`` — everything the account carries
+    into the month the statement is about.
+    """
     from .models import Arrears, Payment, PaymentType, UtilityCharge
 
     # (posting_date, sort_order, description, invoice_amount, payment_amount)
@@ -123,13 +134,22 @@ def _build_ledger(tenant, *, is_business: bool, as_of: _dt.date | None):
         # their rent is 22,500. It attracts no VAT either: whatever tax was due
         # is already inside the figure carried.
         if OPENING_MARKER in (arr.waive_notes or ""):
-            events.append((posting, 0, f"Balance brought forward - {period}", base, ZERO))
+            # A nil opening position is not an event. Sarah & Hussein Hamisi
+            # start clean on the Road Block statement, and printing
+            # "Balance brought forward - July-2026" against an empty amount
+            # column reads as a missing figure rather than as nothing owed.
+            if base:
+                events.append((posting, 0, f"Balance brought forward - {period}", base, ZERO))
         else:
             # VAT is read from the row, not recomputed. Not every commercial
             # letting is rated — MCG02 is billed with none — and deriving 16%
             # here charged tax on the statement that the ledger never raised.
             vat = _money(arr.expected_vat)
-            events.append((posting, 0, f"Month Rent - {period}", base, ZERO))
+            # Likewise a month carrying no charge — a period the roll spans but
+            # billing never raised — is left off rather than printed as a rent
+            # line with nothing beside it.
+            if base:
+                events.append((posting, 0, f"Month Rent - {period}", base, ZERO))
             if vat > 0:
                 events.append((posting, 1, "16% VAT on Rent", vat, ZERO))
 
@@ -166,7 +186,10 @@ def _build_ledger(tenant, *, is_business: bool, as_of: _dt.date | None):
 
     rows = []
     balance = ZERO
+    brought_forward = ZERO
     for i, (posting, _order, desc, invoice, payment) in enumerate(events, start=1):
+        if period_start and posting < period_start:
+            brought_forward = balance + invoice - payment
         balance = balance + invoice - payment
         rows.append({
             "index": i,
@@ -178,7 +201,7 @@ def _build_ledger(tenant, *, is_business: bool, as_of: _dt.date | None):
             "balance": _fmt_money_whole(balance),
             "balance_negative": balance < 0,
         })
-    return rows, balance
+    return rows, balance, brought_forward
 
 
 def _unit_descriptor(tenant) -> str:
@@ -217,8 +240,6 @@ def build_statement(tenant, *, statement_date: _dt.date | None = None, as_of: _d
     _dday = min(int(tenant.due_day), calendar.monthrange(_dy, _dm)[1])
     due_date = f"{_ordinal(_dday)} {_dt.date(_dy, _dm, _dday).strftime('%B %Y')}"
 
-    rows, balance = _build_ledger(tenant, is_business=is_business, as_of=as_of)
-
     # "Current month" = the most recent rent obligation on/before the statement date.
     from .models import Arrears
 
@@ -230,6 +251,13 @@ def build_statement(tenant, *, statement_date: _dt.date | None = None, as_of: _d
         current_q.filter(period_year__lt=statement_date.year)
         | current_q.filter(period_year=statement_date.year, period_month__lte=statement_date.month)
     ).order_by("-period_year", "-period_month").first()
+
+    period_start = (
+        _dt.date(current.period_year, current.period_month, 1) if current is not None else None
+    )
+    rows, balance, arrears_bf = _build_ledger(
+        tenant, is_business=is_business, as_of=as_of, period_start=period_start
+    )
 
     if current is not None:
         current_base = _money(current.expected_rent)
@@ -289,14 +317,17 @@ def build_statement(tenant, *, statement_date: _dt.date | None = None, as_of: _d
         deposit_q = deposit_q.filter(payment_date__lte=as_of)
     security_deposit = _money(deposit_q.aggregate(t=Sum("amount"))["t"])
 
-    #  Arrears brought forward = rent balance for periods before the current one.
-    bf_q = Arrears.objects.filter(tenant=tenant)
-    if current is not None:
-        bf_q = bf_q.filter(
-            Q(period_year__lt=current.period_year)
-            | Q(period_year=current.period_year, period_month__lt=current.period_month)
-        )
-    arrears_bf = _money(bf_q.aggregate(t=Sum("balance"))["t"])
+    #  Arrears brought forward comes off the ledger above — the running balance
+    #  the month before the current one closed on. It used to be a separate
+    #  `Sum(Arrears.balance)` over earlier periods, which is the arrears
+    #  subledger's opinion rather than the statement's own: the subledger
+    #  allocates a receipt to the debt it settles and stores `amount_paid` per
+    #  period, while every other figure on the statement is derived from the
+    #  Payment records themselves. Where the two disagreed the statement
+    #  contradicted itself — Sarah & Hussein Hamisi's Road Block statement
+    #  showed "Arrears Brought Forward 8,300" for a June that had been settled
+    #  in full, against an unpaid balance of nil on the same page.
+    arrears_bf = _money(arrears_bf)
 
     #  Other charges = non-rent utility charges posted (up to as_of).
     util_q = UtilityCharge.objects.filter(tenant=tenant)

@@ -51,6 +51,14 @@ def _make_tenant(classification, label):
         expected_rent=Decimal("12000"), amount_paid=Decimal("4000"),
         balance=Decimal("8000"), is_cleared=False,
     )
+    # The receipt behind March's 4,000. Arrears B/F is read off the statement's
+    # own ledger, so the part-payment has to exist as cash, not only as a figure
+    # on the Arrears row.
+    Payment.objects.create(
+        tenant=t, amount=Decimal("4000"), payment_date="2026-03-20",
+        period_month=3, period_year=2026, source=PaymentSource.MPESA,
+        reference=f"MAR-{label}",
+    )
     Arrears.objects.create(
         tenant=t, period_month=4, period_year=2026,
         expected_rent=Decimal("12000"), amount_paid=Decimal("0"),

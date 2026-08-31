@@ -41,11 +41,21 @@ def tenant(db):
         unit=unit, monthly_rent=Decimal("12000"),
         move_in_date="2026-01-01", status=TenantStatus.ACTIVE,
     )
-    # Prior-period rent still owed → Arrears Brought Forward = 8,000
+    # Prior-period rent part-paid → Arrears Brought Forward = 12,000 - 4,000
     Arrears.objects.create(
         tenant=t, period_month=3, period_year=2026,
         expected_rent=Decimal("12000"), amount_paid=Decimal("4000"),
         balance=Decimal("8000"), is_cleared=False,
+    )
+    # The receipt behind that 4,000. Every figure on the statement — the ledger,
+    # the total due, and now Arrears B/F — is derived from Payment records, so a
+    # part-payment asserted only on the Arrears row describes a tenant whose
+    # money never arrived, and the summary stopped agreeing with the ledger
+    # printed beneath it.
+    Payment.objects.create(
+        tenant=t, amount=Decimal("4000"), payment_date="2026-03-20",
+        period_month=3, period_year=2026, source=PaymentSource.MPESA,
+        reference="MPE_MAR_001",
     )
     # Current period (April) rent obligation → Month Rent = 12,000
     Arrears.objects.create(
@@ -77,12 +87,12 @@ class TestStatementTotals:
         assert st["arrears_bf"] == "8,000.00"
         assert st["month_rent"] == "12,000.00"
         assert st["other_charges"] == "1,500.00"
-        # Ledger: (12,000 + 12,000 + 1,500) invoiced, nothing paid = 25,500.
-        # The deposit is NOT netted off: it is a refundable liability held on
-        # the tenant's behalf, not a payment against rent. Crediting it here
-        # reduced the rent owed while the same 12,000 was also reported on the
-        # "Security Deposit" line — the money appeared twice.
-        assert st["unpaid_balance"] == "25,500.00"
+        # Ledger: (12,000 + 12,000 + 1,500) invoiced less the 4,000 received in
+        # March = 21,500. The deposit is NOT netted off: it is a refundable
+        # liability held on the tenant's behalf, not a payment against rent.
+        # Crediting it here reduced the rent owed while the same 12,000 was also
+        # reported on the "Security Deposit" line — the money appeared twice.
+        assert st["unpaid_balance"] == "21,500.00"
 
     @pytest.mark.django_db
     def test_zero_when_no_records(self, tenant):
