@@ -4,8 +4,8 @@ from django.urls import path
 from .views import DashboardSummaryView
 from .views_reports import (
     AccountingDashboardView,
-    AnnualIncomeSummaryView,
     AgingArrearsReportView,
+    AnnualIncomeSummaryView,
     ArrearsReportView,
     ExpenseBreakdownReportView,
     MonthlyCollectionReportView,
