@@ -76,12 +76,17 @@ the schedule below (the workflow's cron lines are UTC; EAT = UTC+3).
 
 | Schedule (EAT) | Job |
 |---|---|
-| 1st of month, 03:00 | `monthly-arrears` |
-| 2nd of month, 07:00 | `monthly-statements` |
+| 25th of month, 06:30 | `monthly-arrears` — raises **next** month |
+| 25th of month, 07:00 | `monthly-statements` — emails **next** month |
+| 1st of month, 03:00 | `monthly-arrears` — catch-up |
 | 01:00 daily | `recalculate-statuses` |
 | 08:00 daily | `rent-reminders` |
 | 09:00 daily | `arrears-reminders` |
 | 18:00 daily | `daily-reconciliation` |
+
+The two monthly jobs run a month ahead of the calendar at tenants' request —
+25 August raises and emails September. The day is `STATEMENT_RUN_DAY` in Django
+settings (default 25) and must stay in step with the workflow's cron lines.
 
 It needs two settings in **Settings → Secrets and variables → Actions**. Without
 them every run fails in under ten seconds at the guard clause, which is exactly

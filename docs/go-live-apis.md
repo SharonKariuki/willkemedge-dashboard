@@ -100,16 +100,29 @@ nothing on a schedule.
    |---|---|---|
    | `rent-reminders` | SMS N days before each tenant's due day | daily 08:00 |
    | `arrears-reminders` | SMS on/after due day when unpaid | daily 09:00 |
-   | `monthly-arrears` | Generate the month's arrears rows | 1st of month 00:30 |
+   | `monthly-arrears` | Raise **next** month's rent | 25th of month 06:30 |
+   | `monthly-statements` | Email every tenant **next** month's statement PDF | 25th of month 07:00 |
+   | `monthly-arrears` | Catch up any month the 25th missed | 1st of month 00:30 |
    | `recalculate-statuses` | Refresh unit paid/unpaid/arrears status | daily 01:00 |
    | `daily-reconciliation` | Email the unmatched-credit summary | daily 18:00 |
-   | `monthly-statements` | Email every tenant their rent statement PDF | 2nd of month 07:00 |
 
-   `monthly-statements` runs the day *after* `monthly-arrears`, which is what
-   raises the month's rent — a statement sent before it states a balance with
-   the current month missing. It takes an optional `?period=YYYY-MM` to re-issue
-   a closed month, only writes to tenants who have an email address on file, and
-   sends each tenant at most one statement per month, so it is safe to re-run.
+   The two monthly jobs run a month ahead of the calendar, which tenants asked
+   for: on 25 August they raise and email **September**, so the bill arrives
+   before the month it covers rather than after it has begun. The day is
+   `STATEMENT_RUN_DAY` in Django settings (default 25) — move it and you must
+   move the scheduler's cron lines to match, or the jobs fire on a day that
+   bills the month already in progress.
+
+   `monthly-statements` runs half an hour *after* `monthly-arrears`, which is
+   what raises the rent — a statement sent before it states a balance with the
+   stated month missing. It takes an optional `?period=YYYY-MM` to re-issue a
+   month, only writes to tenants who have an email address on file, and sends
+   each tenant at most one statement per month, so it is safe to re-run.
+
+   A period raised on the 25th is charged, not overdue: the rent roll, the aging
+   table, the unit-status sweep and the reminder SMS balances all stop at the
+   current calendar month, so nobody is reported a month in arrears for the last
+   week of a month.
 
    **`TENANT_NOTIFICATIONS_ENABLED=false` silences this job** along with receipts
    and reminders — the run records each statement as PENDING and sends nothing.

@@ -173,7 +173,7 @@ def build_monthly_ledger(
     return rows[-months:] if months and months > 0 else rows
 
 
-def _upto_current_period(today: _dt.date):
+def upto_current_period(today: _dt.date):
     """Q matching a stored ``period_year``/``period_month`` at or before now."""
     from django.db.models import Q
 
@@ -206,7 +206,7 @@ def current_balances(tenants, *, today: _dt.date | None = None) -> dict[int, Dec
         return {}
 
     today = today or _dt.date.today()
-    upto = _upto_current_period(today)
+    upto = upto_current_period(today)
     # Cash is keyed by the month it was received, exactly as the roll keys it.
     first_of_next_month = (today.replace(day=1) + _dt.timedelta(days=32)).replace(day=1)
     zero = Value(ZERO, output_field=DecimalField(max_digits=14, decimal_places=2))

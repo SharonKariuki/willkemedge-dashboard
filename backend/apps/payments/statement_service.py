@@ -19,7 +19,7 @@ Ledger rows are derived from stored records only:
 
 Public API
 ----------
-build_statement(tenant, *, statement_date=None, as_of=None) -> dict
+build_statement(tenant, *, statement_date=None, as_of=None, period=None) -> dict
 """
 from __future__ import annotations
 
@@ -226,7 +226,13 @@ def _unit_descriptor(tenant) -> str:
     return f"Unit {unit.label} — {unit.building.name}"
 
 
-def build_statement(tenant, *, statement_date: _dt.date | None = None, as_of: _dt.date | None = None) -> dict:
+def build_statement(
+    tenant,
+    *,
+    statement_date: _dt.date | None = None,
+    as_of: _dt.date | None = None,
+    period: tuple[int, int] | None = None,
+) -> dict:
     """
     Build the full rent-statement payload for ``tenant``.
 
@@ -236,29 +242,44 @@ def build_statement(tenant, *, statement_date: _dt.date | None = None, as_of: _d
     statement_date  : the "as at" date printed on the statement (default: today)
     as_of           : if given, only ledger rows on or before this date are included
                       (used when re-issuing a statement tied to a past payment)
+    period          : the ``(year, month)`` the statement is *about* — which
+                      month lands in the "Current Month" box and sets the due
+                      date. Defaults to the month ``statement_date`` falls in.
+                      The scheduled run passes it explicitly because the two
+                      diverged when statements moved to the 25th: the statement
+                      drawn on 25 August 2026 is the September one. Callers
+                      that pass ``as_of`` must leave this alone — cutting the
+                      ledger short of the stated month would leave the summary
+                      box no longer footing to the ledger's closing balance.
     """
     statement_date = statement_date or _dt.date.today()
+    period = period or (statement_date.year, statement_date.month)
+    period_year, period_month = period
     unit = tenant.unit
     building = unit.building
     is_business = unit.classification == UnitClassification.BUSINESS
 
-    # Due date: the tenant's due-day in the month following the statement,
-    # e.g. a statement dated 26 Jul 2026 is due "5th August 2026".
+    # Due date: the tenant's due-day within the month being billed, e.g. the
+    # September statement drawn on 25 Aug 2026 is due "5th September 2026". It
+    # used to be read off the month after the statement date, which said the
+    # same thing while statements were issued in arrears and says the wrong
+    # thing now that they are issued a month ahead.
     import calendar
-    _dy, _dm = (statement_date.year + 1, 1) if statement_date.month == 12 else (statement_date.year, statement_date.month + 1)
-    _dday = min(int(tenant.due_day), calendar.monthrange(_dy, _dm)[1])
-    due_date = f"{_ordinal(_dday)} {_dt.date(_dy, _dm, _dday).strftime('%B %Y')}"
+    _dday = min(int(tenant.due_day), calendar.monthrange(period_year, period_month)[1])
+    due_date = f"{_ordinal(_dday)} {_dt.date(period_year, period_month, _dday).strftime('%B %Y')}"
 
-    # "Current month" = the most recent rent obligation on/before the statement date.
+    # "Current month" = the most recent rent obligation on/before the period
+    # being billed. A tenant with nothing raised for that month yet falls back
+    # to the latest one that was, so the statement still states a real charge.
     from .models import Arrears
 
     current_q = Arrears.objects.filter(
         tenant=tenant,
-        period_year__lte=statement_date.year,
+        period_year__lte=period_year,
     )
     current = (
-        current_q.filter(period_year__lt=statement_date.year)
-        | current_q.filter(period_year=statement_date.year, period_month__lte=statement_date.month)
+        current_q.filter(period_year__lt=period_year)
+        | current_q.filter(period_year=period_year, period_month__lte=period_month)
     ).order_by("-period_year", "-period_month").first()
 
     period_start = (
@@ -273,7 +294,7 @@ def build_statement(tenant, *, statement_date: _dt.date | None = None, as_of: _d
         current_period_label = _month_name(current.period_month, current.period_year)
     else:
         current_base = ZERO
-        current_period_label = _month_name(statement_date.month, statement_date.year)
+        current_period_label = _month_name(period_month, period_year)
 
     # Read the VAT actually raised rather than deriving it, for the same reason
     # the ledger rows do: a commercial unit is not necessarily VAT-rated.
