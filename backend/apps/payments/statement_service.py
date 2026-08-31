@@ -42,7 +42,11 @@ from .monthly_ledger import OPENING_MARKER
 ZERO = Decimal("0.00")
 
 # Project-wide fallbacks used when a Building has no per-building override.
-DEFAULT_ENTITY_NAME = "Wilkem Edge Apartments"
+# The legal entity, not a property name: statements are issued by the company,
+# and a building whose legal_name is unset must not fall back to the name of a
+# different property. Buildings seeded with their own legal_name already carry
+# this exact string.
+DEFAULT_ENTITY_NAME = "Wilkem Ventures Company Limited"
 DEFAULT_POSTAL_ADDRESS = "PO Box 66741 - 00800, Nairobi, Kenya"
 DEFAULT_CONTACT_PHONE = "+254 722 527234 / +254 732 527234"
 DEFAULT_CONTACT_EMAIL = "wilkem.ventures@gmail.com"
@@ -56,6 +60,11 @@ DEFAULT_BANK_BRANCH = "Karen Branch"
 DEFAULT_BANK_ACCOUNT = "01136069098300"
 DEFAULT_BANK_ACCOUNT_NAME = "Wilkem Ventures Company Ltd"
 DEFAULT_PAYBILL_NUMBER = "400222"
+# The account a tenant must quote against the default paybill. Ships with the
+# paybill number rather than separately: a paybill with no account number sends
+# the payment into the unmatched queue, which is the single largest source of
+# manual reconciliation work.
+DEFAULT_PAYBILL_ACCOUNT_FORMAT = "90290#{unit}"
 
 
 
@@ -341,10 +350,17 @@ def build_statement(tenant, *, statement_date: _dt.date | None = None, as_of: _d
 
     # Payment options: prefer per-building values, fall back to the Wilkem
     # Ventures defaults so the statement never shows the placeholder text.
-    paybill_number = building.paybill_number or DEFAULT_PAYBILL_NUMBER
-    paybill_account = (
-        building.paybill_account_for(unit.label) if building.paybill_number else ""
-    )
+    # Number and account travel together. A building that configures its own
+    # paybill owns its account format too — blank there is a deliberate "this
+    # paybill takes no account". But a building that has configured neither
+    # used to fall back to the Wilkem paybill while leaving the account blank,
+    # printing a paybill the tenant cannot pay into correctly.
+    if building.paybill_number:
+        paybill_number = building.paybill_number
+        paybill_account = building.paybill_account_for(unit.label)
+    else:
+        paybill_number = DEFAULT_PAYBILL_NUMBER
+        paybill_account = DEFAULT_PAYBILL_ACCOUNT_FORMAT.replace("{unit}", unit.label or "")
     bank_name = building.bank_name or DEFAULT_BANK_NAME
     bank_branch = building.bank_branch or DEFAULT_BANK_BRANCH
     bank_account = building.bank_account or DEFAULT_BANK_ACCOUNT

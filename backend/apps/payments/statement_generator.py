@@ -39,7 +39,7 @@ from pathlib import Path
 # Donholm defaults, matching the official template. Any can be overridden per
 # statement via the input dict (or a nested "building" block).
 DEFAULTS = {
-    "entity_name": "WILKEM EDGE APARTMENTS",
+    "entity_name": "WILKEM VENTURES COMPANY LIMITED",
     "entity_location": "DONHOLM ESTATE, NAIROBI",
     "postal_address": "BOX 66741 - 00800 NAIROBI",
     "contact_phone": "+254 722 527234 | +254 732 527234",
