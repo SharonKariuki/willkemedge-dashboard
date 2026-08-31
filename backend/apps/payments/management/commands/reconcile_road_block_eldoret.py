@@ -44,10 +44,21 @@ Two separate problems on this property, both fixed here:
    landlord's "Arrears B/F July-2026" column. Rather than guess which
    historical payment went missing and when, this command treats the
    statement's B/F as authoritative: any balance outstanding before July
-   is waived with an audit note, and July is rewritten to net to exactly
-   the statement's B/F (owed, zero, or in credit) — the same technique
-   reconcile_matasia_residential uses for an opening position, adapted to
-   overwrite an existing row instead of skipping when one is present.
+   is waived with an audit note, and July is rewritten so the rent roll
+   CLOSES it on exactly the statement's B/F (owed, zero, or in credit) —
+   the same technique reconcile_matasia_residential uses for an opening
+   position, adapted to overwrite an existing row instead of skipping when
+   one is present.
+
+   Closing on the B/F is not the same as writing the B/F in. July is a
+   genuinely billed month in production: it can carry a residual in from
+   June and can have taken cash of its own, so the opening charge is
+   solved for rather than assumed (see ``_reset_opening``).
+
+   Cash is reconciled the same way. August receipts already exist on the
+   live database — the Co-op feed banks them as they arrive — so step 5
+   posts only the difference between what is banked and what the statement
+   reports, and never removes a receipt that exceeds it.
 
 DRY-RUN BY DEFAULT. Nothing is written without --apply. Re-running is safe
 (every step is idempotent — it detects and skips work already done).
@@ -444,97 +455,214 @@ class Command(BaseCommand):
 
     # -- step 2: July opening position ---------------------------------
 
+    def _waive_before_july(self, tenant, label, residual):
+        """Write off what the roll still carries into July from before it.
+
+        That balance no longer means anything once the statement's B/F
+        supersedes it. Returns the total waived.
+
+        ``residual`` — the rent roll's own figure — is the budget, and the
+        write-off is spread newest-month-first until it is spent. Waiving each
+        row's ``Arrears.balance`` instead (what this used to do) can write off
+        more than the roll is carrying: the subledger allocates cash to the
+        debt it settles, the roll reports it in the month it arrived, and a
+        payment that FIFO pushed into another period leaves a row reading as
+        unpaid that the roll has already accounted for. Sarah & Hussein
+        Hamisi's June — settled in full — would have been waived a second
+        time, opening July at 8,300 in credit.
+        """
+        from apps.payments.models import Arrears
+
+        if residual <= 0:
+            return D(0)
+
+        earlier = list(
+            Arrears.objects.filter(tenant=tenant)
+            .filter(period_year__lt=JUL[0])
+            .union(
+                Arrears.objects.filter(
+                    tenant=tenant, period_year=JUL[0], period_month__lt=JUL[1]
+                )
+            )
+        )
+        earlier.sort(key=lambda a: (a.period_year, a.period_month), reverse=True)
+        if not earlier:
+            return D(0)
+
+        remaining = D(residual)
+        waived = D(0)
+        for arr in earlier:
+            if remaining <= 0:
+                break
+            take = min(D(arr.balance), remaining)
+            if take <= 0:
+                continue
+            remaining -= take
+            waived += take
+            self._write_off(tenant, label, arr, D(arr.waived_amount) + take, take)
+
+        # The roll carries more than the rows can account for — a charge with no
+        # Arrears row behind it, or cash the subledger allocated elsewhere. Put
+        # the remainder on the newest month before July so the roll still opens
+        # July flat, rather than leaving it to be papered over as a payment.
+        if remaining > 0:
+            arr = earlier[0]
+            self._write_off(tenant, label, arr, D(arr.waived_amount) + remaining, remaining)
+            waived += remaining
+
+        return waived
+
+    def _write_off(self, tenant, label, arr, total_waived, amount):
+        self._do(
+            f"{label} {tenant.full_name}: waive {amount} carried from "
+            f"{arr.period_month}/{arr.period_year} (superseded by statement B/F)"
+        )
+        if self.apply:
+            from apps.payments.models import Arrears
+            from apps.payments.services import _update_arrears
+
+            Arrears.objects.filter(pk=arr.pk).update(
+                waived_amount=total_waived, waive_notes=CLEARED_NOTE
+            )
+            _update_arrears(tenant, arr.period_month, arr.period_year)
+
+    def _july_position(self, tenant):
+        """Where July sits on the rent roll right now.
+
+        Returns ``(residual, other, paid, closes_at, is_opening)`` — the balance
+        the roll carries INTO July from months the statement no longer speaks
+        for, July's other charges, July's cash, the balance July currently
+        closes on, and whether it is already marked as an opening row.
+
+        Read off ``build_monthly_ledger`` — the same roll the dashboard and the
+        statement PDF render — so the figure this step aims at is the figure the
+        landlord will actually see, rather than a subledger total that can
+        differ from it.
+        """
+        from apps.payments.models import Arrears
+        from apps.payments.monthly_ledger import build_monthly_ledger
+
+        year, month = JUL
+        rows = build_monthly_ledger(tenant, months=0, today=_dt.date(year, month, 31))
+        row = next(
+            (r for r in rows if (r["period_year"], r["period_month"]) == (year, month)),
+            None,
+        )
+        if row is None:
+            return D(0), D(0), D(0), D(0), False
+
+        # An opening row's charge is reported inside ``brought_forward`` rather
+        # than under rent, so it has to come back out to leave the residual the
+        # months before July genuinely carry.
+        arr = Arrears.objects.filter(tenant=tenant, period_year=year, period_month=month).first()
+        is_opening = bool(row["is_opening"])
+        folded = D(arr.expected_rent) + D(arr.expected_vat) if (arr and is_opening) else D(0)
+        residual = D(row["brought_forward"]) - folded
+        return residual, D(row["other_charges"]), D(row["paid"]), D(row["balance"]), is_opening
+
     def _reset_opening(self, tenant, label, bf):
-        """Waive anything outstanding before July, then rewrite July to net
-        to exactly the statement's Arrears B/F (owed, zero, or in credit)."""
+        """Rewrite July so the roll closes it on exactly the statement's B/F.
+
+        Everything still outstanding from before July is written off first, then
+        July is restated as an opening position. The figure written is NOT the
+        statement's B/F itself: July in production is a genuinely billed month
+        that can carry a residual in from June and can have taken cash of its
+        own, while the landlord's B/F is the balance July *closes* on. So the
+        opening charge is solved for --
+
+            residual + charge + other - paid = B/F
+
+        -- which collapses to ``charge = B/F`` on a clean account and still
+        lands on the B/F when the account is not clean. Writing the B/F in
+        directly (what this used to do) left July closing somewhere else
+        entirely wherever June had not settled to zero or July had taken a
+        payment, and August then brought that wrong figure forward.
+        """
         from apps.payments.models import Arrears
         from apps.payments.services import _update_arrears
 
-        # Clear everything strictly before July — its own balance no longer
-        # means anything once the statement's B/F supersedes it.
-        earlier = Arrears.objects.filter(
-            tenant=tenant
-        ).filter(period_year__lt=JUL[0]) | Arrears.objects.filter(
-            tenant=tenant, period_year=JUL[0], period_month__lt=JUL[1]
-        )
-        for arr in earlier:
-            if arr.balance <= 0 and (arr.waive_notes or "").startswith("Cleared"):
-                continue
-            if arr.balance <= 0:
-                continue
-            self._do(
-                f"{label} {tenant.full_name}: waive {arr.balance} outstanding from "
-                f"{arr.period_month}/{arr.period_year} (superseded by statement B/F)"
-            )
-            if self.apply:
-                Arrears.objects.filter(pk=arr.pk).update(
-                    waived_amount=arr.balance, waive_notes=CLEARED_NOTE
-                )
-                _update_arrears(tenant, arr.period_month, arr.period_year)
-
         year, month = JUL
-        arr = Arrears.objects.filter(tenant=tenant, period_year=year, period_month=month).first()
-        target_note = arr.waive_notes if arr else ""
-        already_opening = arr and target_note == OPENING_NOTE
+        residual, other, paid, closes_at, is_opening = self._july_position(tenant)
 
-        if bf >= 0:
-            if already_opening and arr.expected_rent == bf and arr.waived_amount == 0:
-                self._skip(f"{label} {tenant.full_name}: July already nets to {bf}")
-                return
-            self._do(
-                f"{label} {tenant.full_name}: July -> nets to {bf} (brought forward)"
-            )
-            if self.apply:
-                if arr:
-                    Arrears.objects.filter(pk=arr.pk).update(
-                        expected_rent=bf, expected_vat=D(0), waived_amount=D(0),
-                        waive_notes=OPENING_NOTE,
-                    )
-                else:
-                    Arrears.objects.create(
-                        tenant=tenant, period_year=year, period_month=month,
-                        expected_rent=bf, expected_vat=D(0), amount_paid=D(0),
-                        balance=bf, is_cleared=(bf == 0), waive_notes=OPENING_NOTE,
-                    )
-                _update_arrears(tenant, month, year)
+        arr = Arrears.objects.filter(tenant=tenant, period_year=year, period_month=month).first()
+        if (
+            arr is not None
+            and is_opening
+            and _money(closes_at) == _money(bf)
+            and arr.waived_amount == 0
+            and arr.expected_vat == 0
+        ):
+            self._skip(f"{label} {tenant.full_name}: July already closes on {bf}")
             return
 
-        # bf < 0: credit carried forward.
-        credit = -bf
+        # Written off before the opening charge is solved for, so the residual
+        # the charge has to absorb is only ever what the write-off could not
+        # reach. Waiving reduces the roll by exactly the amount waived, so this
+        # holds in dry-run too, where nothing has been written yet.
+        residual -= self._waive_before_july(tenant, label, residual)
+
+        charge = bf - residual - other + paid
+        detail = f"(residual {residual}, July other {other}, July paid {paid})"
+
+        if charge >= 0:
+            self._do(
+                f"{label} {tenant.full_name}: July opening {charge} -> closes on {bf} {detail}"
+            )
+            if self.apply:
+                with transaction.atomic():
+                    self._write_opening(tenant, charge)
+                    _update_arrears(tenant, month, year)
+            return
+
+        # The account carries more credit than the statement allows for, so the
+        # gap is closed with cash rather than a charge — a charge here would be
+        # inventing rent that was never billed.
+        credit = -charge
         from apps.payments.models import Payment
         from apps.payments.services import process_payment
 
         key = f"RB-OPENING-CREDIT-2026-07-{label}"
-        already_credited = Payment.objects.filter(tenant=tenant, idempotency_key=key).exists()
-        if already_opening and arr.expected_rent == 0 and already_credited:
-            self._skip(f"{label} {tenant.full_name}: July already nets to {bf} (credit)")
+        if Payment.objects.filter(tenant=tenant, idempotency_key=key).exists():
+            self._skip(
+                f"{label} {tenant.full_name}: July opening credit already posted, but July "
+                f"closes on {closes_at} rather than {bf} — leaving for review"
+            )
             return
 
-        self._do(f"{label} {tenant.full_name}: July -> nets to {bf} (credit, brought forward)")
+        self._do(
+            f"{label} {tenant.full_name}: July opening credit {credit} -> closes on {bf} {detail}"
+        )
         if self.apply:
             with transaction.atomic():
-                if arr:
-                    Arrears.objects.filter(pk=arr.pk).update(
-                        expected_rent=D(0), expected_vat=D(0), waived_amount=D(0),
-                        waive_notes=OPENING_NOTE,
-                    )
-                else:
-                    Arrears.objects.create(
-                        tenant=tenant, period_year=year, period_month=month,
-                        expected_rent=D(0), expected_vat=D(0), amount_paid=D(0),
-                        balance=D(0), is_cleared=True, waive_notes=OPENING_NOTE,
-                    )
-                if not already_credited:
-                    process_payment(
-                        tenant=tenant, amount=credit, payment_date=JULY_CLOSE,
-                        period_month=month, period_year=year, source="bank",
-                        reference=key, idempotency_key=key,
-                        notes=(
-                            "Opening credit carried from the 21 Aug 2026 Road Block "
-                            "statement's Arrears B/F column."
-                        ),
-                    )
+                self._write_opening(tenant, D(0))
+                process_payment(
+                    tenant=tenant, amount=credit, payment_date=JULY_CLOSE,
+                    period_month=month, period_year=year, source="bank",
+                    reference=key, idempotency_key=key,
+                    notes=(
+                        "Opening credit carried from the 21 Aug 2026 Road Block "
+                        "statement's Arrears B/F column."
+                    ),
+                )
                 _update_arrears(tenant, month, year)
+
+    def _write_opening(self, tenant, charge):
+        """Create or restate July as the marked opening row."""
+        from apps.payments.models import Arrears
+
+        year, month = JUL
+        arr = Arrears.objects.filter(tenant=tenant, period_year=year, period_month=month).first()
+        if arr:
+            Arrears.objects.filter(pk=arr.pk).update(
+                expected_rent=charge, expected_vat=D(0), waived_amount=D(0),
+                waive_notes=OPENING_NOTE,
+            )
+        else:
+            Arrears.objects.create(
+                tenant=tenant, period_year=year, period_month=month,
+                expected_rent=charge, expected_vat=D(0), amount_paid=D(0),
+                balance=charge, is_cleared=(charge == 0), waive_notes=OPENING_NOTE,
+            )
 
     # -- step 3: August rent --------------------------------------------
 
@@ -593,24 +721,79 @@ class Command(BaseCommand):
     # -- step 5: payment made ------------------------------------------
 
     def _record_payment(self, tenant, label, amount):
-        from apps.payments.models import Payment
+        """Bring August cash up to the statement's 'Payment made' figure.
+
+        Only the shortfall is posted. Production already holds real August
+        receipts — the Co-op feed keeps banking them — so posting the
+        statement figure outright doubled the month for every tenant who had
+        actually paid: Sarah & Hussein Hamisi's 8,300 would have gone in
+        beside the 8,300 already on the account.
+
+        Cash banked ABOVE the statement figure is never removed. A receipt is
+        real money and not the statement's to delete, so the difference is
+        reported for review instead.
+        """
+        from django.db.models import Sum
+
+        from apps.payments.models import Payment, PaymentType
         from apps.payments.services import process_payment
 
-        if amount == 0:
-            self._skip(f"{label} {tenant.full_name}: no payment on the statement")
+        year, month = AUG
+        target = _money(amount)
+        # Deposits are a refundable liability, not rent — the same exclusion the
+        # rent roll and the statement make, so the three figures agree.
+        banked = _money(
+            Payment.objects.filter(
+                tenant=tenant, voided_at__isnull=True,
+                payment_date__year=year, payment_date__month=month,
+            ).exclude(payment_type=PaymentType.DEPOSIT).aggregate(t=Sum("amount"))["t"] or 0
+        )
+
+        if banked == target:
+            self._skip(
+                f"{label} {tenant.full_name}: August cash already {target}"
+                if target else f"{label} {tenant.full_name}: no payment on the statement"
+            )
             return
-        key = f"RB-AUG-2026-{label}"
-        if Payment.objects.filter(tenant=tenant, idempotency_key=key).exists():
-            self._skip(f"{label} {tenant.full_name}: August payment already recorded")
+        if banked > target:
+            self._note(
+                f"{label} {tenant.full_name}: {banked} of August cash on the account but the "
+                f"statement says {target} — extra {banked - target} left alone for review"
+            )
             return
-        self._do(f"{label} {tenant.full_name}: record August payment {amount}")
+
+        shortfall = target - banked
+        key = self._free_key(tenant, f"RB-AUG-2026-{label}")
+        self._do(
+            f"{label} {tenant.full_name}: August cash {banked} -> {target} (post {shortfall})"
+        )
         if self.apply:
             process_payment(
-                tenant=tenant, amount=amount, payment_date=AUG_PAY,
-                period_month=AUG[1], period_year=AUG[0], source="bank",
+                tenant=tenant, amount=shortfall, payment_date=AUG_PAY,
+                period_month=month, period_year=year, source="bank",
                 reference=key, idempotency_key=key,
                 notes="From the 21 Aug 2026 Road Block statement's 'Payment made' column.",
             )
+
+    @staticmethod
+    def _free_key(tenant, base):
+        """``base``, or the first ``base-2``, ``base-3``… not yet used.
+
+        ``idempotency_key`` is unique per tenant, so a second top-up against a
+        month that was already partly seeded needs a key of its own.
+        """
+        from apps.payments.models import Payment
+
+        keys = set(
+            Payment.objects.filter(tenant=tenant, idempotency_key__startswith=base)
+            .values_list("idempotency_key", flat=True)
+        )
+        if base not in keys:
+            return base
+        n = 2
+        while f"{base}-{n}" in keys:
+            n += 1
+        return f"{base}-{n}"
 
     # -- step 6: verify ----------------------------------------------------
 
