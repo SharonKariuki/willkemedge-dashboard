@@ -15,6 +15,12 @@ export interface StoredUser {
   username: string;
   first_name?: string;
   last_name?: string;
+  role?: "owner" | "accountant" | "caretaker" | "viewer";
+  role_display?: string;
+  /** May record receipts. Owner and accountant. */
+  can_record_money?: boolean;
+  /** May waive arrears or void a payment. Owner only. */
+  can_forgive_money?: boolean;
 }
 
 export const authStorage = {
