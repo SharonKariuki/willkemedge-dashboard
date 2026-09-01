@@ -34,11 +34,7 @@ class LoginSerializer(serializers.Serializer):
         return {
             "access": str(refresh.access_token),
             "refresh": str(refresh),
-            "user": {
-                "id": user.id,
-                "email": user.email,
-                "username": user.username,
-            },
+            "user": UserSerializer(user).data,
         }
 
 
@@ -57,9 +53,24 @@ class LogoutSerializer(serializers.Serializer):
 
 
 class UserSerializer(serializers.ModelSerializer):
+    """The current user, including what they are allowed to do with money.
+
+    The permission flags are serialized rather than left for the client to
+    infer from `role`, so the dashboard hides an action for exactly the same
+    reason the API would refuse it. The API is still the authority — these
+    only decide what is worth showing.
+    """
+
+    role_display = serializers.CharField(source="get_role_display", read_only=True)
+    can_record_money = serializers.BooleanField(read_only=True)
+    can_forgive_money = serializers.BooleanField(read_only=True)
+
     class Meta:
         model = User
-        fields = ("id", "email", "username", "date_joined", "last_login")
+        fields = (
+            "id", "email", "username", "date_joined", "last_login",
+            "role", "role_display", "can_record_money", "can_forgive_money",
+        )
         read_only_fields = fields
 
 

@@ -18,6 +18,19 @@ TRIGGER_URL = "/api/payments/coop/reconcile-daily/"
 TRIGGER_TOKEN = "test-recon-token-456"
 
 
+def _yesterday_noon():
+    """Midday on the day the summary defaults to, in the project timezone.
+
+    The summary window is built from `timezone.localdate()`, and Nairobi is
+    three hours ahead of UTC. A timestamp derived from `timezone.now()` keeps
+    the UTC date, so between midnight and 03:00 EAT it lands a full day before
+    the window and the summary sees no events at all — the whole file went red
+    on any CI run in that hour.
+    """
+    target = timezone.localdate() - dt.timedelta(days=1)
+    return timezone.make_aware(dt.datetime.combine(target, dt.time(hour=12)))
+
+
 @pytest.fixture
 def api_client():
     return APIClient()
@@ -31,7 +44,7 @@ def _trigger_token(settings):
 @pytest.mark.django_db
 def test_summary_aggregates_by_status_and_total():
     # auto_now_add doesn't let us pass received_at on .create, so we backdate.
-    yesterday = (timezone.now() - dt.timedelta(days=1)).replace(hour=12)
+    yesterday = _yesterday_noon()
     e1 = CoopIpnEvent.objects.create(
         transaction_id="T1", amount=Decimal("1000"),
         status=CoopIpnStatus.RECORDED, raw_payload={},
@@ -70,7 +83,7 @@ def test_summary_text_handles_empty_day():
 
 @pytest.mark.django_db
 def test_summary_text_uses_plain_language_no_jargon():
-    yesterday = (timezone.now() - dt.timedelta(days=1)).replace(hour=12)
+    yesterday = _yesterday_noon()
     e1 = CoopIpnEvent.objects.create(
         transaction_id="TX1", amount=Decimal("20000"),
         status=CoopIpnStatus.RECORDED, raw_payload={},
@@ -93,7 +106,7 @@ def test_summary_text_uses_plain_language_no_jargon():
 
 @pytest.mark.django_db
 def test_summary_sms_flags_needs_attention():
-    yesterday = (timezone.now() - dt.timedelta(days=1)).replace(hour=12)
+    yesterday = _yesterday_noon()
     ev = CoopIpnEvent.objects.create(
         transaction_id="TX", amount=Decimal("500"),
         status=CoopIpnStatus.REVERSAL_PENDING, raw_payload={},
@@ -105,7 +118,7 @@ def test_summary_sms_flags_needs_attention():
 
 @pytest.mark.django_db
 def test_summary_sms_all_clear_when_nothing_pending():
-    yesterday = (timezone.now() - dt.timedelta(days=1)).replace(hour=12)
+    yesterday = _yesterday_noon()
     ev = CoopIpnEvent.objects.create(
         transaction_id="TXOK", amount=Decimal("20000"),
         status=CoopIpnStatus.RECORDED, raw_payload={},

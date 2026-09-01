@@ -70,6 +70,22 @@ def _mock_notes(source: str) -> str:
     }.get(source, "Mock payment")
 
 
+def _void_group(payment: Payment):
+    """The live rows one bank credit became.
+
+    Grouped on tenant + reference because that is what a single credit shares
+    after FIFO allocation splits it. A blank reference groups nothing — manual
+    cash entries have no shared key, so each stands alone.
+    """
+    if not payment.reference:
+        return Payment.objects.filter(pk=payment.pk, voided_at__isnull=True)
+    return Payment.objects.filter(
+        tenant_id=payment.tenant_id,
+        reference=payment.reference,
+        voided_at__isnull=True,
+    ).order_by("pk")
+
+
 class PaymentViewSet(viewsets.ModelViewSet):
     """
     CRUD for payments.
@@ -156,12 +172,37 @@ class PaymentViewSet(viewsets.ModelViewSet):
         )
         send_payment_confirmation.delay(payment.id)
 
+    @action(detail=True, methods=["get"], url_path="void-preview")
+    def void_preview(self, request, pk=None):
+        """GET /api/payments/{id}/void-preview/ — what a void would actually unwind.
+
+        One bank credit is frequently more than one Payment row: FIFO
+        allocation splits it across the periods it settles. Voiding only the
+        row the user clicked would leave the rest of the money sitting on the
+        tenant's account, so the UI has to be able to show the whole group
+        before anything is unwound.
+        """
+        payment = get_object_or_404(Payment, pk=pk)
+        siblings = list(_void_group(payment).exclude(pk=payment.pk))
+        return Response({
+            "payment": PaymentSerializer(payment).data,
+            "siblings": PaymentSerializer(siblings, many=True).data,
+            "total": str(
+                sum((p.amount for p in [payment, *siblings]), Decimal("0.00"))
+            ),
+        })
+
     @action(detail=True, methods=["post"], url_path="void", permission_classes=[CanForgiveMoney])
     def void(self, request, pk=None):
         """POST /api/payments/{id}/void/ — unwind a payment (owner only).
 
         Marks the row void and posts a mirror-image reversal to the ledger. The
         original entry and the Payment row are both preserved for audit.
+
+        `scope` decides how much is unwound:
+          * "reference" (default) — every live row the same bank credit was
+            split into, which is what a user means by "remove that payment";
+          * "single" — this row alone, for correcting one leg of a split.
         """
         payment = get_object_or_404(Payment, pk=pk)
         if payment.voided_at:
@@ -174,8 +215,22 @@ class PaymentViewSet(viewsets.ModelViewSet):
                 {"detail": "A reason is required to void a payment."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        void_payment(payment, actor=request.user, reason=reason)
-        return Response(PaymentSerializer(payment).data)
+        scope = request.data.get("scope") or "reference"
+        if scope not in ("reference", "single"):
+            return Response(
+                {"detail": "scope must be 'reference' or 'single'."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        targets = [payment] if scope == "single" else list(_void_group(payment))
+        for target in targets:
+            void_payment(target, actor=request.user, reason=reason)
+
+        payment.refresh_from_db()
+        return Response({
+            **PaymentSerializer(payment).data,
+            "voided_count": len(targets),
+        })
 
     @action(detail=False, methods=["get"], url_path="recent")
     def recent(self, request):
@@ -305,8 +360,11 @@ class ArrearsViewSet(viewsets.ReadOnlyModelViewSet):
             # *covered* figure (cash paid + waived + credit) as a Decimal so a
             # full waiver reads as PAID instead of PARTIAL, and measure it
             # against the full obligation including VAT.
-            now = timezone.now()
-            if arrears.period_month == now.month and arrears.period_year == now.year:
+            # Local date, not UTC — see the same comparison in
+            # `_update_arrears`. A waiver applied between midnight and 03:00
+            # EAT otherwise left the unit stuck at its pre-waiver status.
+            today = timezone.localdate()
+            if arrears.period_month == today.month and arrears.period_year == today.year:
                 from apps.buildings.services import recalculate_unit_status
                 recalculate_unit_status(
                     arrears.tenant.unit,

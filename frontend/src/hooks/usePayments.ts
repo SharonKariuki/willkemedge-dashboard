@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import type { ReceiptData, Transaction } from "@/lib/types";
 
-interface Payment {
+export interface Payment {
   id: number;
   tenant: number;
   tenant_name: string;
@@ -15,9 +15,13 @@ interface Payment {
   period_year: number;
   source: string;
   source_display: string;
+  payment_type: string;
   reference: string;
   transaction_id?: number;
   notes: string;
+  is_void: boolean;
+  voided_at: string | null;
+  void_reason: string;
   created_at: string;
 }
 
@@ -35,6 +39,8 @@ interface PaymentFilters {
   source?: string;
   period_month?: number;
   period_year?: number;
+  /** "true" also returns voided rows, which the API hides by default. */
+  include_void?: string;
 }
 
 export function usePayments(filters?: PaymentFilters) {
@@ -94,6 +100,59 @@ export function useResendReceipt() {
     mutationFn: async (paymentId: number) => {
       const { data } = await api.post(`/payments/${paymentId}/resend-receipt/`);
       return data;
+    },
+  });
+}
+
+/**
+ * What a void would actually unwind.
+ *
+ * One bank credit is often several Payment rows — FIFO allocation splits it
+ * across the periods it settles — so the confirmation has to show the whole
+ * group, not just the row that was clicked.
+ */
+export interface VoidPreview {
+  payment: Payment;
+  siblings: Payment[];
+  total: string;
+}
+
+export function useVoidPreview(paymentId: number | null) {
+  return useQuery<VoidPreview>({
+    queryKey: ["payments", paymentId, "void-preview"],
+    queryFn: async () => {
+      const { data } = await api.get(`/payments/${paymentId}/void-preview/`);
+      return data;
+    },
+    enabled: paymentId !== null,
+    staleTime: 0,
+  });
+}
+
+interface VoidPayload {
+  id: number;
+  reason: string;
+  /** "reference" unwinds the whole credit; "single" just this row. */
+  scope: "reference" | "single";
+}
+
+export function useVoidPayment() {
+  const qc = useQueryClient();
+  return useMutation<{ voided_count: number }, Error, VoidPayload>({
+    mutationFn: async ({ id, reason, scope }) => {
+      const { data } = await api.post(`/payments/${id}/void/`, { reason, scope });
+      return data;
+    },
+    onSuccess: () => {
+      // A void moves money back out of arrears and the ledger, so everything
+      // derived from it is now stale.
+      qc.invalidateQueries({ queryKey: ["payments"] });
+      qc.invalidateQueries({ queryKey: ["units"] });
+      qc.invalidateQueries({ queryKey: ["arrears"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
+      qc.invalidateQueries({ queryKey: ["reports"] });
+      qc.invalidateQueries({ queryKey: ["tenants"] });
+      qc.invalidateQueries({ queryKey: ["transactions"] });
     },
   });
 }
