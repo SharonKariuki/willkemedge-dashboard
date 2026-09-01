@@ -360,8 +360,11 @@ class ArrearsViewSet(viewsets.ReadOnlyModelViewSet):
             # *covered* figure (cash paid + waived + credit) as a Decimal so a
             # full waiver reads as PAID instead of PARTIAL, and measure it
             # against the full obligation including VAT.
-            now = timezone.now()
-            if arrears.period_month == now.month and arrears.period_year == now.year:
+            # Local date, not UTC — see the same comparison in
+            # `_update_arrears`. A waiver applied between midnight and 03:00
+            # EAT otherwise left the unit stuck at its pre-waiver status.
+            today = timezone.localdate()
+            if arrears.period_month == today.month and arrears.period_year == today.year:
                 from apps.buildings.services import recalculate_unit_status
                 recalculate_unit_status(
                     arrears.tenant.unit,

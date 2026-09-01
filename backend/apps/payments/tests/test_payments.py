@@ -49,8 +49,16 @@ class PaymentProcessingTests(APITestCase):
         Arrears.objects.filter(tenant=self.tenant).delete()
 
     def _now(self):
-        now = timezone.now()
-        return now.month, now.year
+        """The current period, in the project timezone.
+
+        Not `timezone.now()`: that is UTC, and Nairobi is three hours ahead, so
+        between midnight and 03:00 EAT it names the previous month. The status
+        rules read `timezone.localdate()`, so a payment booked against the UTC
+        month looks like an unsettled *earlier* month to them and the unit lands
+        in ARREARS instead of PARTIAL.
+        """
+        today = timezone.localdate()
+        return today.month, today.year
 
     # --- Service-level tests -------------------------------------------
 
@@ -59,7 +67,7 @@ class PaymentProcessingTests(APITestCase):
         process_payment(
             tenant=self.tenant,
             amount=Decimal("10000"),
-            payment_date=timezone.now().date(),
+            payment_date=timezone.localdate(),
             period_month=month,
             period_year=year,
         )
@@ -75,7 +83,7 @@ class PaymentProcessingTests(APITestCase):
         process_payment(
             tenant=self.tenant,
             amount=Decimal("4000"),
-            payment_date=timezone.now().date(),
+            payment_date=timezone.localdate(),
             period_month=month,
             period_year=year,
         )
@@ -91,14 +99,14 @@ class PaymentProcessingTests(APITestCase):
         process_payment(
             tenant=self.tenant,
             amount=Decimal("3000"),
-            payment_date=timezone.now().date(),
+            payment_date=timezone.localdate(),
             period_month=month,
             period_year=year,
         )
         process_payment(
             tenant=self.tenant,
             amount=Decimal("7000"),
-            payment_date=timezone.now().date(),
+            payment_date=timezone.localdate(),
             period_month=month,
             period_year=year,
         )
@@ -114,7 +122,7 @@ class PaymentProcessingTests(APITestCase):
         process_payment(
             tenant=self.tenant,
             amount=Decimal("15000"),
-            payment_date=timezone.now().date(),
+            payment_date=timezone.localdate(),
             period_month=month,
             period_year=year,
         )
@@ -132,7 +140,7 @@ class PaymentProcessingTests(APITestCase):
         process_payment(
             tenant=self.tenant,
             amount=Decimal("4000"),
-            payment_date=timezone.now().date(),
+            payment_date=timezone.localdate(),
             period_month=month,
             period_year=year,
         )
@@ -150,7 +158,7 @@ class PaymentProcessingTests(APITestCase):
         process_payment(
             tenant=self.tenant,
             amount=Decimal("1000"),
-            payment_date=timezone.now().date(),
+            payment_date=timezone.localdate(),
             period_month=month,
             period_year=year,
         )
@@ -167,7 +175,7 @@ class PaymentProcessingTests(APITestCase):
         process_payment(
             tenant=self.tenant,
             amount=Decimal("2000"),
-            payment_date=timezone.now().date(),
+            payment_date=timezone.localdate(),
             period_month=month,
             period_year=year,
         )
@@ -182,7 +190,7 @@ class PaymentProcessingTests(APITestCase):
         process_payment(
             tenant=self.tenant,
             amount=Decimal("1000"),
-            payment_date=timezone.now().date(),
+            payment_date=timezone.localdate(),
             period_month=month,
             period_year=year,
         )
@@ -202,7 +210,7 @@ class PaymentProcessingTests(APITestCase):
         process_payment(
             tenant=self.tenant,
             amount=Decimal("4000"),
-            payment_date=timezone.now().date(),
+            payment_date=timezone.localdate(),
             period_month=month,
             period_year=year,
         )
@@ -228,7 +236,7 @@ class PaymentProcessingTests(APITestCase):
         resp = self.client.post("/api/payments/", {
             "tenant": self.tenant.id,
             "amount": "10000.00",
-            "payment_date": timezone.now().date().isoformat(),
+            "payment_date": timezone.localdate().isoformat(),
             "period_month": month,
             "period_year": year,
             "source": "cash",
@@ -240,7 +248,7 @@ class PaymentProcessingTests(APITestCase):
         process_payment(
             tenant=self.tenant,
             amount=Decimal("5000"),
-            payment_date=timezone.now().date(),
+            payment_date=timezone.localdate(),
             period_month=month,
             period_year=year,
         )
@@ -261,7 +269,7 @@ class PaymentProcessingTests(APITestCase):
         process_payment(
             tenant=self.tenant,
             amount=Decimal("5000"),
-            payment_date=timezone.now().date(),
+            payment_date=timezone.localdate(),
             period_month=month,
             period_year=year,
         )
@@ -274,7 +282,7 @@ class PaymentProcessingTests(APITestCase):
         process_payment(
             tenant=self.tenant,
             amount=Decimal("5000"),
-            payment_date=timezone.now().date(),
+            payment_date=timezone.localdate(),
             period_month=month,
             period_year=year,
             source="mpesa",
@@ -289,7 +297,7 @@ class PaymentProcessingTests(APITestCase):
         resp = self.client.post("/api/payments/", {
             "tenant": self.tenant.id,
             "amount": "-500",
-            "payment_date": timezone.now().date().isoformat(),
+            "payment_date": timezone.localdate().isoformat(),
             "period_month": month,
             "period_year": year,
         }, format="json")
@@ -309,7 +317,7 @@ class PaymentProcessingTests(APITestCase):
         kwargs = dict(
             tenant=self.tenant,
             amount=Decimal("10000"),
-            payment_date=timezone.now().date(),
+            payment_date=timezone.localdate(),
             period_month=month,
             period_year=year,
             source="mpesa",
@@ -332,7 +340,7 @@ class PaymentProcessingTests(APITestCase):
             process_payment(
                 tenant=self.tenant,
                 amount=Decimal("2000"),
-                payment_date=timezone.now().date(),
+                payment_date=timezone.localdate(),
                 period_month=month,
                 period_year=year,
                 source="bank",
@@ -346,7 +354,7 @@ class PaymentProcessingTests(APITestCase):
         body = {
             "tenant": self.tenant.id,
             "amount": "10000.00",
-            "payment_date": timezone.now().date().isoformat(),
+            "payment_date": timezone.localdate().isoformat(),
             "period_month": month,
             "period_year": year,
             "source": "mpesa",
@@ -380,14 +388,14 @@ class CommercialVatTransactionTests(APITestCase):
         )
 
     def test_commercial_transaction_splits_vat_out_of_gross(self):
-        now = timezone.now()
+        today = timezone.localdate()
         # Tenant pays the gross figure: 24,000 rent + 3,840 VAT = 27,840.
         payment = process_payment(
             tenant=self.tenant,
             amount=Decimal("27840.00"),
-            payment_date=now.date(),
-            period_month=now.month,
-            period_year=now.year,
+            payment_date=today,
+            period_month=today.month,
+            period_year=today.year,
             source="mpesa",
             reference="MC-TXN-1",
         )
@@ -413,10 +421,10 @@ class CommercialVatTransactionTests(APITestCase):
             phone="+254700000901", unit=res_unit,
             monthly_rent=Decimal("20000"), move_in_date="2026-01-01",
         )
-        now = timezone.now()
+        today = timezone.localdate()
         payment = process_payment(
             tenant=res_tenant, amount=Decimal("20000.00"),
-            payment_date=now.date(), period_month=now.month, period_year=now.year,
+            payment_date=today, period_month=today.month, period_year=today.year,
         )
         txn = Transaction.objects.get(payment=payment)
         assert txn.base_amount == Decimal("20000.00")

@@ -414,8 +414,16 @@ def _update_arrears(tenant, period_month: int, period_year: int) -> Arrears:
     )
 
     # Recalculate unit status based on current period payment.
-    now = timezone.now()
-    if period_month == now.month and period_year == now.year:
+    #
+    # The period is compared against the LOCAL date, not `timezone.now()`.
+    # Nairobi is three hours ahead of UTC, so between midnight and 03:00 EAT
+    # the UTC month still names the previous one: a payment for the current
+    # period failed this check and the unit's status was never recalculated,
+    # leaving the board reading Unpaid on money that had just been received.
+    # The rest of the status path (`has_unsettled_earlier_months`) already
+    # reads `localdate()`, so this was also comparing against two clocks.
+    today = timezone.localdate()
+    if period_month == today.month and period_year == today.year:
         recalculate_unit_status(tenant.unit, covered, obligation=obligation)
 
     return arrears
