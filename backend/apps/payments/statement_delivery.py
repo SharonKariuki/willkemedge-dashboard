@@ -67,6 +67,10 @@ def open_mail_connection():
 def statement_dedupe_key(tenant_id: int, period) -> str:
     """Idempotency marker for the monthly run: one statement per tenant per month.
 
+    ``period`` is a date inside the month the statement is *about*, which since
+    the run moved to the 25th is not the month it was sent in — the September
+    statement goes out in August and must key on September.
+
     Manual sends deliberately pass no key — re-sending a statement on request is
     a normal thing for the office to do, and must not be swallowed as a duplicate.
     """
@@ -90,6 +94,7 @@ def send_tenant_statement(
     tenant,
     *,
     statement_date=None,
+    period=None,
     automatic: bool = True,
     created_by=None,
     dedupe_key: str = "",
@@ -102,6 +107,11 @@ def send_tenant_statement(
     on a per-tenant problem (no email, no unit, SMTP refusal), so one bad row
     cannot abort a batch; the caller reads `status` to count what happened.
 
+    `period` is the ``(year, month)`` the statement is about. It defaults to
+    whatever month the billing cycle is on — from the 25th, next month — so a
+    statement the office re-sends by hand is the same one the scheduled run
+    emailed that morning, rather than the previous month's.
+
     `connection` is an open mail backend to send over, for batches that would
     otherwise pay an SMTP handshake per tenant; see `open_mail_connection`.
 
@@ -111,9 +121,12 @@ def send_tenant_statement(
     stays available while automatic messaging is paused. Same rule as
     `notification_services.dispatch_notification`.
     """
+    from .billing_calendar import billing_period
     from .notifications import send_email, statement_email_html
     from .pdf_service import render_to_pdf
     from .statement_service import build_statement
+
+    period = period or billing_period(statement_date)
 
     notification = TenantNotification(
         tenant=tenant,
@@ -138,7 +151,7 @@ def send_tenant_statement(
         notification.save()
         return notification
 
-    statement = build_statement(tenant, statement_date=statement_date)
+    statement = build_statement(tenant, statement_date=statement_date, period=period)
     notification.subject = (
         f"Rent Statement – {tenant.unit.building.name} {tenant.unit.label} – "
         f"{statement['statement_date']}"

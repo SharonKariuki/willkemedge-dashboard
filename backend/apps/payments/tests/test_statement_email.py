@@ -169,7 +169,7 @@ class TestMonthlyStatementRun:
 
         send.assert_not_called()
         assert counts == {"sent": 0, "failed": 0, "skipped": 0, "no_email": 2,
-                          "as_at": "2026-09-02"}
+                          "as_at": "2026-09-02", "period": "2026-09"}
         assert TenantNotification.objects.count() == 0
 
     def test_skips_tenants_who_are_not_active(self, building):
@@ -190,7 +190,7 @@ class TestMonthlyStatementRun:
 
         assert first["sent"] == 1
         assert second == {"sent": 0, "failed": 0, "skipped": 1, "no_email": 0,
-                          "as_at": "2026-09-02"}
+                          "as_at": "2026-09-02", "period": "2026-09"}
         assert send.call_count == 1
 
     def test_a_failed_send_is_retried_on_the_next_run(self, building):
@@ -208,12 +208,30 @@ class TestMonthlyStatementRun:
         assert second["sent"] == 1
 
     def test_a_month_only_argument_dates_the_statement_to_the_month_end(self, building):
+        """Re-issuing a month that has closed dates the statement to its last
+        day, whatever today happens to be."""
         _make_tenant(building)
 
-        with patch("apps.payments.notifications.send_email", return_value=True):
+        with patch("apps.payments.notifications.send_email", return_value=True), \
+             patch("apps.payments.tasks.timezone.localdate",
+                   return_value=date(2026, 11, 4)):
             counts = send_monthly_statements("2026-08")
 
         assert counts["as_at"] == "2026-08-31"
+        assert counts["period"] == "2026-08"
+
+    def test_a_month_that_has_not_closed_is_dated_today_not_in_the_future(self, building):
+        """The advance run states September from 25 August. Re-issuing it that
+        week must not print a statement drawn on 30 September."""
+        _make_tenant(building)
+
+        with patch("apps.payments.notifications.send_email", return_value=True), \
+             patch("apps.payments.tasks.timezone.localdate",
+                   return_value=date(2026, 8, 26)):
+            counts = send_monthly_statements("2026-09")
+
+        assert counts["as_at"] == "2026-08-26"
+        assert counts["period"] == "2026-09"
 
     def test_a_bad_period_falls_back_to_today_rather_than_crashing(self, building):
         _make_tenant(building)

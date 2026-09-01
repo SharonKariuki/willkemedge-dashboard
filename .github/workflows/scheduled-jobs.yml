@@ -8,9 +8,24 @@ name: Scheduled jobs
 #   - secret   CRON_TRIGGER_TOKEN  (must equal CRON_TRIGGER_TOKEN in Render)
 #   - variable API_BASE_URL        (e.g. https://<your-api-domain>/api)
 #
-# monthly-statements deliberately runs on the 2nd, a day after monthly-arrears:
-# that job raises the month's rent, and a statement emailed before it has run
-# states a balance with the current month missing from it.
+# The billing cycle runs a month ahead of the calendar, at tenants' request: on
+# the 25th monthly-arrears raises the FOLLOWING month's rent and monthly-
+# statements emails it, so a tenant has their September statement in hand on
+# 25 August rather than after September has already started.
+#
+# Order matters on the 25th. monthly-arrears raises the rent; a statement
+# emailed before it has run states a balance with the stated month missing from
+# it. Half an hour apart is ample — arrears is a handful of queries per tenant.
+#
+# The run day is also STATEMENT_RUN_DAY in Django settings (default 25), which
+# is what the jobs use to work out WHICH month to bill. Both have to move
+# together: change only this and the jobs still bill next month, just on the
+# wrong day; change only the setting and they fire on a day that bills the month
+# already in progress.
+#
+# monthly-arrears also still runs on the 1st. It is a catch-up — it bills every
+# month a tenant is short of, not just one — so it costs nothing when the 25th
+# fired, and rescues the month when it did not.
 #
 # NOTE: scheduled workflows only run from the repository's DEFAULT branch, so
 # this must be merged to that branch (main) to start firing. Times are UTC;
@@ -22,8 +37,9 @@ on:
     - cron: "0 6 * * *"    # arrears-reminders      09:00 EAT
     - cron: "0 22 * * *"   # recalculate-statuses   01:00 EAT (next day)
     - cron: "0 15 * * *"   # daily-reconciliation   18:00 EAT
-    - cron: "0 0 1 * *"    # monthly-arrears        1st, 03:00 EAT
-    - cron: "0 4 2 * *"    # monthly-statements     2nd, 07:00 EAT
+    - cron: "30 3 25 * *"  # monthly-arrears       25th, 06:30 EAT (raises next month)
+    - cron: "0 4 25 * *"   # monthly-statements    25th, 07:00 EAT (emails next month)
+    - cron: "0 0 1 * *"    # monthly-arrears        1st, 03:00 EAT (catch-up)
   workflow_dispatch:
     inputs:
       job:
@@ -54,8 +70,9 @@ jobs:
             "0 6 * * *")  slug="arrears-reminders" ;;
             "0 22 * * *") slug="recalculate-statuses" ;;
             "0 15 * * *") slug="daily-reconciliation" ;;
+            "30 3 25 * *") slug="monthly-arrears" ;;
+            "0 4 25 * *") slug="monthly-statements" ;;
             "0 0 1 * *")  slug="monthly-arrears" ;;
-            "0 4 2 * *")  slug="monthly-statements" ;;
             *)            slug="${{ github.event.inputs.job }}" ;;
           esac
           if [ -z "$slug" ]; then echo "Could not resolve a job slug"; exit 1; fi

@@ -4,11 +4,17 @@ Celery tasks for the payments app.
 Tasks:
   send_payment_confirmation  — SMS + email after every payment
   recalculate_all_statuses   — nightly unit status sweep
-  generate_monthly_arrears   — 1st of month: create arrears records
+  generate_monthly_arrears   — 25th + 1st: create arrears records
   send_rent_reminders        — daily: SMS N days before each tenant's due day
   send_arrears_reminders     — daily: SMS on/after due day when rent unpaid
-  send_monthly_statements    — monthly: emailed rent statement PDF per tenant
+  send_monthly_statements    — 25th: emailed rent statement PDF per tenant
   poll_bank_statement        — hourly fallback for banks without webhooks
+
+The two monthly jobs run a month ahead of the calendar: on the 25th they raise
+and state the FOLLOWING month, so a tenant has their September statement in
+hand before September starts. Both read the period from
+``billing_calendar.billing_period`` rather than deciding for themselves — see
+that module for what else depends on the cycle.
 
 All tasks use bind=True + max_retries=3 with exponential backoff.
 """
@@ -17,6 +23,14 @@ import logging
 from celery import shared_task
 from django.db import models
 from django.utils import timezone
+
+from .billing_calendar import (
+    billing_period,
+    next_period,
+    parse_period,
+    period_end,
+    period_start,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -405,10 +419,6 @@ def recalculate_all_statuses() -> None:
     logger.info("recalculate_all_statuses: updated %d units", updated)
 
 
-def _next_period(year: int, month: int) -> tuple[int, int]:
-    return (year + 1, 1) if month == 12 else (year, month + 1)
-
-
 def billing_floor() -> tuple[int, int] | None:
     """The first month the books charge rent for — the month after cutover.
 
@@ -428,7 +438,7 @@ def billing_floor() -> tuple[int, int] | None:
         .values_list("date", flat=True)
         .first()
     )
-    return _next_period(cutover.year, cutover.month) if cutover else None
+    return next_period(cutover.year, cutover.month) if cutover else None
 
 
 def first_billable_period(tenant, floor) -> tuple[int, int] | None:
@@ -450,14 +460,24 @@ def periods_due(tenant, floor, through: tuple[int, int]):
         return
     while cursor <= through:
         yield cursor
-        cursor = _next_period(*cursor)
+        cursor = next_period(*cursor)
 
 
 @shared_task
 def generate_monthly_arrears() -> int:
     """
-    Runs on the 1st of each month at 00:05 EAT.
     Creates the Arrears records every active tenant is missing.
+
+    Runs on the 25th, ahead of the statement run, and again on the 1st as a
+    safety net. From the 25th it bills a month ahead of the calendar: the run on
+    25 August raises September, so the statement that goes out the same morning
+    states a September the ledger has actually charged. Billing on the 1st and
+    stating on the 2nd — the old order — cannot produce a statement for a month
+    that has not started.
+
+    A period raised in advance is charged, not overdue. Nothing that reports
+    debt counts it: the rent roll, the aging table and the unit-status sweep all
+    stop at the current calendar month. See billing_calendar.
 
     The period is raised at the FULL obligation — base rent plus VAT for a
     commercial unit, since that is the figure the tenant actually pays — and any
@@ -482,8 +502,7 @@ def generate_monthly_arrears() -> int:
     from .models import Arrears
     from .services import apply_available_credit, expected_vat_for
 
-    now = timezone.now()
-    through = (now.year, now.month)
+    through = billing_period(timezone.localdate())
     floor = billing_floor()
     active = Tenant.objects.filter(status=TenantStatus.ACTIVE).select_related("unit")
     created = 0
@@ -669,28 +688,38 @@ def send_arrears_reminders() -> int:
 # Monthly rent statements — emailed PDF, one per tenant
 # ---------------------------------------------------------------------------
 
-def _statement_period(period_iso: str | None):
-    """Resolve the 'as at' date for a statement run.
+def _statement_target(period_iso: str | None):
+    """Resolve ``(as_at, period)`` for a statement run.
 
-    Accepts YYYY-MM (the last day of that month, for backfilling a period that
-    has closed) or YYYY-MM-DD. Defaults to today, which is what the scheduled
-    run uses: a statement sent on the 2nd states the balance as at the 2nd.
+    ``as_at`` is the date printed on the statement — when it was drawn.
+    ``period`` is the month it is *about*, which since the cycle moved to the
+    25th is no longer the month ``as_at`` falls in: a statement drawn on
+    25 August 2026 is the September 2026 statement.
+
+    Accepts:
+      * nothing       — today, billing whatever month the cycle is on. This is
+                        the scheduled run.
+      * ``YYYY-MM``   — re-issue that month. Dated its last day, or today when
+                        the month has not closed yet, since a statement cannot
+                        honestly be drawn on a date that has not happened.
+      * ``YYYY-MM-DD``— run as though it were that date, cycle rules and all.
     """
-    import calendar
     import datetime as _dt
 
+    today = timezone.localdate()
     if not period_iso:
-        return timezone.localdate()
+        return today, billing_period(today)
     try:
         if len(period_iso) == 7:
-            year, month = int(period_iso[:4]), int(period_iso[5:7])
-            return _dt.date(year, month, calendar.monthrange(year, month)[1])
-        return _dt.date.fromisoformat(period_iso[:10])
+            period = parse_period(period_iso)
+            return min(period_end(period), today), period
+        as_at = _dt.date.fromisoformat(period_iso[:10])
+        return as_at, billing_period(as_at)
     except (ValueError, TypeError):
         logger.warning(
             "send_monthly_statements: bad period=%r — using today", period_iso
         )
-        return timezone.localdate()
+        return today, billing_period(today)
 
 
 @shared_task
@@ -698,9 +727,14 @@ def send_monthly_statements(period_iso: str | None = None) -> dict:
     """
     Email every active tenant their rent statement with the PDF attached.
 
-    Schedule this a day *after* `monthly-arrears`: that job is what raises the
-    month's rent, and a statement sent before it runs states a balance with the
-    current month missing from it.
+    Runs on the 25th and states the month *ahead*: on 25 August 2026 every
+    tenant is emailed their September statement, which is what they asked for —
+    the bill arrives with a week's notice instead of after the month it covers
+    has already begun. `_statement_target` works out which month that is.
+
+    Schedule this *after* `monthly-arrears` on the same morning: that job is
+    what raises the month's rent, and a statement sent before it has run states
+    a balance with the stated month missing from it.
 
     Idempotent per tenant per month via dedupe_key, so re-running the job — or a
     scheduler that fires twice — does not send the same statement again. A
@@ -723,8 +757,17 @@ def send_monthly_statements(period_iso: str | None = None) -> dict:
         statement_dedupe_key,
     )
 
-    as_at = _statement_period(period_iso)
-    counts = {"sent": 0, "failed": 0, "skipped": 0, "no_email": 0, "as_at": as_at.isoformat()}
+    as_at, period = _statement_target(period_iso)
+    # Dedupe on the month the statement is *about*, not the day it was drawn.
+    # Keyed on the send date, the run on 25 August and a re-issue of August
+    # would collide on "2026-08" and the September statement would be swallowed
+    # as a duplicate of the August one.
+    period_key = period_start(period)
+    counts = {
+        "sent": 0, "failed": 0, "skipped": 0, "no_email": 0,
+        "as_at": as_at.isoformat(),
+        "period": f"{period[0]:04d}-{period[1]:02d}",
+    }
 
     tenants = Tenant.objects.filter(status=TenantStatus.ACTIVE).select_related(
         "unit", "unit__building"
@@ -735,7 +778,7 @@ def send_monthly_statements(period_iso: str | None = None) -> dict:
                 counts["no_email"] += 1
                 continue
 
-            key = statement_dedupe_key(tenant.id, as_at)
+            key = statement_dedupe_key(tenant.id, period_key)
             already_sent = TenantNotification.objects.filter(
                 dedupe_key=key, status=NotificationStatus.SENT
             ).exists()
@@ -744,7 +787,8 @@ def send_monthly_statements(period_iso: str | None = None) -> dict:
                 continue
 
             notification = send_tenant_statement(
-                tenant, statement_date=as_at, dedupe_key=key, connection=mail
+                tenant, statement_date=as_at, period=period, dedupe_key=key,
+                connection=mail,
             )
             if notification.status == NotificationStatus.SENT:
                 counts["sent"] += 1
@@ -752,8 +796,9 @@ def send_monthly_statements(period_iso: str | None = None) -> dict:
                 counts["failed"] += 1
 
     logger.info(
-        "send_monthly_statements (as at %s): %d sent, %d failed, %d already sent, "
-        "%d with no email on file",
-        as_at, counts["sent"], counts["failed"], counts["skipped"], counts["no_email"],
+        "send_monthly_statements for %s (as at %s): %d sent, %d failed, "
+        "%d already sent, %d with no email on file",
+        counts["period"], as_at, counts["sent"], counts["failed"],
+        counts["skipped"], counts["no_email"],
     )
     return counts
