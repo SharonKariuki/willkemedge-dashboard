@@ -35,6 +35,29 @@ class AuthFlowTests(APITestCase):
         assert "access" in body and "refresh" in body
         assert body["user"]["email"] == "william@gmail.com"
 
+    def test_login_returns_the_money_permissions_the_dashboard_gates_on(self):
+        """Login and /auth/me/ must agree, or the UI gates on a field that
+        only appears after a page refresh."""
+        response = self.client.post(
+            self.login_url,
+            {"email": "william@gmail.com", "password": self.password},
+            format="json",
+        )
+        user = response.json()["user"]
+        assert user["role"] == "viewer"
+        assert user["can_record_money"] is False
+        assert user["can_forgive_money"] is False
+
+    def test_owner_may_forgive_money(self):
+        self.user.role = "owner"
+        self.user.save(update_fields=["role"])
+        response = self.client.post(
+            self.login_url,
+            {"email": "william@gmail.com", "password": self.password},
+            format="json",
+        )
+        assert response.json()["user"]["can_forgive_money"] is True
+
     def test_login_success_records_audit_row(self):
         self.client.post(
             self.login_url,

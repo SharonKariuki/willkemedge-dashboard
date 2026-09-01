@@ -1,5 +1,5 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Banknote, Building2, CreditCard, FileText, Mail, Plus, Smartphone, UserPlus, Wallet, X } from "lucide-react";
+import { Banknote, Building2, CreditCard, Eye, EyeOff, FileText, Mail, Plus, Smartphone, Undo2, UserPlus, Wallet, X } from "lucide-react";
 
 import { cloneElement, isValidElement, useId, useState } from "react";
 import { useForm } from "react-hook-form";
@@ -24,7 +24,10 @@ import {
   THead,
   TR,
 } from "@/components/ui";
+import { VoidPaymentModal } from "@/features/payments/VoidPaymentModal";
+import { useAuth } from "@/hooks/useAuth";
 import {
+  type Payment,
   useCollectionProgress,
   useCreatePayment,
   usePayments,
@@ -118,6 +121,13 @@ function Field({
 export default function PaymentsPage() {
   const [sourceFilter, setSourceFilter] = useState("");
   const [showForm, setShowForm] = useState(false);
+  const [showVoided, setShowVoided] = useState(false);
+  const [voidTarget, setVoidTarget] = useState<Payment | null>(null);
+
+  // Voiding is owner-only on the API (CanForgiveMoney). Hiding the control for
+  // everyone else keeps the UI honest about what it will let you finish.
+  const { user } = useAuth();
+  const canVoid = Boolean(user?.can_forgive_money);
 
   const handleDownloadReceipt = async (txnId: number) => {
     try {
@@ -140,6 +150,9 @@ export default function PaymentsPage() {
   const filters: Record<string, string> = {};
 
   if (sourceFilter) filters.source = sourceFilter;
+  // Voided rows are hidden by default so the list agrees with arrears and the
+  // ledger; the toggle brings them back for audit.
+  if (showVoided) filters.include_void = "true";
 
   const { data: payments, isLoading, isError, refetch } = usePayments(filters);
   const { data: progress } = useCollectionProgress();
@@ -329,25 +342,41 @@ export default function PaymentsPage() {
       )}
 
       {/* Filter chips */}
-      <div className="flex flex-wrap gap-1.5" role="group" aria-label="Filter by payment source">
-        {SOURCES.map((s) => {
-          const active = sourceFilter === s.value;
-          return (
-            <button
-              key={s.value || "all"}
-              onClick={() => setSourceFilter(s.value)}
-              aria-pressed={active}
-              className={cn(
-                "rounded-full px-3 py-1.5 text-xs font-medium transition-all",
-                active
-                  ? "bg-ink-900 text-canvas shadow-float dark:bg-ink-100 dark:text-canvas"
-                  : "glass text-ink-700"
-              )}
-            >
-              {s.label}
-            </button>
-          );
-        })}
+      <div className="flex flex-wrap items-center gap-1.5">
+        <div className="flex flex-wrap gap-1.5" role="group" aria-label="Filter by payment source">
+          {SOURCES.map((s) => {
+            const active = sourceFilter === s.value;
+            return (
+              <button
+                key={s.value || "all"}
+                onClick={() => setSourceFilter(s.value)}
+                aria-pressed={active}
+                className={cn(
+                  "rounded-full px-3 py-1.5 text-xs font-medium transition-all",
+                  active
+                    ? "bg-ink-900 text-canvas shadow-float dark:bg-ink-100 dark:text-canvas"
+                    : "glass text-ink-700"
+                )}
+              >
+                {s.label}
+              </button>
+            );
+          })}
+        </div>
+        <button
+          onClick={() => setShowVoided((v) => !v)}
+          aria-pressed={showVoided}
+          className={cn(
+            "ml-auto inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-all",
+            showVoided
+              ? "bg-ink-900 text-canvas shadow-float dark:bg-ink-100 dark:text-canvas"
+              : "glass text-ink-700"
+          )}
+          title="Show payments that have been voided"
+        >
+          {showVoided ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
+          Voided
+        </button>
       </div>
 
       {/* Payments table */}
@@ -400,12 +429,22 @@ export default function PaymentsPage() {
                           className="h-8 w-8 rounded-full"
                         />
                         <span className="font-medium text-ink-900">{p.tenant_name}</span>
+                        {p.is_void && (
+                          <Badge tone="unpaid" title={p.void_reason}>Void</Badge>
+                        )}
                       </div>
                     </TD>
                     <TD className="text-ink-500">
                       {p.building_name} · {p.unit_label}
                     </TD>
-                    <TD className="text-right font-semibold tabular-nums text-sage-700 dark:text-sage-400">
+                    <TD
+                      className={cn(
+                        "text-right font-semibold tabular-nums",
+                        p.is_void
+                          ? "text-ink-400 line-through"
+                          : "text-sage-700 dark:text-sage-400"
+                      )}
+                    >
                       KES {Number(p.amount).toLocaleString()}
                     </TD>
                     <TD className="text-ink-500">{p.payment_date}</TD>
@@ -436,6 +475,16 @@ export default function PaymentsPage() {
                         >
                           <Mail className="h-3.5 w-3.5" />
                         </button>
+                        {canVoid && !p.is_void && (
+                          <button
+                            onClick={() => setVoidTarget(p)}
+                            className="rounded p-1 text-ink-400 transition-colors hover:bg-danger-soft hover:text-danger"
+                            title="Void this payment"
+                            aria-label={`Void payment of KES ${p.amount} from ${p.tenant_name}`}
+                          >
+                            <Undo2 className="h-3.5 w-3.5" />
+                          </button>
+                        )}
                       </div>
                     </TD>
 
@@ -453,12 +502,22 @@ export default function PaymentsPage() {
                   <div className="min-w-0 flex-1">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <p className="truncate font-medium text-ink-900">{p.tenant_name}</p>
+                        <div className="flex items-center gap-2">
+                          <p className="truncate font-medium text-ink-900">{p.tenant_name}</p>
+                          {p.is_void && <Badge tone="unpaid">Void</Badge>}
+                        </div>
                         <p className="truncate text-[11px] text-ink-500">
                           {p.building_name} · {p.unit_label}
                         </p>
                       </div>
-                      <p className="text-sm font-semibold text-sage-700 tabular-nums dark:text-sage-400">
+                      <p
+                        className={cn(
+                          "text-sm font-semibold tabular-nums",
+                          p.is_void
+                            ? "text-ink-400 line-through"
+                            : "text-sage-700 dark:text-sage-400"
+                        )}
+                      >
                         KES {Number(p.amount).toLocaleString()}
                       </p>
                     </div>
@@ -488,6 +547,17 @@ export default function PaymentsPage() {
                         >
                           <Mail className="h-3 w-3" /> Resend
                         </button>
+                        {canVoid && !p.is_void && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setVoidTarget(p);
+                            }}
+                            className="flex items-center gap-1 text-[11px] font-medium text-danger"
+                          >
+                            <Undo2 className="h-3 w-3" /> Void
+                          </button>
+                        )}
                       </div>
                     </div>
 
@@ -497,6 +567,13 @@ export default function PaymentsPage() {
             ))}
           </div>
         </>
+      )}
+
+      {voidTarget && (
+        <VoidPaymentModal
+          payment={voidTarget}
+          onClose={() => setVoidTarget(null)}
+        />
       )}
     </div>
   );
