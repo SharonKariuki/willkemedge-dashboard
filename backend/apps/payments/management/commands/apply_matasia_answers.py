@@ -27,7 +27,12 @@ Two things are reported every run rather than acted on: which unit Ignite
 Energy actually occupies, and whether MCF04 should be billed at all. Both are
 decisions, not data fixes.
 
-DRY-RUN BY DEFAULT. Nothing is written without --apply. Re-running is safe.
+DRY-RUN BY DEFAULT. Nothing is written without --apply. Re-running is safe —
+including the charge drops, which now stand down once the billing cycle reaches
+the period. Without that they went stale: MCF01's September was dropped as the
+mis-split's leftover, then billed for real on 25 August, and a re-run would have
+deleted a month the tenant's statement charges. See ``_drop_charge`` and
+``reconcile_fortcom_mcf01``.
 
 Usage:
     python manage.py apply_matasia_answers
@@ -78,7 +83,7 @@ DEPOSITS = [
     ("MCG03", 160, Decimal("54000.00"), "3 x 18,000"),
     ("MCG05", 148, Decimal("259500.00"), "3 x 86,500 — was 390,780 from the old roll"),
     ("MCG10", 164, Decimal("75000.00"), "3 x 25,000"),
-    ("MCF01", 175, Decimal("50000.00"), "paid 50,000 on move-in — see DEPOSIT_EXCEPTIONS"),
+    ("MCF01", 175, Decimal("50000.00"), "2 x 25,000, agreed — see DEPOSIT_EXCEPTIONS"),
     ("MCF04", 165, Decimal("75000.00"), "3 x 25,000"),
     ("MCF12", 166, Decimal("151965.00"), "3 x 50,655"),
     ("MCF13", 167, Decimal("72000.00"), "3 x 24,000"),
@@ -90,7 +95,13 @@ DEPOSITS = [
 # was actually received, and where the two differ the shortfall is a fact worth
 # keeping rather than a number to round up to policy.
 DEPOSIT_EXCEPTIONS = {
-    "MCF01": "Fortcom paid 50,000 with their first month, 25,000 short of 3 x 25,000",
+    # Read as a 25,000 shortfall until the 1 Sept 2026 statement arrived. Line 2
+    # of that statement invoices "Two Months Rent Deposit" at 50,000 and the
+    # running balance clears it, so the lease was agreed at two months and there
+    # is no shortfall to chase. ``reconcile_fortcom_mcf01`` writes that agreement
+    # to ``Tenant.agreed_deposit``, which is what the deposit card and
+    # ``check_data_integrity`` hold the letting against.
+    "MCF01": "agreed at 2 x 25,000, not 3 — the 1 Sept 2026 statement invoices it in full",
 }
 
 # A payment booked on a wrong reading of what it was for —
@@ -111,8 +122,18 @@ REALLOCATE = [
 
 # Charges that exist only because a payment was mis-allocated —
 # (unit, tenant id, year, month, why)
+#
+# These entries have a shelf life, and it is short. A charge raised by the
+# mis-split is indistinguishable in shape from one the biller raises — same
+# rent, same VAT, nothing paid against it — so the only thing separating them
+# is WHEN. ``_drop_charge`` refuses once the billing cycle has reached the
+# period, which is what keeps a re-run from deleting a real month.
+#
+# September was listed here and has been removed: billing raised it on 25 Aug
+# and the 1 Sept 2026 statement charges it (25,000 + 4,000 VAT), so it is now a
+# real month. See ``reconcile_fortcom_mcf01``, which settles MCF01 against that
+# statement. October is still ahead of the cycle and still the mis-split's.
 DROP_CHARGES = [
-    ("MCF01", 175, 2026, 9, "raised by the mis-split; no billing has run for September"),
     ("MCF01", 175, 2026, 10, "raised by the mis-split; no billing has run for October"),
 ]
 
@@ -439,10 +460,23 @@ class Command(BaseCommand):
     def _drop_charge(self, tenant, label, year, month, why):
         """Remove a charge that only exists because a payment was mis-allocated.
 
-        Guarded on the period being empty of cash: if money is sitting against
-        it the charge is doing real work and removing it would strand the
-        payment on a month with nothing to settle.
+        Guarded twice, because this command is meant to be re-runnable and both
+        guards protect a charge that is doing real work.
+
+        On CASH: if money is sitting against the period, removing the charge
+        strands the payment on a month with nothing to settle.
+
+        On the BILLING CALENDAR: a mis-split leftover and a genuinely billed
+        month are the same row — same rent, same VAT, nothing paid — so age is
+        the only thing that tells them apart. Once ``billing_period`` has
+        reached the period, ``generate_monthly_arrears`` owns it: it raises
+        every month a tenant is short of, so a drop here is undone on the next
+        cron and re-applied on the next run of this command, with the tenant's
+        statement disagreeing with the ledger in between. MCF01's September was
+        exactly this — dropped as the mis-split's, then billed for real on
+        25 August and charged on the 1 Sept statement.
         """
+        from apps.payments.billing_calendar import billing_period
         from apps.payments.models import Arrears, Payment
 
         charge = Arrears.objects.filter(
@@ -450,6 +484,14 @@ class Command(BaseCommand):
         ).first()
         if charge is None:
             self._skip(f"{label} {tenant.full_name}: no charge for {month}/{year}")
+            return
+        billing = billing_period()
+        if (year, month) <= billing:
+            self._skip(
+                f"{label} {tenant.full_name}: the cycle is billing {billing[1]}/{billing[0]}, "
+                f"so {month}/{year} is a month the biller now raises — refusing to drop a "
+                f"charge that generate_monthly_arrears would put straight back"
+            )
             return
         held = Payment.objects.filter(
             tenant=tenant, period_year=year, period_month=month, voided_at__isnull=True,

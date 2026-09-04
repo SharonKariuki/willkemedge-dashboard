@@ -452,15 +452,32 @@ class TestDropCharge:
             monkeypatch.setattr(cmd, name, [])
         monkeypatch.setattr(cmd, "DROP_CHARGES", list(drop))
 
+    def _cycle_on(self, monkeypatch, period):
+        """Pin which month the biller is on.
+
+        Whether a charge may be dropped now turns on the billing calendar, so
+        every test here has to say where the cycle is or it starts passing and
+        failing by the wall clock.
+        """
+        from apps.payments import billing_calendar
+
+        monkeypatch.setattr(billing_calendar, "billing_period", lambda *a, **k: period)
+
+    def _charge(self, tenant, month):
+        from apps.payments.models import Arrears
+
+        return Arrears.objects.create(
+            tenant=tenant, period_year=2026, period_month=month,
+            expected_rent=D("25000"), expected_vat=D("4000"),
+            amount_paid=D(0), balance=D("29000"),
+        )
+
     def test_removes_a_charge_no_cash_sits_against(self, arcade, monkeypatch):
         from apps.payments.models import Arrears
 
         tenant = arcade["payer"]
-        Arrears.objects.create(
-            tenant=tenant, period_year=2026, period_month=9,
-            expected_rent=D("25000"), expected_vat=D("4000"),
-            amount_paid=D(0), balance=D("29000"),
-        )
+        self._charge(tenant, 9)
+        self._cycle_on(monkeypatch, (2026, 8))
         self._only(monkeypatch, [("MCQ12", tenant.pk, 2026, 9, "mis-split")])
 
         call_command("apply_matasia_answers", "--apply")
@@ -473,15 +490,46 @@ class TestDropCharge:
         from apps.payments.models import Arrears
 
         tenant = arcade["payer"]
-        Arrears.objects.create(
-            tenant=tenant, period_year=2026, period_month=9,
-            expected_rent=D("25000"), expected_vat=D("4000"),
-            amount_paid=D(0), balance=D("29000"),
-        )
+        self._charge(tenant, 9)
         pay = _pay(tenant, "25000", "REF-SEP")
         Payment.objects.filter(pk=pay.pk).update(period_month=9)
+        self._cycle_on(monkeypatch, (2026, 8))
         self._only(monkeypatch, [("MCQ12", tenant.pk, 2026, 9, "mis-split")])
 
         call_command("apply_matasia_answers", "--apply")
 
         assert Arrears.objects.filter(tenant=tenant, period_month=9).exists()
+
+    def test_refuses_once_the_biller_has_reached_the_period(self, arcade, monkeypatch):
+        """MCF01's September: dropped as the mis-split's leftover, then billed
+        for real on 25 August. A leftover and a billed month are the same row,
+        so once the cycle reaches the period the biller owns it — dropping it
+        here only gets it re-raised on the next cron."""
+        from apps.payments.models import Arrears
+
+        tenant = arcade["payer"]
+        self._charge(tenant, 9)
+        self._cycle_on(monkeypatch, (2026, 9))
+        self._only(monkeypatch, [("MCQ12", tenant.pk, 2026, 9, "mis-split")])
+
+        call_command("apply_matasia_answers", "--apply")
+
+        assert Arrears.objects.filter(tenant=tenant, period_month=9).exists()
+
+    def test_refuses_for_a_period_the_biller_has_passed(self, arcade, monkeypatch):
+        """Not just the current month — anything at or behind the cycle."""
+        from apps.payments.models import Arrears
+
+        tenant = arcade["payer"]
+        self._charge(tenant, 8)
+        self._cycle_on(monkeypatch, (2026, 10))
+        self._only(monkeypatch, [("MCQ12", tenant.pk, 2026, 8, "mis-split")])
+
+        call_command("apply_matasia_answers", "--apply")
+
+        assert Arrears.objects.filter(tenant=tenant, period_month=8).exists()
+
+    def test_september_is_no_longer_on_the_drop_list(self):
+        """It was, and it is now a real month: billing raised it on 25 August
+        and the 1 Sept 2026 statement charges 25,000 + 4,000 VAT for it."""
+        assert (2026, 9) not in {(y, m) for _l, _t, y, m, _w in cmd.DROP_CHARGES}
