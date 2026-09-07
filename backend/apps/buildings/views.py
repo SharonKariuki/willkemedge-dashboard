@@ -198,6 +198,9 @@ class MaintenanceRequestViewSet(viewsets.ModelViewSet):
                 expense = Expense.objects.create(
                     date=instance.reported_date,
                     building=instance.unit.building,
+                    # The work order is always for one unit, so the cost it
+                    # generates is booked to that unit, not just the building.
+                    unit=instance.unit,
                     category=cat,
                     amount=instance.cost,
                     description=f"Maintenance: {instance.description[:200]}",

@@ -6,6 +6,7 @@ ExpenseCategory: reusable tag the user picks when recording an expense;
     each category maps to one expense Account so the P&L groups by GL code.
 Expense: an immutable financial record of money spent.
 """
+from django.core.exceptions import ValidationError
 from django.db import models
 
 
@@ -85,6 +86,17 @@ class Expense(models.Model):
         blank=True,
         help_text="Building this expense applies to. Leave blank for portfolio-wide costs.",
     )
+    unit = models.ForeignKey(
+        "buildings.Unit",
+        on_delete=models.PROTECT,
+        related_name="expenses",
+        null=True,
+        blank=True,
+        help_text=(
+            "Unit this expense applies to. Leave blank for a cost that covers the "
+            "whole building. Setting a unit pins the building to that unit's building."
+        ),
+    )
     category = models.ForeignKey(
         ExpenseCategory,
         on_delete=models.PROTECT,
@@ -126,7 +138,45 @@ class Expense(models.Model):
             models.Index(fields=["period_year", "period_month"]),
             models.Index(fields=["category"]),
             models.Index(fields=["building"]),
+            models.Index(fields=["unit"]),
         ]
+
+    def _pin_building_to_unit(self) -> None:
+        """A unit already knows its building — keep the two from disagreeing.
+
+        Blank building + a unit is the common case (staff pick the unit and
+        expect the building to follow), so fill it in rather than rejecting it.
+        A building that contradicts the unit is a data error and is refused:
+        otherwise the same cost would appear under one building in the
+        per-building report and under another in the per-unit one.
+        """
+        if not self.unit_id:
+            return
+        if self.building_id is None:
+            self.building_id = self.unit.building_id
+        elif self.building_id != self.unit.building_id:
+            raise ValidationError({
+                "unit": (
+                    f"Unit '{self.unit.label}' belongs to "
+                    f"{self.unit.building.name}, not the building selected."
+                )
+            })
+
+    def clean(self):
+        super().clean()
+        self._pin_building_to_unit()
+
+    def save(self, *args, **kwargs):
+        # Backstop for admin saves and management commands, which never reach
+        # the serializer. A cost mis-filed under the wrong building is invisible
+        # until the two reports disagree, so it is caught on the way in.
+        before = self.building_id
+        self._pin_building_to_unit()
+        update_fields = kwargs.get("update_fields")
+        if update_fields is not None and self.building_id != before:
+            # A partial save must still persist the building we just derived.
+            kwargs["update_fields"] = {*update_fields, "building"}
+        super().save(*args, **kwargs)
 
     def __str__(self) -> str:
         return f"{self.category.name} — KES {self.amount} ({self.period_month}/{self.period_year})"

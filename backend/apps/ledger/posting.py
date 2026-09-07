@@ -324,6 +324,17 @@ def _expense_payment_method(expense) -> str:
     return getattr(expense, "payment_method", "bank") or "bank"
 
 
+def _expense_unit_tag(expense) -> str:
+    """' [Unit A1]' when the cost is pinned to one unit, else ''.
+
+    A JournalEntry carries a building but no unit, so the unit lives in the
+    memo and line description — enough to trace a GL row back to the unit it
+    was spent on without adding a second dimension to the ledger schema.
+    """
+    unit = getattr(expense, "unit", None)
+    return f" [Unit {unit.label}]" if unit else ""
+
+
 def post_expense(expense, *, replace: bool = False) -> JournalEntry:
     """
     Post an Expense to the ledger.
@@ -342,11 +353,17 @@ def post_expense(expense, *, replace: bool = False) -> JournalEntry:
     credit_account = "1010" if method == "petty_cash" else "1020"
     credit_desc = "Petty Cash" if method == "petty_cash" else "Operating Bank Account"
 
+    unit_tag = _expense_unit_tag(expense)
     lines = [
-        (expense_account_code, amt, Decimal("0"), expense.description or expense.category.name),
+        (
+            expense_account_code,
+            amt,
+            Decimal("0"),
+            f"{expense.description or expense.category.name}{unit_tag}"[:255],
+        ),
         (credit_account, Decimal("0"), amt, credit_desc),
     ]
-    memo = f"Expense: {expense.category.name} — {expense.description or ''}"
+    memo = f"Expense: {expense.category.name} — {expense.description or ''}{unit_tag}"
 
     return _build_entry(
         date=expense.date,
@@ -373,14 +390,20 @@ def reverse_expense(expense) -> JournalEntry:
     method = _expense_payment_method(expense)
     debit_account = "1010" if method == "petty_cash" else "1020"
 
+    unit_tag = _expense_unit_tag(expense)
     lines = [
-        (expense_account_code, Decimal("0"), amt, f"REVERSAL — {expense.category.name}"),
+        (
+            expense_account_code,
+            Decimal("0"),
+            amt,
+            f"REVERSAL — {expense.category.name}{unit_tag}"[:255],
+        ),
         (debit_account, amt, Decimal("0"), "REVERSAL — cash refund"),
     ]
 
     return _build_entry(
         date=expense.date,
-        memo=f"REVERSAL: {expense.category.name} — {expense.description or ''}",
+        memo=f"REVERSAL: {expense.category.name} — {expense.description or ''}{unit_tag}"[:255],
         reference=expense.reference,
         building=expense.building,
         source_type="expense",
