@@ -178,27 +178,27 @@
     <table class="ledger" style="width: 700px;">
         <thead>
             <tr>
-                <th style="width: 32px;">#</th>
-                <th style="width: 104px;">Posting Date</th>
-                <th style="width: 220px;">Description</th>
-                <th style="width: 118px;">Invoice Amount</th>
-                <th style="width: 106px;">Payments</th>
-                <th style="width: 120px;">Balance</th>
+                <th style="width: 30px;">#</th>
+                <th style="width: 100px;">Posting Date</th>
+                <th style="width: 250px;">Description</th>
+                <th style="width: 112px;">Invoice Amount</th>
+                <th style="width: 100px;">Payments</th>
+                <th style="width: 108px;">Balance</th>
             </tr>
         </thead>
         <tbody>
             {% for row in rows %}
             <tr>
-                <td class="center" style="width: 32px;">{{ row.index }}</td>
-                <td style="width: 104px;">{{ row.posting_date }}</td>
-                <td style="width: 220px;">
+                <td class="center" style="width: 30px;">{{ row.index }}</td>
+                <td style="width: 100px;">{{ row.posting_date }}</td>
+                <td style="width: 250px;">
                     {% for line in row.description_lines %}
                         {% if forloop.first %}{{ line }}{% else %}<span class="desc-extra">{{ line }}</span>{% endif %}
                     {% endfor %}
                 </td>
-                <td class="money" style="width: 118px;">{{ row.invoice_amount }}</td>
-                <td class="money" style="width: 106px;">{{ row.payment }}</td>
-                <td class="money" style="width: 120px;">{{ row.balance }}</td>
+                <td class="money" style="width: 112px;">{{ row.invoice_amount }}</td>
+                <td class="money" style="width: 100px;">{{ row.payment }}</td>
+                <td class="money" style="width: 108px;">{{ row.balance }}</td>
             </tr>
             {% empty %}
             <tr><td colspan="6" class="center">No transactions on record.</td></tr>

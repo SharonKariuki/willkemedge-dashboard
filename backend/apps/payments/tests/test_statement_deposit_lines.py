@@ -87,7 +87,7 @@ class TestTheDepositIsVisible:
 
         _st, rows = _ledger(tenant)
 
-        assert ("10 Aug 2026", "Payment Received", "", "75,000.00", "-46,000") in rows
+        assert ("10 August 2026", "Payment Received", "", "75,000.00", "-46,000") in rows
 
     def test_the_deposit_is_invoiced_straight_back_out(self, let):
         tenant = let("MCD01")
@@ -97,7 +97,7 @@ class TestTheDepositIsVisible:
 
         _st, rows = _ledger(tenant)
 
-        assert ("10 Aug 2026", "Two Months Rent Deposit", "50,000.00", "", "4,000") in rows
+        assert ("10 August 2026", "Two Months Rent Deposit", "50,000.00", "", "4,000") in rows
 
     def test_the_pair_nets_to_nothing_against_rent(self, let):
         """The whole safety property: showing the deposit must not pay rent down.
