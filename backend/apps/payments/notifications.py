@@ -227,7 +227,7 @@ def fetch_sms_balance(*, refresh: bool = False) -> dict:
 
     api_key = getattr(settings, "AT_API_KEY", "")
     username = getattr(settings, "AT_USERNAME", "sandbox")
-    unit_cost = Decimal(str(getattr(settings, "AT_SMS_UNIT_COST", "0.80") or "0"))
+    unit_cost = Decimal(str(getattr(settings, "AT_SMS_UNIT_COST", "1.60") or "0"))
 
     result = {
         "configured": bool(api_key),

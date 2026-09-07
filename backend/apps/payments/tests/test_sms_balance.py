@@ -55,7 +55,7 @@ def _at_response(payload, status_code=200):
 def live_at(settings):
     settings.AT_API_KEY = "live-key"
     settings.AT_USERNAME = "wilkem"
-    settings.AT_SMS_UNIT_COST = "0.80"
+    settings.AT_SMS_UNIT_COST = "1.60"
     settings.AT_BALANCE_LOW_THRESHOLD = "500"
     settings.AT_TOPUP_PAYBILL = "525900"
     settings.AT_TOPUP_ACCOUNT = "wilkemedge"
@@ -71,8 +71,9 @@ def test_returns_parsed_balance_and_estimated_messages(auth_client, live_at):
     assert body["configured"] is True
     assert Decimal(body["balance"]) == Decimal("1785.5000")
     assert body["currency"] == "KES"
-    # 1785.50 / 0.80 = 2231.875 → floor, we never round an estimate upward.
-    assert body["sms_remaining"] == 2231
+    # 1785.50 / 1.60 = 1115.9 → floor. An estimate never rounds upward: the
+    # failure that matters is telling the director he has messages he doesn't.
+    assert body["sms_remaining"] == 1115
     assert body["low"] is False
     assert body["error"] is None
 
@@ -98,7 +99,7 @@ def test_low_balance_is_flagged(auth_client, live_at):
         body = auth_client.get(URL).json()
 
     assert body["low"] is True
-    assert body["sms_remaining"] == 150
+    assert body["sms_remaining"] == 75
 
 
 def test_at_outage_degrades_to_null_balance_but_keeps_the_paybill(auth_client, live_at):
