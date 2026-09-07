@@ -27,6 +27,7 @@ import {
   THead,
   TR,
 } from "@/components/ui";
+import SmsBalanceCard from "@/components/SmsBalanceCard";
 import {
   useNotifications,
   useNotificationTemplates,
@@ -231,6 +232,9 @@ export default function NotificationsPage() {
         title="Notifications"
         description="Send SMS or email to tenants — pick a template or write your own message."
       />
+
+      {/* SMS wallet — every send below is paid for out of this balance. */}
+      <SmsBalanceCard />
 
       {/* Templates */}
       <Card variant="glass" padding="md">

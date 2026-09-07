@@ -143,11 +143,7 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
                 "error": balance["error"],
                 "topup": {
                     "paybill": str(getattr(settings, "AT_TOPUP_PAYBILL", "") or ""),
-                    "account": str(
-                        getattr(settings, "AT_TOPUP_ACCOUNT", "")
-                        or getattr(settings, "AT_USERNAME", "")
-                        or ""
-                    ),
+                    "account": str(getattr(settings, "AT_TOPUP_ACCOUNT", "") or ""),
                     "note": (
                         "M-Pesa → Lipa na M-Pesa → Pay Bill. The credit lands on the "
                         "Africa's Talking account that sends tenant SMS."

@@ -201,12 +201,15 @@ AT_SENDER_ID = config("AT_SENDER_ID", default="")
 #                           into "roughly N messages left" (KES 0.80/page on
 #                           the Kenyan alphanumeric sender-ID rate).
 #   AT_BALANCE_LOW_THRESHOLD  below this the dashboard shows a top-up warning.
-#   AT_TOPUP_PAYBILL/ACCOUNT  Africa's Talking M-Pesa top-up details. Account
-#                           defaults to the AT username the SMS are billed to.
+#   AT_TOPUP_PAYBILL/ACCOUNT  the M-Pesa details Africa's Talking prints on
+#                           Billing → Top Up. The account number is NOT derived
+#                           from AT_USERNAME: they happen to match today, but a
+#                           guessed account number sends the director's airtime
+#                           money to somebody else's AT wallet.
 AT_SMS_UNIT_COST = config("AT_SMS_UNIT_COST", default="0.80")
 AT_BALANCE_LOW_THRESHOLD = config("AT_BALANCE_LOW_THRESHOLD", default="500")
 AT_TOPUP_PAYBILL = config("AT_TOPUP_PAYBILL", default="525900")
-AT_TOPUP_ACCOUNT = config("AT_TOPUP_ACCOUNT", default="")
+AT_TOPUP_ACCOUNT = config("AT_TOPUP_ACCOUNT", default="wilkemedge")
 
 # Rent reminders: how many days before a tenant's due day the reminder SMS
 # fires. The daily job sends once per tenant per period as soon as the due

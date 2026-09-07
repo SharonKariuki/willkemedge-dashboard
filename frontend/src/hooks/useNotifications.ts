@@ -43,6 +43,41 @@ export interface SendNotificationResult {
   notifications: TenantNotification[];
 }
 
+/**
+ * The Africa's Talking SMS wallet — what is left, and how to top it up.
+ *
+ * `balance` is a decimal string and can be null: a failed lookup must not be
+ * mistaken for an empty wallet, so the server sends null plus `error` rather
+ * than 0. Callers render "unavailable", never "KES 0".
+ */
+export interface SmsBalance {
+  configured: boolean;
+  balance: string | null;
+  currency: string;
+  sms_remaining: number | null;
+  unit_cost: string;
+  low: boolean;
+  low_threshold: string;
+  checked_at: string;
+  cached: boolean;
+  error: string | null;
+  topup: { paybill: string; account: string; note: string };
+}
+
+export function useSmsBalance() {
+  return useQuery<SmsBalance>({
+    queryKey: ["notifications", "sms-balance"],
+    queryFn: async () => {
+      const { data } = await api.get<SmsBalance>("/notifications/sms-balance/");
+      return data;
+    },
+    // The server already caches for a minute. This card sits on three pages —
+    // without a matching client stale time, moving between them would re-ask
+    // Africa's Talking for a number that barely moves.
+    staleTime: 1000 * 60,
+  });
+}
+
 export function useNotificationTemplates() {
   return useQuery<NotificationTemplate[]>({
     queryKey: ["notifications", "templates"],

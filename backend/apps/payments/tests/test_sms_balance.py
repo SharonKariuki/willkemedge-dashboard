@@ -58,7 +58,7 @@ def live_at(settings):
     settings.AT_SMS_UNIT_COST = "0.80"
     settings.AT_BALANCE_LOW_THRESHOLD = "500"
     settings.AT_TOPUP_PAYBILL = "525900"
-    settings.AT_TOPUP_ACCOUNT = ""
+    settings.AT_TOPUP_ACCOUNT = "wilkemedge"
     return settings
 
 
@@ -77,12 +77,20 @@ def test_returns_parsed_balance_and_estimated_messages(auth_client, live_at):
     assert body["error"] is None
 
 
-def test_topup_details_use_the_at_username_when_no_account_is_set(auth_client, live_at):
+def test_topup_details_come_from_settings_not_the_at_username(auth_client, live_at):
+    """The account number is configured, never inferred.
+
+    AT_USERNAME and the top-up account number happen to match on the live
+    account, but they are different fields — deriving one from the other would
+    quietly point the director's airtime money at the wrong AT wallet the day
+    they diverge.
+    """
+    live_at.AT_USERNAME = "some-other-api-username"
     with patch("httpx.get", return_value=_at_response({"UserData": {"balance": "KES 900.0000"}})):
         body = auth_client.get(URL).json()
 
     assert body["topup"]["paybill"] == "525900"
-    assert body["topup"]["account"] == "wilkem"
+    assert body["topup"]["account"] == "wilkemedge"
 
 
 def test_low_balance_is_flagged(auth_client, live_at):
