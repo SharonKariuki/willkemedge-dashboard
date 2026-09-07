@@ -108,9 +108,10 @@ def send_tenant_statement(
     cannot abort a batch; the caller reads `status` to count what happened.
 
     `period` is the ``(year, month)`` the statement is about. It defaults to
-    whatever month the billing cycle is on — from the 25th, next month — so a
-    statement the office re-sends by hand is the same one the scheduled run
-    emailed that morning, rather than the previous month's.
+    whatever month THIS tenant's cycle is on — the current month for a house,
+    and from the 25th next month for the arcade — so a statement the office
+    re-sends by hand is the same one the scheduled run emailed, rather than the
+    previous month's or a month the tenant has not been billed for.
 
     `connection` is an open mail backend to send over, for batches that would
     otherwise pay an SMTP handshake per tenant; see `open_mail_connection`.
@@ -121,12 +122,12 @@ def send_tenant_statement(
     stays available while automatic messaging is paused. Same rule as
     `notification_services.dispatch_notification`.
     """
-    from .billing_calendar import billing_period
+    from .billing_calendar import tenant_billing_period
     from .notifications import send_email, statement_email_html
     from .pdf_service import render_to_pdf
     from .statement_service import build_statement
 
-    period = period or billing_period(statement_date)
+    period = period or tenant_billing_period(tenant, statement_date)
 
     notification = TenantNotification(
         tenant=tenant,

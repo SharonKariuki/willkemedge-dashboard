@@ -1,9 +1,11 @@
-"""Statements go out on the 25th, for the month that has not started yet.
+"""The COMMERCIAL cycle: invoiced on the 25th, for the month not yet started.
 
-Tenants asked to be billed before the month begins rather than after it is
-already running, so the cycle moved a month ahead of the calendar: on
-25 August 2026 the system raises September's rent and emails September's
-statement. See apps/payments/billing_calendar.py.
+The arcade's VAT invoice has to be in the tenant's hands before the month it
+covers begins, so a commercial letting is billed a month ahead of the calendar:
+on 25 August 2026 the system raises September's rent and emails September's
+statement. Residential lettings are on the other cycle — billed on the 1st for
+the month just begun — and are covered by test_residential_billing_cycle.py.
+See apps/payments/billing_calendar.py.
 
 The three things that have to hold together, and each of which broke the
 feature on its own while it was being built:
@@ -23,9 +25,18 @@ from unittest.mock import patch
 
 import pytest
 
-from apps.buildings.models import Building, Unit, UnitStatus
+from apps.buildings.models import (
+    Building,
+    Unit,
+    UnitClassification,
+    UnitStatus,
+)
 from apps.payments.aging import aging_buckets
-from apps.payments.billing_calendar import billing_period, statement_run_day
+from apps.payments.billing_calendar import (
+    billing_period,
+    statement_run_day,
+    tenant_billing_period,
+)
 from apps.payments.models import (
     Arrears,
     NotificationStatus,
@@ -39,7 +50,7 @@ from apps.payments.statement_service import build_statement
 from apps.payments.tasks import generate_monthly_arrears, send_monthly_statements
 from apps.tenants.models import Tenant, TenantStatus
 
-RUN_DAY = dt.date(2026, 8, 25)   # the day the September run fires
+RUN_DAY = dt.date(2026, 8, 25)   # the day the commercial September run fires
 SEPTEMBER = (2026, 9)
 
 
@@ -56,9 +67,16 @@ def building(db):
 
 
 def _make_tenant(building, *, rent="20000", label="RB101", email="tenant@example.com"):
+    """A COMMERCIAL letting — the cycle this module is about.
+
+    Classification is what puts a tenant on the advance cycle, so every tenant
+    here is BUSINESS. A residential tenant billed on 25 August is still on
+    August, which is the point of the other test module.
+    """
     unit = Unit.objects.create(
         building=building, label=label, monthly_rent=Decimal(rent),
         status=UnitStatus.OCCUPIED_UNPAID,
+        classification=UnitClassification.BUSINESS,
     )
     return Tenant.objects.create(
         first_name="Sarah", last_name="Hamisi", id_number=f"ID-{label}",
@@ -80,6 +98,10 @@ class TestBillingPeriod:
     def test_the_run_day_bills_next_month(self):
         assert billing_period(dt.date(2026, 8, 25)) == (2026, 9)
 
+    def test_a_commercial_tenant_is_on_the_advance_cycle(self, building):
+        tenant = _make_tenant(building)
+        assert tenant_billing_period(tenant, RUN_DAY) == SEPTEMBER
+
     def test_the_day_before_still_bills_this_month(self):
         assert billing_period(dt.date(2026, 8, 24)) == (2026, 8)
 
@@ -100,6 +122,8 @@ class TestBillingPeriod:
 
 
 class TestArrearsRaisedInAdvance:
+    """A commercial letting. The residential half of this is in the other file."""
+
     def test_the_run_day_raises_next_month(self, building):
         tenant = _make_tenant(building)
 
@@ -212,7 +236,7 @@ class TestAdvanceStatementRun:
             with patch("apps.payments.notifications.send_email", return_value=True) as send:
                 counts = send_monthly_statements()
 
-        assert counts["period"] == "2026-09"
+        assert counts["periods"] == {"2026-09": 1}
         assert counts["as_at"] == "2026-08-25"
         assert counts["sent"] == 1
         html = send.call_args.args[2]
@@ -236,8 +260,8 @@ class TestAdvanceStatementRun:
             with patch("apps.payments.tasks.timezone.localdate", return_value=RUN_DAY):
                 september = send_monthly_statements()
 
-        assert august["period"] == "2026-08"
-        assert september["period"] == "2026-09"
+        assert august["periods"] == {"2026-08": 1}
+        assert september["periods"] == {"2026-09": 1}
         assert august["sent"] == 1 and september["sent"] == 1
         assert send.call_count == 2
         assert set(
