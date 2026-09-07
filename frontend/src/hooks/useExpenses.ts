@@ -17,6 +17,9 @@ export interface Expense {
   date: string;
   building: number | null;
   building_name: string | null;
+  /** Unit this cost is pinned to; null means it covers the whole building. */
+  unit: number | null;
+  unit_label: string | null;
   category: number;
   category_name: string;
   amount: string;
@@ -48,15 +51,19 @@ export function useExpenses(
   month?: number,
   year?: number,
   building?: number | "none" | null,
+  /** A unit id, or "none" for costs booked to the building as a whole. */
+  unit?: number | "none" | null,
 ) {
   return useQuery<Expense[]>({
-    queryKey: ["expenses", month, year, building ?? null],
+    queryKey: ["expenses", month, year, building ?? null, unit ?? null],
     queryFn: async () => {
       const params: Record<string, string | number> = {};
       if (month) params.month = month;
       if (year) params.year = year;
       if (building === "none") params.building = "none";
       else if (typeof building === "number") params.building = building;
+      if (unit === "none") params.unit = "none";
+      else if (typeof unit === "number") params.unit = unit;
       const { data } = await api.get("/expenses/", { params });
       return data;
     },
@@ -69,6 +76,7 @@ export function useCreateExpense() {
     mutationFn: async (payload: {
       date: string;
       building: number | null;
+      unit: number | null;
       category: number;
       amount: string;
       description: string;
