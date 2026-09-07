@@ -9,6 +9,8 @@ from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from apps.buildings.unit_order import unit_sort_key
+
 from .models import Tenant, TenantDocument, TenantStatus
 from .serializers import (
     DocumentUploadSerializer,
@@ -126,12 +128,37 @@ class TenantViewSet(viewsets.ModelViewSet):
         self._page_for_balances = page if page is not None else list(queryset)
         return page
 
+    def _walk_order(self, rows):
+        """Order one property's roster the way the block is walked.
+
+        Only applies when the page is filtered to a single building — across
+        the whole portfolio a unit-label order would interleave properties and
+        say nothing useful. Status stays the outer grouping so current tenants
+        still come before moved-out ones; within each group the units run
+        ground floor upwards. See apps.buildings.unit_order.
+        """
+        rows = list(rows)
+        if not self.request.query_params.get("building"):
+            return rows
+        status_rank = {"active": 0, "notice_given": 1, "moved_out": 2}
+        return sorted(
+            rows,
+            key=lambda t: (
+                status_rank.get(t.status, 3),
+                unit_sort_key(t.unit.label, t.unit.building.code),
+            ),
+        )
+
     def list(self, request, *args, **kwargs):
+        rows = self._walk_order(self.filter_queryset(self.get_queryset()))
+        page = self.paginate_queryset(rows)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
         # An unpaginated list never reaches paginate_queryset with a page, so
         # make sure the batch is primed either way.
-        if getattr(self, "_page_for_balances", None) is None and self.paginator is None:
-            self._page_for_balances = list(self.filter_queryset(self.get_queryset()))
-        return super().list(request, *args, **kwargs)
+        self._page_for_balances = rows
+        return Response(self.get_serializer(rows, many=True).data)
 
     def get_serializer_class(self):
         if self.action == "retrieve":
@@ -151,14 +178,14 @@ class TenantViewSet(viewsets.ModelViewSet):
         """GET /api/tenants/export/ — CSV of the (filtered) tenant list.
 
         Honors the same query params as the list endpoint (status, building,
-        unit, kyc_status, search, payment_status), so the export always
-        mirrors what the manager currently sees on screen.
+        unit, kyc_status, search, payment_status) and the same row order, so
+        the export always mirrors what the manager currently sees on screen.
         """
         import csv
 
         from django.http import HttpResponse
 
-        qs = list(self.get_queryset())
+        qs = self._walk_order(self.get_queryset())
         balances = rent_roll_balances(qs)
         response = HttpResponse(content_type="text/csv")
         response["Content-Disposition"] = 'attachment; filename="tenants.csv"'
