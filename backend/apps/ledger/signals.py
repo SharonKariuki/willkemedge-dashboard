@@ -186,3 +186,19 @@ def on_utility_charge_saved(sender, instance, created, **kwargs):
         source_type="utility_charge", source_id=instance.pk, kind="normal", operation="post",
         fn=lambda: post_utility_charge(instance, replace=not created),
     )
+
+
+@receiver(post_delete, sender="payments.UtilityCharge")
+def on_utility_charge_deleted(sender, instance, **kwargs):
+    """Create a reversal entry when a UtilityCharge is deleted.
+
+    The only source row that was missing one. A cancelled charge vanished from
+    the tenant statement but its NORMAL entry stayed in the GL, leaving a
+    receivable and recovered income that no longer had a charge behind them.
+    """
+    from .posting import reverse_utility_charge
+
+    _safe_post(
+        source_type="utility_charge", source_id=instance.pk, kind="reversal", operation="reverse",
+        fn=lambda: reverse_utility_charge(instance),
+    )

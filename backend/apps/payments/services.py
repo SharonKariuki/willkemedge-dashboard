@@ -232,7 +232,16 @@ def _process_payment_atomic(
         reference_code=reference,  # stored exactly as received
     )
 
-    _update_arrears(tenant, period_month, period_year)
+    # Only rent settles a rent obligation, so only rent touches the arrears
+    # subledger. `_update_arrears` CREATES the period's row when none exists and
+    # infers a full month's charge from `tenant.monthly_rent`, so a deposit
+    # landing in a month billing never raised would conjure that month's rent
+    # out of nothing — Ignite Access's 180,000 August deposit raising a 69,600
+    # August rent obligation they were never billed for. A deposit contributes
+    # nothing to `rent_payments_for` either, so for any other type this call was
+    # already a no-op but for that side effect.
+    if payment_type in SETTLES_RENT:
+        _update_arrears(tenant, period_month, period_year)
     return payment
 
 
@@ -246,6 +255,7 @@ def allocate_payment_fifo(
     reference: str = "",
     notes: str = "",
     idempotency_key: str = "",
+    payment_type: str = PaymentType.RENT,
     created_by=None,
 ) -> list[Payment]:
     """
@@ -283,6 +293,16 @@ def allocate_payment_fifo(
     Callers that leave the key blank keep the previous behaviour (no
     de-duplication), so manual back-office entry of a genuine second payment
     with the same reference is still possible.
+
+    Payment type
+    ------------
+    Only rent settles a rent obligation, so only rent is allocated against
+    arrears. Any other type is booked whole to the period it was received in
+    and skips FIFO entirely. Splitting a deposit across rent periods discharges
+    debt the money was never meant to clear and books it to the rental-income
+    accounts — Ignite Access (MCG07) paid a 180,000 security deposit that landed
+    as commercial rent, declaring 24,827.59 of VAT on a refundable liability,
+    and had to be cancelled out by hand with an offsetting 180,000 charge.
     """
     remaining = Decimal(str(amount))
     created: list[Payment] = []
@@ -297,6 +317,20 @@ def allocate_payment_fifo(
         )
         if already:
             return already
+
+    if payment_type != PaymentType.RENT:
+        # `#0` keeps the chunk-prefix scheme intact, so the replay guard above
+        # still recognises this credit if the same key arrives twice.
+        return [
+            process_payment(
+                tenant=tenant, amount=remaining, payment_date=payment_date,
+                period_month=payment_date.month, period_year=payment_date.year,
+                source=source, reference=reference, notes=notes,
+                payment_type=payment_type,
+                idempotency_key=f"{base_key}#0" if base_key else "",
+                created_by=created_by,
+            )
+        ]
 
     # select_for_update locks the outstanding arrears rows for the life of this
     # atomic block, so two credits arriving for the same tenant concurrently are
@@ -337,6 +371,7 @@ def allocate_payment_fifo(
     return created
 
 
+@transaction.atomic
 def _update_arrears(tenant, period_month: int, period_year: int) -> Arrears:
     """
     Create or update the arrears record for this tenant+period,
@@ -367,8 +402,20 @@ def _update_arrears(tenant, period_month: int, period_year: int) -> Arrears:
     # offset the obligation, so they must survive a recompute. Without this, a
     # payment recorded after a waiver would recompute balance from cash alone
     # and silently reverse the waiver.
+    # select_for_update, and inside our own atomic block so the lock is legal
+    # however this is called (the API path is already atomic; the reconciliation
+    # management commands are not).
+    #
+    # Without the lock this whole function is a read-modify-write race: two
+    # payments landing for the same tenant and period both aggregate, both
+    # write, and the later write can carry the EARLIER aggregate — silently
+    # understating `amount_paid` and leaving the tenant billed for money they
+    # had already paid. `unique_arrears_per_period` does not prevent that; it
+    # only stops a duplicate row. The FIFO allocator already locks these rows,
+    # so this closes the manual-entry and void paths, which did not.
     existing = (
-        Arrears.objects.filter(
+        Arrears.objects.select_for_update()
+        .filter(
             tenant=tenant,
             period_month=period_month,
             period_year=period_year,
@@ -547,8 +594,17 @@ def void_payment(payment: Payment, *, actor=None, reason: str = "") -> Payment:
     """
     from apps.accounts import audit
 
-    if payment.voided_at:
+    # Re-read under a row lock. The unlocked check let two concurrent voids of
+    # the same payment both pass, writing two `payment.void` audit rows for one
+    # event. The ledger survived it (the reversal entry is keyed uniquely on
+    # source), but an audit trail that double-counts an action is not a trail.
+    locked = Payment.objects.select_for_update().filter(pk=payment.pk).first()
+    if locked is None:
         return payment
+    if locked.voided_at:
+        payment.refresh_from_db()
+        return payment
+    payment = locked
 
     payment.voided_at = timezone.now()
     payment.voided_by = actor if getattr(actor, "is_authenticated", False) else None
@@ -568,7 +624,10 @@ def void_payment(payment: Payment, *, actor=None, reason: str = "") -> Payment:
         operation="reverse", fn=_post_reversal,
     )
 
-    _update_arrears(payment.tenant, payment.period_month, payment.period_year)
+    # Same guard as the write path: voiding a deposit must not raise the rent
+    # obligation its recording deliberately avoided.
+    if payment.payment_type in SETTLES_RENT:
+        _update_arrears(payment.tenant, payment.period_month, payment.period_year)
 
     audit.record(
         actor=actor,
