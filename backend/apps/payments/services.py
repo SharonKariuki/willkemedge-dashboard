@@ -232,7 +232,16 @@ def _process_payment_atomic(
         reference_code=reference,  # stored exactly as received
     )
 
-    _update_arrears(tenant, period_month, period_year)
+    # Only rent settles a rent obligation, so only rent touches the arrears
+    # subledger. `_update_arrears` CREATES the period's row when none exists and
+    # infers a full month's charge from `tenant.monthly_rent`, so a deposit
+    # landing in a month billing never raised would conjure that month's rent
+    # out of nothing — Ignite Access's 180,000 August deposit raising a 69,600
+    # August rent obligation they were never billed for. A deposit contributes
+    # nothing to `rent_payments_for` either, so for any other type this call was
+    # already a no-op but for that side effect.
+    if payment_type in SETTLES_RENT:
+        _update_arrears(tenant, period_month, period_year)
     return payment
 
 
@@ -607,7 +616,10 @@ def void_payment(payment: Payment, *, actor=None, reason: str = "") -> Payment:
         operation="reverse", fn=_post_reversal,
     )
 
-    _update_arrears(payment.tenant, payment.period_month, payment.period_year)
+    # Same guard as the write path: voiding a deposit must not raise the rent
+    # obligation its recording deliberately avoided.
+    if payment.payment_type in SETTLES_RENT:
+        _update_arrears(payment.tenant, payment.period_month, payment.period_year)
 
     audit.record(
         actor=actor,
