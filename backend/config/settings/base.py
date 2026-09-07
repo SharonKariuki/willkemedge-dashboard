@@ -194,6 +194,20 @@ AT_API_KEY = config("AT_API_KEY", default="")
 AT_USERNAME = config("AT_USERNAME", default="sandbox")
 AT_SENDER_ID = config("AT_SENDER_ID", default="")
 
+# SMS wallet visibility. The director tops the Africa's Talking account up by
+# M-Pesa; the dashboard only READS the balance and shows him where to pay, so
+# these are display/estimate values with no credentials attached.
+#   AT_SMS_UNIT_COST        cost of one SMS page, used to turn a KES balance
+#                           into "roughly N messages left" (KES 0.80/page on
+#                           the Kenyan alphanumeric sender-ID rate).
+#   AT_BALANCE_LOW_THRESHOLD  below this the dashboard shows a top-up warning.
+#   AT_TOPUP_PAYBILL/ACCOUNT  Africa's Talking M-Pesa top-up details. Account
+#                           defaults to the AT username the SMS are billed to.
+AT_SMS_UNIT_COST = config("AT_SMS_UNIT_COST", default="0.80")
+AT_BALANCE_LOW_THRESHOLD = config("AT_BALANCE_LOW_THRESHOLD", default="500")
+AT_TOPUP_PAYBILL = config("AT_TOPUP_PAYBILL", default="525900")
+AT_TOPUP_ACCOUNT = config("AT_TOPUP_ACCOUNT", default="")
+
 # Rent reminders: how many days before a tenant's due day the reminder SMS
 # fires. The daily job sends once per tenant per period as soon as the due
 # date is within this many days.
