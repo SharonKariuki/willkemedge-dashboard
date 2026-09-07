@@ -369,7 +369,7 @@ export default function ExpensesPage() {
         </Card>
       ) : (
         <div className="hidden md:block">
-          <Table>
+          <Table minWidth={900}>
             <THead>
               <TR>
                 <TH>Date</TH><TH>Building</TH><TH>Unit</TH><TH>Category</TH>

@@ -405,7 +405,7 @@ export default function PaymentsPage() {
       ) : (
         <>
           <div className="hidden md:block">
-            <Table>
+            <Table minWidth={980}>
               <THead>
                 <TR>
                   <TH>Tenant</TH>
@@ -421,7 +421,7 @@ export default function PaymentsPage() {
                 {payments.map((p) => (
                   <TR key={p.id}>
                     <TD>
-                      <div className="flex items-center gap-3">
+                      <div className="flex w-max items-center gap-3">
                         <img
                           src={avatarFor(p.tenant_name)}
                           alt=""

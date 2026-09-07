@@ -134,7 +134,7 @@ export default function ReconciliationPage() {
           />
         ) : (
           <div className="overflow-x-auto">
-            <Table>
+            <Table minWidth={900}>
               <THead>
                 <TR>
                   <TH>Amount</TH>

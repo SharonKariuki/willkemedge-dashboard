@@ -103,7 +103,7 @@ export default function BuildingDetailPage() {
         <EmptyState icon={<DoorOpen className="h-5 w-5" />} title="No units" description="This property has no units yet." />
       ) : (
         <Card padding="none">
-          <Table>
+          <Table minWidth={780}>
             <THead>
               <TR>
                 <TH>Unit</TH><TH>Type</TH><TH>Tenant</TH>
