@@ -529,7 +529,12 @@ class TestDropCharge:
 
         assert Arrears.objects.filter(tenant=tenant, period_month=8).exists()
 
-    def test_september_is_no_longer_on_the_drop_list(self):
-        """It was, and it is now a real month: billing raised it on 25 August
-        and the 1 Sept 2026 statement charges 25,000 + 4,000 VAT for it."""
-        assert (2026, 9) not in {(y, m) for _l, _t, y, m, _w in cmd.DROP_CHARGES}
+    def test_mcf01_has_left_this_command(self):
+        """Fortcom's charges and money moved to ``reconcile_fortcom_mcf01``.
+
+        September was dropped here as a mis-split leftover and had since become
+        a real month; October could not be dropped here at all, because the
+        credit sitting on it is re-cut by the other command. One tenancy's money
+        is re-allocated by one command or it gets counted twice."""
+        assert "MCF01" not in {row[0] for row in cmd.DROP_CHARGES}
+        assert "MCF01" not in {row[0] for row in cmd.REALLOCATE}

@@ -27,12 +27,16 @@ Two things are reported every run rather than acted on: which unit Ignite
 Energy actually occupies, and whether MCF04 should be billed at all. Both are
 decisions, not data fixes.
 
+MCF01 has left this command. Fortcom's two bank credits, its charges and its
+deposit agreement are all settled by ``reconcile_fortcom_mcf01`` now — one
+tenancy's money re-allocated by one command. What remains here is the rest of
+Matasia Commercial.
+
 DRY-RUN BY DEFAULT. Nothing is written without --apply. Re-running is safe —
 including the charge drops, which now stand down once the billing cycle reaches
 the period. Without that they went stale: MCF01's September was dropped as the
 mis-split's leftover, then billed for real on 25 August, and a re-run would have
-deleted a month the tenant's statement charges. See ``_drop_charge`` and
-``reconcile_fortcom_mcf01``.
+deleted a month the tenant's statement charges. See ``_drop_charge``.
 
 Usage:
     python manage.py apply_matasia_answers
@@ -109,33 +113,38 @@ DEPOSIT_EXCEPTIONS = {
 #
 # The original receipt and every replacement go through void-and-re-record, so
 # the bank credit, its reversal and the corrected rows all stay in the ledger.
-REALLOCATE = [
-    (
-        "MCF01", 175, "S48023247_10082026_2",
-        [
-            (Decimal("50000.00"), (2026, 8), "deposit"),
-            (Decimal("25000.00"), (2026, 8), "rent"),
-        ],
-        "75,000 was a 50,000 deposit plus 25,000 August rent, not three months' rent",
-    ),
-]
+# Empty on purpose. MCF01's 75,000 was listed here and has MOVED to
+# ``reconcile_fortcom_mcf01``, which now owns that tenancy's whole position.
+#
+# It had to move. A second credit of 32,000 landed on 5 Sept 2026 and FIFO
+# spread it over the three periods the first mis-read had created, so re-cutting
+# the 75,000 alone would have left the later money stranded on charges that were
+# about to be removed. Both credits have to be re-cut together, and money is
+# re-allocated by exactly one command or it gets counted twice.
+REALLOCATE = []
 
 # Charges that exist only because a payment was mis-allocated —
 # (unit, tenant id, year, month, why)
 #
-# These entries have a shelf life, and it is short. A charge raised by the
+# These entries have a shelf life, and it is short. A charge raised by a
 # mis-split is indistinguishable in shape from one the biller raises — same
 # rent, same VAT, nothing paid against it — so the only thing separating them
 # is WHEN. ``_drop_charge`` refuses once the billing cycle has reached the
 # period, which is what keeps a re-run from deleting a real month.
 #
-# September was listed here and has been removed: billing raised it on 25 Aug
-# and the 1 Sept 2026 statement charges it (25,000 + 4,000 VAT), so it is now a
-# real month. See ``reconcile_fortcom_mcf01``, which settles MCF01 against that
-# statement. October is still ahead of the cycle and still the mis-split's.
-DROP_CHARGES = [
-    ("MCF01", 175, 2026, 10, "raised by the mis-split; no billing has run for October"),
-]
+# Empty on purpose. Both MCF01 entries have gone:
+#
+#   September was a real month by the time this was revisited — billing raised
+#   it on 25 Aug and the 1 Sept 2026 statement charges 25,000 + 4,000 VAT.
+#
+#   October moved to ``reconcile_fortcom_mcf01`` with the re-allocation it
+#   depends on. It cannot be dropped until the 5 Sept credit is re-cut off it,
+#   and that credit is re-cut there, so splitting the two across two commands
+#   only guaranteed the drop would be refused here.
+#
+# The machinery and both guards stay. This shape of correction comes round
+# again, and the guards are what stop it going stale next time.
+DROP_CHARGES = []
 
 # Periods to strike out entirely — (unit, tenant id, year, month, why)
 #
