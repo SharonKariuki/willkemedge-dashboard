@@ -354,7 +354,7 @@ export default function DashboardPage() {
               </p>
             </Card>
           ) : (
-            <Table>
+            <Table minWidth={520}>
               <THead>
                 <TR>
                   <TH>Tenant</TH>
@@ -368,7 +368,7 @@ export default function DashboardPage() {
                 {recent_payments.slice(0, 6).map((p) => (
                   <TR key={p.id}>
                     <TD>
-                      <div className="flex items-center gap-3">
+                      <div className="flex w-max items-center gap-3">
                         <img
                           src={avatarFor(p.tenant_name)}
                           alt=""
@@ -516,7 +516,11 @@ function Masthead({ dateLine, greeting, headline, children }: MastheadProps) {
           </p>
         )}
       </div>
-      {children && <div className="flex flex-wrap items-center gap-2.5">{children}</div>}
+      {/* shrink-0 so the greeting gives way first — otherwise the actions are
+          squeezed until each button drops onto its own line. */}
+      {children && (
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2.5">{children}</div>
+      )}
     </header>
   );
 }

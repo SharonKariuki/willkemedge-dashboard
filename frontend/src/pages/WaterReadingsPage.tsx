@@ -217,7 +217,7 @@ export default function WaterReadingsPage() {
           {isLoading ? (
             <div className="space-y-2 p-4">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-10" />)}</div>
           ) : charges?.length ? (
-            <Table>
+            <Table minWidth={680}>
               <THead>
                 <TR><TH>Period</TH><TH className="text-right">Opening</TH><TH className="text-right">Closing</TH><TH className="text-right">Units</TH><TH className="text-right">Amount</TH></TR>
               </THead>

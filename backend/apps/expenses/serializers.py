@@ -28,6 +28,7 @@ class ExpenseCategorySerializer(serializers.ModelSerializer):
 class ExpenseSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source="category.name", read_only=True)
     building_name = serializers.CharField(source="building.name", read_only=True, default=None)
+    unit_label = serializers.CharField(source="unit.label", read_only=True, default=None)
 
     class Meta:
         model = Expense
@@ -36,6 +37,8 @@ class ExpenseSerializer(serializers.ModelSerializer):
             "date",
             "building",
             "building_name",
+            "unit",
+            "unit_label",
             "category",
             "category_name",
             "amount",
@@ -47,7 +50,7 @@ class ExpenseSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "category_name", "building_name", "created_at", "updated_at"]
+        read_only_fields = ["id", "category_name", "building_name", "unit_label", "created_at", "updated_at"]
 
     def validate_period_month(self, value):
         if not 1 <= value <= 12:
@@ -77,6 +80,38 @@ class ExpenseSerializer(serializers.ModelSerializer):
                 f"Run `manage.py seed_coa` to bind it to a Chart of Accounts code."
             )
         return category
+
+    def validate(self, attrs):
+        """Keep unit and building consistent, and default one from the other.
+
+        Partial updates only carry the fields that changed, so fall back to the
+        instance for whichever side of the pair was not sent — otherwise
+        PATCHing just the amount on a unit-scoped expense would read the
+        building as blank and silently unpick the link.
+        """
+        attrs = super().validate(attrs)
+        instance = getattr(self, "instance", None)
+
+        unit = attrs.get("unit", getattr(instance, "unit", None) if instance else None)
+        if "building" in attrs:
+            building = attrs["building"]
+        else:
+            building = getattr(instance, "building", None) if instance else None
+
+        if unit is None:
+            return attrs
+
+        if building is None:
+            # Picking a unit is enough — the building follows from it.
+            attrs["building"] = unit.building
+        elif unit.building_id != building.id:
+            raise serializers.ValidationError({
+                "unit": (
+                    f"Unit '{unit.label}' belongs to {unit.building.name}, "
+                    f"not {building.name}. Pick a unit in the selected building."
+                )
+            })
+        return attrs
 
 
 class ManualIncomeSerializer(serializers.ModelSerializer):

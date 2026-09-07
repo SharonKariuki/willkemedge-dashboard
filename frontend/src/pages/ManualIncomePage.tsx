@@ -156,7 +156,7 @@ export default function ManualIncomePage() {
       ) : !income?.length ? (
         <EmptyState icon={<Sprout className="h-5 w-5" />} title="No income recorded yet" description="Record farm produce sales and other non-tenant income here." />
       ) : (
-        <Table>
+        <Table minWidth={820}>
           <THead>
             <TR><TH>Date</TH><TH>Property</TH><TH>Account</TH><TH>Description</TH><TH className="text-right">Amount</TH><TH /></TR>
           </THead>
@@ -166,7 +166,7 @@ export default function ManualIncomePage() {
                 <TD className="text-ink-500">{i.date}</TD>
                 <TD>{i.building_name}</TD>
                 <TD className="text-ink-500">{i.account_code} · {i.account_name}</TD>
-                <TD>{i.description}</TD>
+                <TD className="max-w-sm whitespace-normal">{i.description}</TD>
                 <TD className="text-right font-medium tabular-nums text-sage-600">{Number(i.amount).toLocaleString()}</TD>
                 <TD className="text-right">
                   <button

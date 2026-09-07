@@ -28,9 +28,14 @@ class ExpensesAPITests(APITestCase):
             name="Plumbing", account=cls.repairs_acct,
         )
         cls.building = Building.objects.create(name="Block A", total_floors=2)
-        Unit.objects.create(
+        cls.unit_a1 = Unit.objects.create(
             building=cls.building, label="A1",
             monthly_rent=Decimal("10000"), status=UnitStatus.VACANT,
+        )
+        cls.other_building = Building.objects.create(name="Block B", total_floors=1)
+        cls.unit_b1 = Unit.objects.create(
+            building=cls.other_building, label="B1",
+            monthly_rent=Decimal("12000"), status=UnitStatus.VACANT,
         )
 
     def setUp(self):
@@ -157,6 +162,112 @@ class ExpensesAPITests(APITestCase):
         delete = self.client.delete(f"/api/expenses/{eid}/")
         assert delete.status_code == status.HTTP_204_NO_CONTENT
         assert not Expense.objects.filter(pk=eid).exists()
+
+    # --- Unit-scoped expenses ------------------------------------------
+
+    def test_create_expense_pinned_to_a_unit(self):
+        resp = self.client.post("/api/expenses/", self._expense_payload(
+            building=self.building.id, unit=self.unit_a1.id,
+        ), format="json")
+        assert resp.status_code == status.HTTP_201_CREATED
+        assert resp.json()["unit_label"] == "A1"
+        exp = Expense.objects.get(pk=resp.json()["id"])
+        assert exp.unit_id == self.unit_a1.id
+        assert exp.building_id == self.building.id
+
+    def test_unit_alone_fills_in_the_building(self):
+        """Picking a unit is enough — the building follows from it."""
+        resp = self.client.post("/api/expenses/", self._expense_payload(
+            unit=self.unit_a1.id,
+        ), format="json")
+        assert resp.status_code == status.HTTP_201_CREATED
+        assert Expense.objects.get(pk=resp.json()["id"]).building_id == self.building.id
+
+    def test_unit_from_a_different_building_is_rejected(self):
+        """Otherwise one cost lands under two buildings across the reports."""
+        resp = self.client.post("/api/expenses/", self._expense_payload(
+            building=self.building.id, unit=self.unit_b1.id,
+        ), format="json")
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert "unit" in resp.json()
+
+    def test_unit_is_optional(self):
+        resp = self.client.post("/api/expenses/", self._expense_payload(
+            building=self.building.id,
+        ), format="json")
+        assert resp.status_code == status.HTTP_201_CREATED
+        assert resp.json()["unit"] is None
+        assert resp.json()["unit_label"] is None
+
+    def test_patching_an_unrelated_field_keeps_the_unit_link(self):
+        """A PATCH carries only what changed; the pair must not be re-read as blank."""
+        created = self.client.post("/api/expenses/", self._expense_payload(
+            building=self.building.id, unit=self.unit_a1.id,
+        ), format="json")
+        eid = created.json()["id"]
+        upd = self.client.patch(f"/api/expenses/{eid}/", {"amount": "99.00"}, format="json")
+        assert upd.status_code == status.HTTP_200_OK
+        exp = Expense.objects.get(pk=eid)
+        assert exp.unit_id == self.unit_a1.id
+        assert exp.building_id == self.building.id
+
+    def test_patching_to_a_foreign_unit_is_rejected(self):
+        created = self.client.post("/api/expenses/", self._expense_payload(
+            building=self.building.id, unit=self.unit_a1.id,
+        ), format="json")
+        eid = created.json()["id"]
+        upd = self.client.patch(f"/api/expenses/{eid}/", {"unit": self.unit_b1.id}, format="json")
+        assert upd.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_model_save_rejects_a_mismatched_unit(self):
+        """The admin and management commands never touch the serializer."""
+        from django.core.exceptions import ValidationError
+
+        with self.assertRaises(ValidationError):
+            Expense.objects.create(
+                date="2026-04-15", category=self.category, amount=Decimal("100"),
+                description="Wrong building", period_month=4, period_year=2026,
+                building=self.building, unit=self.unit_b1,
+            )
+
+    def test_model_save_fills_the_building_in_from_the_unit(self):
+        exp = Expense.objects.create(
+            date="2026-04-15", category=self.category, amount=Decimal("100"),
+            description="Unit only", period_month=4, period_year=2026,
+            unit=self.unit_a1,
+        )
+        exp.refresh_from_db()
+        assert exp.building_id == self.building.id
+
+    def test_filter_expenses_by_unit(self):
+        Expense.objects.create(
+            date="2026-04-15", category=self.category, amount=Decimal("100"),
+            description="A1 tap", period_month=4, period_year=2026,
+            building=self.building, unit=self.unit_a1,
+        )
+        Expense.objects.create(
+            date="2026-04-15", category=self.category, amount=Decimal("100"),
+            description="Block A roof", period_month=4, period_year=2026,
+            building=self.building,
+        )
+        resp = self.client.get("/api/expenses/", {"unit": self.unit_a1.id})
+        assert resp.status_code == 200
+        assert [r["description"] for r in resp.json()] == ["A1 tap"]
+
+    def test_filter_expenses_by_unit_none_is_building_wide_costs(self):
+        Expense.objects.create(
+            date="2026-04-15", category=self.category, amount=Decimal("100"),
+            description="A1 tap", period_month=4, period_year=2026,
+            building=self.building, unit=self.unit_a1,
+        )
+        Expense.objects.create(
+            date="2026-04-15", category=self.category, amount=Decimal("100"),
+            description="Block A roof", period_month=4, period_year=2026,
+            building=self.building,
+        )
+        resp = self.client.get("/api/expenses/", {"building": self.building.id, "unit": "none"})
+        assert resp.status_code == 200
+        assert [r["description"] for r in resp.json()] == ["Block A roof"]
 
     def test_unauthenticated_denied(self):
         anon = APIClient()

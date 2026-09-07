@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { NavLink } from "react-router-dom";
 
 import { useAuth } from "@/hooks/useAuth";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useViewPreferences } from "@/hooks/useViewPreferences";
 import { cn } from "@/lib/cn";
 import { displayName } from "@/lib/displayName";
@@ -11,7 +12,12 @@ import { NAV_ITEMS } from "@/lib/nav";
 const STORAGE_KEY = "willkemedge-sidebar-collapsed";
 
 export default function Sidebar() {
-  const [collapsed, setCollapsed] = useState<boolean>(() => {
+  // Below lg the expanded rail costs 224px of a 768px viewport, which leaves
+  // the tables and filters too little room to lay out. Force the icon rail
+  // there; the saved preference applies from lg up.
+  const roomToExpand = useMediaQuery("(min-width: 1024px)");
+
+  const [preferCollapsed, setPreferCollapsed] = useState<boolean>(() => {
     try {
       return localStorage.getItem(STORAGE_KEY) === "1";
     } catch {
@@ -21,13 +27,14 @@ export default function Sidebar() {
 
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEY, collapsed ? "1" : "0");
+      localStorage.setItem(STORAGE_KEY, preferCollapsed ? "1" : "0");
     } catch {
       // ignore
     }
-  }, [collapsed]);
+  }, [preferCollapsed]);
 
-  const toggle = () => setCollapsed((c) => !c);
+  const collapsed = preferCollapsed || !roomToExpand;
+  const toggle = () => setPreferCollapsed((c) => !c);
 
   const { prefs } = useViewPreferences();
   const visibleItems = useMemo(
@@ -52,12 +59,13 @@ export default function Sidebar() {
       )}
     >
       <div className="sidebar-shell relative flex h-full flex-col px-3 py-4">
-        {/* Collapse toggle — pill straddling the right divider */}
+        {/* Collapse toggle — pill straddling the right divider. Hidden below lg,
+            where the rail is the only layout that leaves room for the page. */}
         <button
           type="button"
           onClick={toggle}
           aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-          className="absolute -right-3 top-1/2 z-10 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full bg-teal-600 text-white shadow-md ring-2 ring-sidebar transition-all hover:scale-110 hover:bg-teal-500"
+          className="absolute -right-3 top-1/2 z-10 hidden h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full bg-teal-600 text-white shadow-md ring-2 ring-sidebar transition-all hover:scale-110 hover:bg-teal-500 lg:flex"
         >
           {collapsed ? (
             <ChevronRight className="h-3.5 w-3.5" />

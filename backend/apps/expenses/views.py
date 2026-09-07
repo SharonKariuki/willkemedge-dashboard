@@ -43,14 +43,17 @@ class ExpenseCategoryViewSet(viewsets.ReadOnlyModelViewSet):
 class ExpenseViewSet(viewsets.ModelViewSet):
     """
     CRUD for expenses.
-    Supports filtering by ?month=&year= and ?category=
+
+    Filters: ?month=&year=, ?category=, ?building= (or ``none`` for
+    portfolio-wide costs) and ?unit= (or ``none`` for costs booked to the
+    building as a whole rather than to one unit).
     """
 
     serializer_class = ExpenseSerializer
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        qs = Expense.objects.select_related("category", "building")
+        qs = Expense.objects.select_related("category", "building", "unit")
 
         month = self.request.query_params.get("month")
         year = self.request.query_params.get("year")
@@ -66,6 +69,13 @@ class ExpenseViewSet(viewsets.ModelViewSet):
             qs = qs.filter(building__isnull=True)
         elif building:
             qs = qs.filter(building_id=building)
+
+        unit = self.request.query_params.get("unit")
+        if unit == "none":
+            # Building-wide costs: everything not pinned to a single unit.
+            qs = qs.filter(unit__isnull=True)
+        elif unit:
+            qs = qs.filter(unit_id=unit)
 
         return qs
 

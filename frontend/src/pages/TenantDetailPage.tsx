@@ -410,7 +410,7 @@ export default function TenantDetailPage() {
           <h2 className="font-semibold text-content">Payment history</h2>
         </div>
         {history?.payments.length ? (
-          <Table>
+          <Table minWidth={720}>
             <THead>
               <TR><TH>Date</TH><TH>Period</TH><TH>Method</TH><TH>Reference</TH><TH className="text-right">Amount</TH></TR>
             </THead>
@@ -443,7 +443,7 @@ export default function TenantDetailPage() {
           </p>
         </div>
         {history?.monthly_ledger?.length ? (
-          <Table>
+          <Table minWidth={940}>
             <THead>
               <TR>
                 <TH>Month</TH>

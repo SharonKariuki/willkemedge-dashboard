@@ -93,7 +93,7 @@ def _make_payment(tenant, amount, payment_type, month=4, year=2026):
     return p
 
 
-def _make_expense(category, amount, building=None, method="bank"):
+def _make_expense(category, amount, building=None, method="bank", unit=None):
     from apps.expenses.models import Expense
     e = Expense(
         date=datetime.date(2026, 4, 15),
@@ -103,10 +103,31 @@ def _make_expense(category, amount, building=None, method="bank"):
         period_month=4,
         period_year=2026,
         building=building,
+        unit=unit,
         payment_method=method,
     )
     e.save()
     return e
+
+
+@pytest.mark.django_db
+def test_unit_scoped_expense_names_the_unit_in_the_ledger(expense_category, residential_unit):
+    """A JournalEntry has no unit column, so the unit rides in the text.
+
+    Without it a GL row for a unit-level repair is indistinguishable from a
+    building-wide one once it leaves the expenses table.
+    """
+    from apps.ledger import posting
+
+    expense = _make_expense(
+        expense_category, "4000", building=residential_unit.building, unit=residential_unit,
+    )
+    entry = posting.post_expense(expense, replace=True)
+
+    tag = f"[Unit {residential_unit.label}]"
+    assert tag in entry.memo
+    debit_line = entry.lines.get(debit__gt=0)
+    assert tag in debit_line.description
 
 
 # ── posting balance tests ────────────────────────────────────────────────────
