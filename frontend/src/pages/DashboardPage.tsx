@@ -39,6 +39,7 @@ import {
   TR,
   Table,
 } from "@/components/ui";
+import SmsBalanceCard from "@/components/SmsBalanceCard";
 import { cn } from "@/lib/cn";
 import { useDashboard } from "@/hooks/useDashboard";
 import { avatarFor, propertyImage } from "@/lib/images";
@@ -332,6 +333,10 @@ export default function DashboardPage() {
               </ul>
             </Card>
           )}
+
+          {/* SMS wallet — sits with the morning alerts because a dry balance
+              silently stops rent reminders and receipts going out. */}
+          <SmsBalanceCard compact className="mt-6" />
         </div>
 
         <div className="lg:col-span-3">

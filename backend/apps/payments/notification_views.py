@@ -1,6 +1,9 @@
 """
 Notification API — list templates, send to one/many tenants, view history.
 """
+from decimal import Decimal, InvalidOperation
+
+from django.conf import settings
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -15,6 +18,7 @@ from .models import (
 )
 from .notification_services import dispatch_notification
 from .notification_templates import TEMPLATES
+from .notifications import fetch_sms_balance
 
 
 class TenantNotificationSerializer(serializers.ModelSerializer):
@@ -106,6 +110,48 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
     def templates(self, request):
         return Response(TEMPLATES)
 
+    @action(detail=False, methods=["get"], url_path="sms-balance")
+    def sms_balance(self, request):
+        """The Africa's Talking SMS wallet, plus how to top it up.
+
+        Read-only by design: the director asked to see when airtime is running
+        out, not to buy it from here. Topping up stays on M-Pesa (no STK push,
+        no stored card), so the worst this endpoint can do is show a number.
+
+        Never 502s on an AT outage — the top-up paybill is the half of the
+        response that matters when the balance lookup is what's broken, so a
+        failed lookup comes back 200 with ``balance: null`` and an ``error``.
+        Pass ``?refresh=1`` to bypass the short server-side cache.
+        """
+        refresh = str(request.query_params.get("refresh", "")).lower() in ("1", "true", "yes")
+        balance = fetch_sms_balance(refresh=refresh)
+
+        threshold = _decimal_setting("AT_BALANCE_LOW_THRESHOLD", "500")
+        amount = balance["balance"]
+
+        return Response(
+            {
+                "configured": balance["configured"],
+                "balance": str(amount) if amount is not None else None,
+                "currency": balance["currency"] or "KES",
+                "sms_remaining": balance["sms_remaining"],
+                "unit_cost": str(balance["unit_cost"]),
+                "low": amount is not None and amount < threshold,
+                "low_threshold": str(threshold),
+                "checked_at": balance["checked_at"],
+                "cached": balance["cached"],
+                "error": balance["error"],
+                "topup": {
+                    "paybill": str(getattr(settings, "AT_TOPUP_PAYBILL", "") or ""),
+                    "account": str(getattr(settings, "AT_TOPUP_ACCOUNT", "") or ""),
+                    "note": (
+                        "M-Pesa → Lipa na M-Pesa → Pay Bill. The credit lands on the "
+                        "Africa's Talking account that sends tenant SMS."
+                    ),
+                },
+            }
+        )
+
     @action(detail=False, methods=["post"], url_path="send")
     def send(self, request):
         serializer = SendNotificationSerializer(data=request.data)
@@ -163,3 +209,15 @@ def _resolve_recipients(audience: str, tenant_ids: list[int]):
         )
         return list(active.filter(id__in=set(owed_ids)))
     return list(active.filter(id__in=tenant_ids))
+
+
+def _decimal_setting(name: str, fallback: str) -> Decimal:
+    """Read a money-ish setting as Decimal, tolerating a typo'd env var.
+
+    These arrive from the environment as strings; a bad value must not 500 the
+    one screen that tells the director his SMS credit is running out.
+    """
+    try:
+        return Decimal(str(getattr(settings, name, fallback) or fallback))
+    except (InvalidOperation, ValueError):
+        return Decimal(fallback)

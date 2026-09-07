@@ -21,6 +21,7 @@ import {
   THead,
   TR,
 } from "@/components/ui";
+import SmsBalanceCard from "@/components/SmsBalanceCard";
 import { useAuth } from "@/hooks/useAuth";
 import { useViewPreferences } from "@/hooks/useViewPreferences";
 import { api } from "@/lib/api";
@@ -298,6 +299,9 @@ export default function SettingsPage() {
           )}
         </Card>
       </div>
+
+      {/* SMS wallet — read-only balance + M-Pesa top-up details */}
+      <SmsBalanceCard />
 
       {/* View preferences */}
       <Card variant="glass" padding="md">
