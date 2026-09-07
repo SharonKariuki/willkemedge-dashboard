@@ -7,7 +7,7 @@
  * Charges" on the statement). Backend: /api/utility-charges/reading/.
  */
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Droplets, Gauge } from "lucide-react";
+import { AlertTriangle, Droplets, Gauge } from "lucide-react";
 import { useEffect, useMemo } from "react";
 import { useForm } from "react-hook-form";
 import toast from "react-hot-toast";
@@ -31,6 +31,11 @@ const schema = z.object({
   period_year: z.coerce.number().min(2020).max(2100),
   closing_reading: z.string().min(1, "Current reading is required"),
   opening_reading: z.string().optional(),
+  // The meter is the record; an opening that disagrees with the closing figure
+  // already on file is a typo unless staff say the hardware was swapped. The
+  // backend rejects the mismatch, so the form makes the claim explicit rather
+  // than letting them discover it as a 400.
+  meter_replaced: z.boolean().optional(),
 });
 type FormData = z.infer<typeof schema>;
 
@@ -40,34 +45,59 @@ export default function WaterReadingsPage() {
 
   const form = useForm<FormData>({
     resolver: zodResolver(schema),
-    defaultValues: { period_month: now.getMonth() + 1, period_year: now.getFullYear() },
+    defaultValues: {
+      period_month: now.getMonth() + 1,
+      period_year: now.getFullYear(),
+      meter_replaced: false,
+    },
   });
 
   const tenantId = Number(form.watch("tenant")) || null;
   const closing = form.watch("closing_reading");
-  const { data: prev } = usePreviousReading(tenantId);
+  const month = Number(form.watch("period_month")) || undefined;
+  const year = Number(form.watch("period_year")) || undefined;
+  const replaced = form.watch("meter_replaced") ?? false;
+  // Asked per period, so backfilling August carries July's closing figure
+  // rather than whatever month happens to be newest on file.
+  const { data: prev } = usePreviousReading(tenantId, month, year);
   const { data: charges, isLoading } = useUtilityCharges(tenantId);
 
-  // Pre-fill the opening reading from the last closing reading on file.
+  // Pre-fill the opening reading from the reading the meter closed on before
+  // this period. A replaced meter starts its own chain, so leave it blank.
   useEffect(() => {
-    if (prev?.previous_reading != null) {
+    if (replaced) {
+      form.setValue("opening_reading", "");
+    } else if (prev?.previous_reading != null) {
       form.setValue("opening_reading", String(prev.previous_reading));
     } else {
       form.setValue("opening_reading", "");
     }
-  }, [prev, form]);
+  }, [prev, replaced, form]);
 
   // Watch the opening field so the preview updates when a unit with no prior
   // reading has its opening typed in manually (not just on closing/prev change).
   const opening = form.watch("opening_reading");
-  const preview = useMemo(() => {
+  const readings = useMemo(() => {
+    // "" is falsy, "0" is not — a meter genuinely starting at zero still previews.
+    if (!closing || !opening) return null;
     const open = Number(opening);
     const close = Number(closing);
+    if (Number.isNaN(open) || Number.isNaN(close)) return null;
+    return { open, close };
+  }, [closing, opening]);
+
+  // A closing below the opening is the one mistake that must never be billed
+  // quietly. The old preview just went blank, which reads as "nothing to show
+  // yet" — so staff submitted anyway and met a 400 with no idea which figure
+  // was wrong.
+  const backwards = !!readings && readings.close < readings.open;
+
+  const preview = useMemo(() => {
+    if (!readings || backwards) return null;
     const rate = Number(prev?.water_rate_per_unit ?? 0);
-    if (!close || Number.isNaN(open) || close < open) return null;
-    const units = close - open;
+    const units = readings.close - readings.open;
     return { units, amount: units * rate, rate };
-  }, [closing, opening, prev]);
+  }, [readings, backwards, prev]);
 
   const onSubmit = (values: FormData) => {
     capture.mutate(
@@ -77,11 +107,13 @@ export default function WaterReadingsPage() {
         period_year: values.period_year,
         closing_reading: values.closing_reading,
         opening_reading: values.opening_reading || undefined,
+        meter_replaced: values.meter_replaced || false,
       },
       {
         onSuccess: () => {
           toast.success("Water charge recorded");
           form.setValue("closing_reading", "");
+          form.setValue("meter_replaced", false);
         },
         onError: (e) => toast.error(getErrorMessage(e, "Could not record the reading")),
       },
@@ -110,13 +142,29 @@ export default function WaterReadingsPage() {
               <p className="mt-1 text-[11px] text-status-unpaid">{form.formState.errors.tenant.message}</p>
             )}
           </label>
-          <label className="block">
-            <span className="mb-1 block text-[11px] font-medium uppercase tracking-[0.14em] text-ink-500">Previous reading</span>
-            <input {...form.register("opening_reading")} className={inputCls} placeholder="—" readOnly={prev?.previous_reading != null} />
-            <span className="mt-1 block text-[11px] text-ink-400">
-              {prev?.previous_reading != null ? "Carried from last month" : "No prior reading — enter the opening"}
-            </span>
-          </label>
+          <div className="block">
+            <label className="block">
+              <span className="mb-1 block text-[11px] font-medium uppercase tracking-[0.14em] text-ink-500">Previous reading</span>
+              <input
+                {...form.register("opening_reading")}
+                className={inputCls}
+                placeholder="—"
+                inputMode="decimal"
+                readOnly={prev?.previous_reading != null && !replaced}
+              />
+              <span className="mt-1 block text-[11px] text-ink-400">
+                {replaced
+                  ? "New meter — enter the dial it starts on"
+                  : prev?.previous_reading != null
+                    ? "Carried from the last reading before this month"
+                    : "No prior reading — enter the opening"}
+              </span>
+            </label>
+            <label className="mt-2 flex items-center gap-2 text-[11px] text-ink-500">
+              <input type="checkbox" {...form.register("meter_replaced")} className="h-3.5 w-3.5 accent-sage-600" />
+              Meter was replaced — the dial restarted
+            </label>
+          </div>
           <label className="block">
             <span className="mb-1 block text-[11px] font-medium uppercase tracking-[0.14em] text-ink-500">Current reading *</span>
             <input {...form.register("closing_reading")} className={inputCls} placeholder="e.g. 1209" inputMode="decimal" />
@@ -139,7 +187,12 @@ export default function WaterReadingsPage() {
             <input type="number" {...form.register("period_year")} className={inputCls} />
           </label>
           <div className="flex items-end sm:col-span-2 lg:col-span-2">
-            {preview ? (
+            {backwards && readings ? (
+              <div className="flex items-start gap-2 rounded-md bg-danger-soft px-3 py-2 text-sm text-danger">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                Current reading {readings.close} is below the previous reading {readings.open} — a meter cannot run backwards.
+              </div>
+            ) : preview ? (
               <div className="flex items-center gap-2 rounded-md bg-info-soft px-3 py-2 text-sm text-teal-700">
                 <Gauge className="h-4 w-4" />
                 {preview.units} units × KES {preview.rate} = <strong>KES {preview.amount.toLocaleString()}</strong>
