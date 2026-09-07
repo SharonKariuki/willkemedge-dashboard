@@ -194,6 +194,14 @@ class MeterReadingSerializer(serializers.Serializer):
         help_text="Optional — defaults to the previous reading on file.",
     )
     label = serializers.CharField(required=False, default="Water Usage")
+    meter_replaced = serializers.BooleanField(
+        required=False, default=False,
+        help_text=(
+            "Confirms the opening reading legitimately breaks from the closing "
+            "reading on file — the meter was swapped and the dial restarted. "
+            "Without it a mismatched opening is rejected as a typo."
+        ),
+    )
 
 
 class UtilityChargeSerializer(serializers.ModelSerializer):

@@ -37,13 +37,24 @@ export function useUtilityCharges(tenant?: number | null) {
   });
 }
 
-/** Pre-fills the form's previous reading + shows the building tariff. */
-export function usePreviousReading(tenant: number | null) {
+/**
+ * Pre-fills the form's previous reading + shows the building tariff.
+ *
+ * Scoped to the period being entered. "The previous reading" only means
+ * something relative to a month: without the period, backfilling a missed
+ * month pre-fills it with a *later* month's closing figure and the form
+ * presents a wrong bill as the safe default.
+ */
+export function usePreviousReading(
+  tenant: number | null,
+  month?: number,
+  year?: number,
+) {
   return useQuery<PreviousReading>({
-    queryKey: ["utility-charges", "previous", tenant],
+    queryKey: ["utility-charges", "previous", tenant, month, year],
     queryFn: async () => {
       const { data } = await api.get("/utility-charges/previous-reading/", {
-        params: { tenant },
+        params: { tenant, month, year },
       });
       return data;
     },

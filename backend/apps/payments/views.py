@@ -580,11 +580,30 @@ class UtilityChargeViewSet(viewsets.ReadOnlyModelViewSet):
 
     @action(detail=False, methods=["get"], url_path="previous-reading")
     def previous_reading(self, request):
-        """Pre-fill the form's 'previous reading' so the meter history stays continuous."""
+        """Pre-fill the form's 'previous reading' so the meter history stays continuous.
+
+        Takes the period being entered, because "the previous reading" is only
+        well defined relative to a month. Answering with the newest reading on
+        file regardless of period pre-fills a backfilled January with March's
+        closing figure — a wrong bill the form presents as the safe default.
+        """
         from .meter_service import previous_reading_for
 
         tenant = get_object_or_404(Tenant, pk=request.query_params.get("tenant"))
-        reading = previous_reading_for(tenant, label=request.query_params.get("label", "Water Usage"))
+        label = request.query_params.get("label") or "Water Usage"
+
+        before_period = None
+        month, year = request.query_params.get("month"), request.query_params.get("year")
+        if month and year:
+            try:
+                before_period = (int(year), int(month))
+            except (TypeError, ValueError):
+                return Response(
+                    {"detail": "month and year must be whole numbers."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        reading = previous_reading_for(tenant, label=label, before_period=before_period)
         return Response({
             "tenant": tenant.pk,
             "previous_reading": reading,
@@ -611,6 +630,7 @@ class UtilityChargeViewSet(viewsets.ReadOnlyModelViewSet):
                 closing_reading=data["closing_reading"],
                 opening_reading=data.get("opening_reading"),
                 label=data.get("label") or "Water Usage",
+                meter_replaced=data.get("meter_replaced", False),
             )
         except DjangoValidationError as exc:
             return Response(
