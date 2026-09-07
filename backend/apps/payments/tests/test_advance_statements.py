@@ -136,7 +136,7 @@ class TestAdvanceStatementContent:
         statement = build_statement(tenant, statement_date=RUN_DAY, period=SEPTEMBER)
 
         assert statement["current_period_label"] == "September-2026"
-        assert statement["statement_date"] == "25 Aug 2026"
+        assert statement["statement_date"] == "25 August 2026"
 
     def test_rent_is_due_in_the_month_being_billed(self, building):
         """September rent is due on the 5th of September, not October. The due

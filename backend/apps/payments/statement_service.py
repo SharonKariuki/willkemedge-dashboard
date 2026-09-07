@@ -81,10 +81,17 @@ def _month_name(month: int, year: int) -> str:
 
 
 def _fmt_date(d) -> str:
-    """'4 May 2026' — no leading zero, platform-independent."""
+    """'4 September 2026' — month in full, no leading zero on the day.
+
+    Written out rather than abbreviated so every month on the statement is
+    spelled the same way: the rent lines and the due date already use the full
+    name, and a page mixing 'September-2026' with '1 Sep 2026' reads as two
+    different conventions. ``%d`` is avoided because it zero-pads, and ``%-d``
+    is not portable to Windows.
+    """
     if not hasattr(d, "strftime"):
         return str(d)
-    return f"{d.day} {d.strftime('%b %Y')}"
+    return f"{d.day} {d.strftime('%B %Y')}"
 
 
 def _fmt_money(value) -> str:
