@@ -313,7 +313,9 @@ export default function TenantsPage() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:flex lg:flex-wrap">
+          {/* Two across until lg: four columns of a tablet-width row leaves each
+              select ~130px, which clips its own label ("All building⋯"). */}
+          <div className="grid grid-cols-2 gap-2 lg:flex lg:flex-wrap">
             <FilterSelect
               label="Filter by building"
               value={String(buildingFilter)}
@@ -379,7 +381,7 @@ export default function TenantsPage() {
           <>
             {/* Desktop table */}
             <div className="hidden md:block">
-              <Table>
+              <Table minWidth={1180}>
                 <THead>
                   <TR>
                     <TH className="w-10">
@@ -435,12 +437,20 @@ export default function TenantsPage() {
                         />
                       </TD>
                       <TD>
-                        <div className="flex items-center gap-3">
-                          <img src={avatarFor(t.full_name)} alt="" aria-hidden className="h-9 w-9 rounded-full" />
-                          <p className="truncate font-medium text-ink-900">{t.full_name}</p>
+                        {/* w-max: a flex box reports a smaller min-content width
+                            than its items need, so the column is sized too
+                            narrow and the name spills into Building. */}
+                        <div className="flex w-max items-center gap-3">
+                          <img src={avatarFor(t.full_name)} alt="" aria-hidden className="h-9 w-9 shrink-0 rounded-full" />
+                          <p className="font-medium text-ink-900">{t.full_name}</p>
                         </div>
                       </TD>
-                      <TD className="text-ink-500">{t.building_name}</TD>
+                      {/* Building names run long ("… Business Arcade - Matasia
+                          Commercial & Residential Properties"); cap the column
+                          and keep the full name in the title. */}
+                      <TD className="max-w-[220px] truncate text-ink-500" title={t.building_name}>
+                        {t.building_name}
+                      </TD>
                       <TD>{t.unit_label}</TD>
                       <TD className="font-mono text-xs">{t.phone}</TD>
                       <TD className="text-right font-medium tabular-nums">{Number(t.monthly_rent).toLocaleString()}</TD>

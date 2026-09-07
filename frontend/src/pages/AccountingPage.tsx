@@ -115,7 +115,7 @@ function PnLView({ data }: { data: Record<string, unknown> }) {
       </div>
       <div>
         <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-ink-500">Income</p>
-        <Table>
+        <Table minWidth={520}>
           <THead><TR><TH className="w-16">Code</TH><TH>Account</TH><TH className="text-right">Amount (KES)</TH></TR></THead>
           <TBody>
             {incomeRows.map((r) => (
@@ -150,7 +150,7 @@ function PnLView({ data }: { data: Record<string, unknown> }) {
 function LedgerView({ data }: { data: Record<string, unknown> }) {
   const entries = (data.entries as { date: string; description: string; debit: number; credit: number; balance: number }[]) ?? [];
   return (
-    <Table>
+    <Table minWidth={720}>
       <THead><TR><TH>Date</TH><TH>Description</TH><TH className="text-right">Debit</TH><TH className="text-right">Credit</TH><TH className="text-right">Balance</TH></TR></THead>
       <TBody>
         {entries.length === 0 ? (
@@ -158,7 +158,7 @@ function LedgerView({ data }: { data: Record<string, unknown> }) {
         ) : entries.map((e, i) => (
           <TR key={i}>
             <TD className="text-ink-500 whitespace-nowrap">{e.date}</TD>
-            <TD>{e.description}</TD>
+            <TD className="max-w-sm whitespace-normal">{e.description}</TD>
             <TD className="text-right tabular-nums">{e.debit > 0 ? `KES ${Number(e.debit).toLocaleString()}` : "—"}</TD>
             <TD className="text-right tabular-nums">{e.credit > 0 ? `KES ${Number(e.credit).toLocaleString()}` : "—"}</TD>
             <TD className={cn("text-right tabular-nums font-semibold", e.balance >= 0 ? "text-sage-700" : "text-status-unpaid")}>
@@ -188,7 +188,7 @@ function CoAView({ data }: { data: Record<string, unknown> }) {
   }
 
   return (
-    <Table>
+    <Table minWidth={640}>
       <THead><TR><TH className="w-20">Code</TH><TH>Account Name</TH><TH>Type</TH><TH className="text-right">Balance (KES)</TH></TR></THead>
       <TBody>
         {accounts.map((a) =>
@@ -227,7 +227,7 @@ function PettyCashView({ data }: { data: Record<string, unknown> }) {
         <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-ink-500">Petty Cash Balance</p>
         <p className="font-display text-2xl font-semibold tabular-nums text-ochre-600">{kes(balance)}</p>
       </div>
-      <Table>
+      <Table minWidth={660}>
         <THead><TR><TH>Date</TH><TH>Description</TH><TH className="text-right">Cash Out (KES)</TH><TH className="text-right">Running Balance</TH></TR></THead>
         <TBody>
           {entries.length === 0 ? (
@@ -235,7 +235,7 @@ function PettyCashView({ data }: { data: Record<string, unknown> }) {
           ) : entries.map((e, i) => (
             <TR key={i}>
               <TD className="whitespace-nowrap text-ink-500">{e.date}</TD>
-              <TD>{e.description}</TD>
+              <TD className="max-w-sm whitespace-normal">{e.description}</TD>
               <TD className="text-right tabular-nums text-status-unpaid">{Number(e.amount).toLocaleString()}</TD>
               <TD className="text-right tabular-nums font-medium">{Number(e.running_balance).toLocaleString()}</TD>
             </TR>
@@ -262,7 +262,7 @@ function BudgetingView({ data }: { data: Record<string, unknown> }) {
           tone={totalVariance >= 0 ? "sage" : "coral"}
         />
       </div>
-      <Table>
+      <Table minWidth={660}>
         <THead><TR><TH>Building</TH><TH className="text-right">Budgeted</TH><TH className="text-right">Actual</TH><TH className="text-right">Variance</TH></TR></THead>
         <TBody>
           {rows.map((r) => (

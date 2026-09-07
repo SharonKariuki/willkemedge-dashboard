@@ -375,7 +375,7 @@ export default function SettingsPage() {
             description="Activity will appear here."
           />
         ) : (
-          <Table>
+          <Table minWidth={640}>
             <THead>
               <TR>
                 <TH>Status</TH>

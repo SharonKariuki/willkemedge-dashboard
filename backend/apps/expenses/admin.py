@@ -21,7 +21,9 @@ class ExpenseCategoryAdmin(admin.ModelAdmin):
 
 @admin.register(Expense)
 class ExpenseAdmin(admin.ModelAdmin):
-    list_display = ["date", "building", "category", "amount", "description", "period_month", "period_year", "reference"]
+    list_display = ["date", "building", "unit", "category", "amount", "description", "period_month", "period_year", "reference"]
     list_filter = ["building", "category", "period_year", "period_month"]
-    search_fields = ["description", "reference"]
+    search_fields = ["description", "reference", "unit__label"]
+    autocomplete_fields = ["unit"]
+    list_select_related = ["building", "unit", "category"]
     ordering = ["-date"]

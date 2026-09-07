@@ -25,7 +25,11 @@ export function PageHeader({ eyebrow, title, description, actions, className }: 
           <p className="mt-2 max-w-2xl text-base text-content-secondary">{description}</p>
         )}
       </div>
-      {actions && <div className="flex flex-wrap items-center gap-2.5">{actions}</div>}
+      {actions && (
+        // shrink-0 so a long title/description gives way first — without it the
+        // actions are squeezed until each button drops onto its own line.
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2.5">{actions}</div>
+      )}
     </div>
   );
 }

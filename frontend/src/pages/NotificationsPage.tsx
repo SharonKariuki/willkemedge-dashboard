@@ -494,7 +494,7 @@ export default function NotificationsPage() {
           />
         ) : (
           <div className="overflow-x-auto">
-            <Table>
+            <Table minWidth={860}>
               <THead>
                 <TR>
                   <TH>Tenant</TH>

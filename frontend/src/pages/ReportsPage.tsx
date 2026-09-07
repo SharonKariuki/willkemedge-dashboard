@@ -138,7 +138,7 @@ function ReportTable({
   if (rows.length === 0)
     return <EmptyState title="No data" description="Nothing to show for the current filters." />;
   return (
-    <Table>
+    <Table minWidth={Math.max(headers.length * 140, 480)}>
       <THead><TR>{headers.map((h) => <TH key={h}>{h}</TH>)}</TR></THead>
       <TBody>
         {rows.map((row, i) => (
@@ -747,7 +747,7 @@ function TrialBalanceTab() {
         <ErrorState title="Trial balance could not be loaded." onRetry={() => void refetch()} />
       )}
       {data && (
-        <Table>
+        <Table minWidth={520}>
           <THead><TR><TH>Account</TH><TH className="text-right">Debit</TH><TH className="text-right">Credit</TH></TR></THead>
           <TBody>
             {data.accounts.map((a: { account: string; debit: number; credit: number }, i: number) => (

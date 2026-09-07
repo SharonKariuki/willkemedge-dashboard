@@ -15,6 +15,7 @@ import {
   useCreateExpense,
   useDeleteExpense, useExpenseCategories, useExpenses,
 } from "@/hooks/useExpenses";
+import { useUnits } from "@/hooks/useUnits";
 import { getErrorMessage } from "@/lib/apiError";
 import { cn } from "@/lib/cn";
 import { AccountingSuite } from "@/pages/AccountingPage";
@@ -22,6 +23,7 @@ import { AccountingSuite } from "@/pages/AccountingPage";
 const expenseSchema = z.object({
   date: z.string().min(1, "Date is required"),
   building: z.string().optional(),
+  unit: z.string().optional(),
   category: z.coerce.number().min(1, "Category is required"),
   amount: z.string()
     .min(1, "Amount is required")
@@ -74,14 +76,23 @@ export default function ExpensesPage() {
   const [filterMonth, setFilterMonth] = useState(now.getMonth() + 1);
   const [filterYear, setFilterYear] = useState(now.getFullYear());
   const [filterBuilding, setFilterBuilding] = useState<"" | "none" | string>("");
+  const [filterUnit, setFilterUnit] = useState<"" | "none" | string>("");
   const [showForm, setShowForm] = useState(false);
 
   const buildingParam: number | "none" | null =
     filterBuilding === "" ? null : filterBuilding === "none" ? "none" : Number(filterBuilding);
+  const unitParam: number | "none" | null =
+    filterUnit === "" ? null : filterUnit === "none" ? "none" : Number(filterUnit);
 
-  const { data: expenses, isLoading, isError, refetch } = useExpenses(filterMonth, filterYear, buildingParam);
+  const { data: expenses, isLoading, isError, refetch } = useExpenses(
+    filterMonth, filterYear, buildingParam, unitParam,
+  );
   const { data: categories } = useExpenseCategories();
   const { data: buildings } = useBuildings();
+  // One fetch of the unit roll, filtered client-side for both the building
+  // filter above and the building picked inside the form — they move
+  // independently, so a per-building refetch would fire on every keystroke.
+  const { data: units } = useUnits();
   const createExpense = useCreateExpense();
   const deleteExpense = useDeleteExpense();
 
@@ -94,13 +105,23 @@ export default function ExpensesPage() {
     },
   });
 
+  const buildingField = form.register("building");
+  const formBuilding = form.watch("building");
+  const formUnits = formBuilding
+    ? units?.filter((u) => u.building === Number(formBuilding)) ?? []
+    : [];
+  const filterUnits = filterBuilding && filterBuilding !== "none"
+    ? units?.filter((u) => u.building === Number(filterBuilding)) ?? []
+    : [];
+
 
   const onSubmitExpense = (values: ExpenseFormData) => {
-    const { building, ...rest } = values;
+    const { building, unit, ...rest } = values;
     createExpense.mutate(
       {
         ...rest,
         building: building && building !== "" ? Number(building) : null,
+        unit: unit && unit !== "" ? Number(unit) : null,
         reference: values.reference ?? "",
         notes: values.notes ?? "",
       },
@@ -179,7 +200,13 @@ export default function ExpensesPage() {
           <div className="flex flex-wrap gap-2">
             <select
               value={filterBuilding}
-              onChange={(e) => setFilterBuilding(e.target.value as "" | "none" | string)}
+              onChange={(e) => {
+                setFilterBuilding(e.target.value as "" | "none" | string);
+                // The unit list is scoped to the building — a stale unit id
+                // from the previous building would return nothing.
+                setFilterUnit("");
+              }}
+              aria-label="Filter by building"
               className="glass rounded-md px-3 py-2 text-sm text-ink-900 focus:outline-none"
             >
               <option value="">All buildings</option>
@@ -188,6 +215,20 @@ export default function ExpensesPage() {
                 <option key={b.id} value={b.id}>{b.name}</option>
               ))}
             </select>
+            {filterBuilding && filterBuilding !== "none" && (
+              <select
+                value={filterUnit}
+                onChange={(e) => setFilterUnit(e.target.value as "" | "none" | string)}
+                aria-label="Filter by unit"
+                className="glass rounded-md px-3 py-2 text-sm text-ink-900 focus:outline-none"
+              >
+                <option value="">All units</option>
+                <option value="none">Building-wide only</option>
+                {filterUnits.map((u) => (
+                  <option key={u.id} value={u.id}>{u.label}</option>
+                ))}
+              </select>
+            )}
             <select
               value={filterMonth}
               onChange={(e) => setFilterMonth(Number(e.target.value))}
@@ -223,10 +264,36 @@ export default function ExpensesPage() {
             />
 
             <Field label="Building">
-              <select {...form.register("building")} className={inputCls}>
+              <select
+                {...buildingField}
+                onChange={(e) => {
+                  void buildingField.onChange(e);
+                  // Units belong to one building — drop the old pick.
+                  form.setValue("unit", "");
+                }}
+                className={inputCls}
+              >
                 <option value="">Portfolio-wide (no building)</option>
                 {buildings?.map((b) => (
                   <option key={b.id} value={b.id}>{b.name}</option>
+                ))}
+              </select>
+            </Field>
+            <Field
+              label="Unit"
+              error={form.formState.errors.unit?.message}
+              hint={
+                formBuilding
+                  ? "Leave blank for a cost that covers the whole building."
+                  : "Pick a building first to charge this to one unit."
+              }
+            >
+              <select {...form.register("unit")} disabled={!formBuilding} className={inputCls}>
+                <option value="">
+                  {formBuilding ? "Whole building (no unit)" : "—"}
+                </option>
+                {formUnits.map((u) => (
+                  <option key={u.id} value={u.id}>{u.label}</option>
                 ))}
               </select>
             </Field>
@@ -302,10 +369,10 @@ export default function ExpensesPage() {
         </Card>
       ) : (
         <div className="hidden md:block">
-          <Table>
+          <Table minWidth={900}>
             <THead>
               <TR>
-                <TH>Date</TH><TH>Building</TH><TH>Category</TH>
+                <TH>Date</TH><TH>Building</TH><TH>Unit</TH><TH>Category</TH>
                 <TH>Description</TH><TH className="text-right">Amount</TH>
                 <TH>Reference</TH><TH></TH>
               </TR>
@@ -316,6 +383,9 @@ export default function ExpensesPage() {
                   <TD className="whitespace-nowrap text-ink-700">{e.date}</TD>
                   <TD className="whitespace-nowrap text-ink-500">
                     {e.building_name ?? <span className="italic">Portfolio</span>}
+                  </TD>
+                  <TD className="whitespace-nowrap text-ink-500">
+                    {e.unit_label ?? <span className="italic">Building-wide</span>}
                   </TD>
                   <TD><Badge tone="peri">{e.category_name}</Badge></TD>
                   <TD className="max-w-xs truncate">{e.description}</TD>

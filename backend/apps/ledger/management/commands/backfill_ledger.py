@@ -75,7 +75,7 @@ class Command(BaseCommand):
             .values_list("source_id", flat=True)
         )
         expenses_qs = (
-            Expense.objects.select_related("category", "category__account", "building")
+            Expense.objects.select_related("category", "category__account", "building", "unit")
             .exclude(pk__in=already_posted_expenses)
             .filter(category__account__isnull=False)
         )
