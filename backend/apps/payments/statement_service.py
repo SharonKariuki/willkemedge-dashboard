@@ -100,6 +100,28 @@ def _fmt_money_whole(value) -> str:
     return f"{amt:,.2f}"
 
 
+#: Deposits are quoted in months of rent, not figures, in every lease and on
+#: the landlord's own statement ("Two Months Rent Deposit"). Beyond six months
+#: the wording stops being how anyone describes it, so the plain label is used.
+_MONTH_WORDS = {1: "One", 2: "Two", 3: "Three", 4: "Four", 5: "Five", 6: "Six"}
+
+
+def _deposit_label(tenant, amount) -> str:
+    """Name a deposit the way the lease does — 'Two Months Rent Deposit'.
+
+    Only when the figure is whole months of the current rent. An odd amount, or
+    a rent that has moved since the deposit was taken, gets the plain label
+    rather than a month count that would not be true.
+    """
+    rent = _money(tenant.monthly_rent)
+    if rent > 0:
+        months = _money(amount) / rent
+        if months == months.to_integral_value() and int(months) in _MONTH_WORDS:
+            count = int(months)
+            return f"{_MONTH_WORDS[count]} Month{'s' if count > 1 else ''} Rent Deposit"
+    return "Rent Security Deposit"
+
+
 def _ordinal(n: int) -> str:
     """5 -> '5th', 1 -> '1st'."""
     if 10 <= n % 100 <= 20:
@@ -170,26 +192,54 @@ def _build_ledger(
             label = f"Waiver - {_month_name(arr.period_month, arr.period_year)}"
             if arr.waive_notes:
                 label = f"{label} ({arr.waive_notes})"
-            events.append((posting, 4, label, ZERO, waived))
+            events.append((posting, 5, label, ZERO, waived))
 
     for util in UtilityCharge.objects.filter(tenant=tenant).order_by("posting_date", "id"):
         if as_of and util.posting_date > as_of:
             continue
         events.append((util.posting_date, 2, util.description(), _money(util.amount), ZERO))
 
-    # Deposits are excluded: a security deposit is a refundable liability, not a
-    # payment against rent. Crediting it here reduced the rent owed *and* showed
-    # the same money again on the "Security Deposit" breakdown line. Voided
-    # payments are excluded because the money was never really received.
+    # Every credit the tenant sent, shown the way they sent it.
+    #
+    # One bank transfer is often stored as several Payment rows: FIFO splits a
+    # credit across the periods it settles, and a move-in transfer is cut into a
+    # deposit and a first month. Those splits are our bookkeeping, not the
+    # tenant's payment, so rows are regrouped by (date, bank reference) before
+    # printing. Fortcom sent 75,000 once and it belongs on the statement once —
+    # as four lines it reads like four payments they did not make.
+    #
+    # Deposits used to be left out of the ledger entirely, on the sound
+    # reasoning that a refundable liability must not reduce the rent owed. But
+    # dropping them from BOTH columns meant a tenant who transferred 75,000 got
+    # a statement acknowledging 25,000, with no sign of the rest. They are now
+    # shown the way the landlord's own statement shows them: the money received
+    # in full, and the deposit invoiced straight back out on the same date. The
+    # pair nets to nothing against rent — the closing balance, the summary box
+    # and the "Security Deposit" breakdown line are all unchanged — while the
+    # tenant can see what they paid.
+    #
+    # Voided payments stay out: that money was never really received.
     payments = (
         Payment.objects.filter(tenant=tenant, voided_at__isnull=True)
-        .exclude(payment_type=PaymentType.DEPOSIT)
         .order_by("payment_date", "created_at")
     )
+    credits: dict[tuple, list[Decimal]] = {}
     for pay in payments:
         if as_of and pay.payment_date > as_of:
             continue
-        events.append((pay.payment_date, 3, "Payment Received", ZERO, _money(pay.amount)))
+        # A blank reference cannot be grouped on — falling back to the row's own
+        # id keeps those payments on separate lines instead of collapsing
+        # unrelated cash into one.
+        key = (pay.payment_date, pay.reference or f"\x00{pay.pk}")
+        slot = credits.setdefault(key, [ZERO, ZERO])
+        slot[0] += _money(pay.amount)
+        if pay.payment_type == PaymentType.DEPOSIT:
+            slot[1] += _money(pay.amount)
+
+    for (posting, _ref), (total, deposit) in credits.items():
+        events.append((posting, 3, "Payment Received", ZERO, total))
+        if deposit > 0:
+            events.append((posting, 4, _deposit_label(tenant, deposit), deposit, ZERO))
 
     events.sort(key=lambda e: (e[0], e[1]))
 
