@@ -1,13 +1,13 @@
 """
 Tests for the Fortcom (MCF01) reconciliation.
 
-The acceptance test is the last one: after the command runs, Fortcom's rent
-balance must be the 33,000 on the 1 Sept 2026 statement — with the 50,000
-deposit sitting outside it, because a deposit is a refundable liability and
-never settles rent.
+The fixture is the production shape as found on 7 Sept 2026: a 75,000 credit
+mis-read as three months' rent, and a later 32,000 credit that FIFO then spread
+over the three periods the first mis-read had created. Both have to be re-cut
+together — that is the whole reason this tenancy has its own command.
 
-Everything above it pins one of the two things this reconciliation actually
-changes: the two-month deposit agreement, and September's charge.
+The acceptance test is the last one: August cleared, September 1,000 short,
+October gone, and the 50,000 deposit sitting outside the rent balance entirely.
 """
 import datetime as _dt
 from decimal import Decimal
@@ -23,11 +23,27 @@ from apps.tenants.models import Tenant, TenantStatus
 
 D = Decimal
 
+REF1 = "S48023247_10082026_2"
+REF2 = "CB0289926_05092026_1"
+
+
+@pytest.fixture(autouse=True)
+def cycle_on_september(monkeypatch):
+    """Pin the billing cycle to September.
+
+    Whether October may be dropped turns on the calendar, so leaving it to the
+    wall clock would make this file start failing on 25 September.
+    """
+    from apps.payments import billing_calendar
+
+    monkeypatch.setattr(billing_calendar, "billing_period", lambda *a, **k: (2026, 9))
+
 
 @pytest.fixture
 def fortcom(db, monkeypatch):
-    """MCF01 as the books hold it after ``apply_matasia_answers``: August
-    billed and part paid, the deposit banked, September not yet raised."""
+    """MCF01 exactly as production held it on 7 Sept 2026."""
+    from apps.payments.services import process_payment
+
     building = Building.objects.create(name="Matasia Arcade", code="MCR", total_floors=2)
     unit = Unit.objects.create(
         building=building, label="MCF01", monthly_rent=D("25000"),
@@ -39,62 +55,64 @@ def fortcom(db, monkeypatch):
         deposit_paid=D("50000"), move_in_date="2026-08-10", status=TenantStatus.ACTIVE,
     )
     monkeypatch.setattr(cmd, "TENANT_ID", tenant.pk)
-    return tenant
 
-
-def _bill_august(tenant):
-    Arrears.objects.create(
-        tenant=tenant, period_year=2026, period_month=8,
-        expected_rent=D("25000"), expected_vat=D("4000"),
-        amount_paid=D(0), balance=D("29000"), is_cleared=False,
-    )
-
-
-def _the_75k(tenant, *, deposit="50000", rent="25000"):
-    """The 10 Aug credit as ``apply_matasia_answers`` leaves it — a deposit and
-    a month's rent, both under the one bank reference."""
-    from apps.payments.services import process_payment
-
-    for amount, kind in ((deposit, PaymentType.DEPOSIT), (rent, PaymentType.RENT)):
-        if D(amount) <= 0:
-            continue
+    # The 75,000, read as three months' rent.
+    for i, month in enumerate((8, 9, 10)):
         process_payment(
-            tenant=tenant, amount=D(amount), payment_date=_dt.date(2026, 8, 10),
-            period_month=8, period_year=2026, source="bank",
-            reference=cmd.BANK_REF, idempotency_key=f"{cmd.BANK_REF}#{kind}",
-            payment_type=kind,
+            tenant=tenant, amount=D("25000"), payment_date=_dt.date(2026, 8, 10),
+            period_month=month, period_year=2026, source="bank",
+            reference=REF1, idempotency_key=f"{REF1}#{i}",
         )
+    # The 32,000, FIFO'd across the periods that mis-read had created.
+    for i, (amount, month) in enumerate(
+        ((D("4000"), 8), (D("4000"), 9), (D("4000"), 10), (D("20000"), 9))
+    ):
+        process_payment(
+            tenant=tenant, amount=amount, payment_date=_dt.date(2026, 9, 5),
+            period_month=month, period_year=2026, source="bank",
+            reference=REF2, idempotency_key=f"{REF2}#{i}",
+        )
+    return tenant
 
 
 def _arr(tenant, month):
     return Arrears.objects.filter(tenant=tenant, period_year=2026, period_month=month).first()
 
 
-class TestTheStatementItself:
-    """The figures are transcribed from a PDF, so they get checked as data
-    before anything is written from them."""
+def _live(tenant, ref=None):
+    qs = Payment.objects.filter(tenant=tenant, voided_at__isnull=True)
+    return qs.filter(reference=ref) if ref else qs
 
-    def test_the_ledger_foots_to_the_total_due(self):
-        balance = sum(
-            (invoice - payment for _d, _desc, invoice, payment in cmd.LEDGER), D(0)
-        )
-        assert balance == cmd.TOTAL_DUE
 
-    def test_the_summary_box_foots_to_the_same_total(self):
+def _shape(tenant, ref):
+    return {
+        (p.amount, p.payment_type, p.period_month) for p in _live(tenant, ref)
+    }
+
+
+class TestThePlan:
+    """The figures come from a PDF and a bank feed, so they are checked as data
+    before any of them is written."""
+
+    def test_every_allocation_totals_the_money_banked(self):
+        for ref, _d, _s, banked, parts, _w in cmd.CREDITS:
+            assert sum((a for a, _k, _p in parts), D(0)) == banked, ref
+
+    def test_the_statement_summary_foots(self):
         assert cmd.SUMMARY_ARREARS + cmd.SUMMARY_CURRENT == cmd.TOTAL_DUE
 
-    def test_the_periods_close_at_the_total_due(self):
-        assert sum((closing for _p, _r, _v, closing in cmd.PERIODS), D(0)) == cmd.TOTAL_DUE
-
-    def test_the_deposit_and_the_cash_that_paid_it_cancel(self):
-        """Why the books' rent-side balance is the statement's total even though
-        the books keep the deposit out of it entirely."""
-        charged = sum((rent + vat for _p, rent, vat, _c in cmd.PERIODS), D(0))
-        rent_received = cmd.BANKED - cmd.DEPOSIT
-        assert charged - rent_received == cmd.TOTAL_DUE
+    def test_what_is_owed_is_the_statement_less_what_came_after_it(self):
+        """Two routes to the same number: charges less rent cash, and the
+        statement's total less the payment that followed it."""
+        assert cmd.outstanding() == cmd.TOTAL_DUE - cmd.paid_since_the_statement()
 
     def test_the_deposit_is_whole_months_of_rent(self):
         assert cmd.DEPOSIT == cmd.RENT * cmd.DEPOSIT_MONTHS
+
+    def test_the_deposit_is_not_counted_as_rent(self):
+        rent = cmd.rent_allocated()
+        banked = sum((b for _r, _d, _s, b, _p, _w in cmd.CREDITS), D(0))
+        assert banked - rent == cmd.DEPOSIT
 
 
 class TestPreflight:
@@ -115,20 +133,90 @@ class TestPreflight:
         with pytest.raises(CommandError, match="not found"):
             call_command("reconcile_fortcom_mcf01", "--apply")
 
-    def test_writes_nothing_when_preflight_fails(self, fortcom, monkeypatch):
-        monkeypatch.setattr(cmd, "TENANT_ID", fortcom.pk + 9999)
+    def test_aborts_when_an_allocation_does_not_add_up(self, fortcom, monkeypatch):
+        """A transcription slip in the parts would quietly invent or lose money."""
+        monkeypatch.setattr(cmd, "CREDITS", [(
+            REF1, _dt.date(2026, 8, 10), "bank", D("75000"),
+            [(D("50000"), "deposit", (2026, 8))], "short by a part",
+        )])
 
-        with pytest.raises(CommandError):
+        with pytest.raises(CommandError, match="does not add up"):
             call_command("reconcile_fortcom_mcf01", "--apply")
 
-        assert _arr(fortcom, 9) is None
+        assert _shape(fortcom, REF1) == {
+            (D("25000.00"), "rent", 8), (D("25000.00"), "rent", 9), (D("25000.00"), "rent", 10),
+        }, "the mis-split was touched despite the abort"
+
+
+class TestRecuttingTheCredits:
+    def test_the_75k_becomes_a_deposit_plus_august_rent(self, fortcom):
+        call_command("reconcile_fortcom_mcf01", "--apply")
+
+        assert _shape(fortcom, REF1) == {
+            (D("50000.00"), "deposit", 8),
+            (D("25000.00"), "rent", 8),
+        }
+
+    def test_the_32k_moves_off_the_periods_the_mis_split_invented(self, fortcom):
+        call_command("reconcile_fortcom_mcf01", "--apply")
+
+        assert _shape(fortcom, REF2) == {
+            (D("4000.00"), "rent", 8),
+            (D("28000.00"), "rent", 9),
+        }
+
+    def test_neither_amount_banked_is_changed(self, fortcom):
+        """A reconciliation redistributes; it must never invent or lose money."""
+        call_command("reconcile_fortcom_mcf01", "--apply")
+
+        for ref, banked in ((REF1, D("75000.00")), (REF2, D("32000.00"))):
+            assert sum((p.amount for p in _live(fortcom, ref)), D(0)) == banked, ref
+
+    def test_the_originals_stay_in_the_ledger_as_voids(self, fortcom):
+        """Payments are immutable. The correction is a void plus a replacement,
+        so the receipt and its reversal both remain."""
+        call_command("reconcile_fortcom_mcf01", "--apply")
+
+        assert Payment.objects.filter(tenant=fortcom, voided_at__isnull=False).count() == 7
+
+    def test_refuses_when_the_reference_holds_a_different_sum(self, fortcom, monkeypatch):
+        monkeypatch.setattr(cmd, "CREDITS", [(
+            REF1, _dt.date(2026, 8, 10), "bank", D("60000"),
+            [(D("60000"), "rent", (2026, 8))], "wrong idea of what was banked",
+        )])
+
+        call_command("reconcile_fortcom_mcf01")
+
+        assert _shape(fortcom, REF1) == {
+            (D("25000.00"), "rent", 8), (D("25000.00"), "rent", 9), (D("25000.00"), "rent", 10),
+        }
+
+    def test_is_idempotent(self, fortcom):
+        call_command("reconcile_fortcom_mcf01", "--apply")
+        after_one = _live(fortcom).count()
+
+        call_command("reconcile_fortcom_mcf01", "--apply")
+
+        assert _live(fortcom).count() == after_one
+
+    def test_names_a_credit_it_does_not_know_about(self, fortcom, capsys):
+        """An unexpected receipt would otherwise show up only as a total that
+        does not tie."""
+        from apps.payments.services import process_payment
+
+        process_payment(
+            tenant=fortcom, amount=D("5000"), payment_date=_dt.date(2026, 9, 6),
+            period_month=9, period_year=2026, source="mpesa",
+            reference="LATE-ARRIVAL", idempotency_key="LATE-ARRIVAL",
+        )
+
+        call_command("reconcile_fortcom_mcf01")
+
+        assert "LATE-ARRIVAL" in capsys.readouterr().out
 
 
 class TestDeposit:
     def test_records_the_two_month_agreement(self, fortcom):
-        _bill_august(fortcom)
-        _the_75k(fortcom)
-
         call_command("reconcile_fortcom_mcf01", "--apply")
 
         fortcom.refresh_from_db()
@@ -139,8 +227,6 @@ class TestDeposit:
         and the statement says it is paid in full."""
         from apps.tenants.deposits import deposit_shortfall
 
-        _bill_august(fortcom)
-        _the_75k(fortcom)
         assert deposit_shortfall(fortcom) == D("25000.00")
 
         call_command("reconcile_fortcom_mcf01", "--apply")
@@ -148,52 +234,15 @@ class TestDeposit:
         fortcom.refresh_from_db()
         assert deposit_shortfall(fortcom) == D("0.00")
 
-    def test_what_was_received_is_not_touched_by_the_agreement(self, fortcom):
-        """``deposit_paid`` records cash. The agreement is a separate fact and
-        must not be written over it."""
-        _bill_august(fortcom)
-        _the_75k(fortcom)
+    def test_reconciles_what_was_received_once_the_credit_is_re_cut(self, fortcom):
+        Tenant.objects.filter(pk=fortcom.pk).update(deposit_paid=D(0))
 
         call_command("reconcile_fortcom_mcf01", "--apply")
 
         fortcom.refresh_from_db()
         assert fortcom.deposit_paid == D("50000.00")
 
-    def test_reconciles_what_was_received_to_the_deposit_banked(self, fortcom):
-        Tenant.objects.filter(pk=fortcom.pk).update(deposit_paid=D(0))
-        fortcom.refresh_from_db()
-        _bill_august(fortcom)
-        _the_75k(fortcom)
-
-        call_command("reconcile_fortcom_mcf01", "--apply")
-
-        fortcom.refresh_from_db()
-        assert fortcom.deposit_paid == D("50000.00")
-
-    def test_leaves_deposit_paid_alone_until_the_credit_is_split(self, fortcom):
-        """Cutting the 75,000 into a deposit and a month's rent belongs to
-        ``apply_matasia_answers``. Recording a deposit here that no payment
-        backs would count the same money twice.
-
-        Un-split, the whole 75,000 settles rent and August clears, so the run
-        also cannot foot — which is the right answer: this reconciliation has a
-        prerequisite and says so rather than reporting a tenancy it has not
-        actually settled."""
-        Tenant.objects.filter(pk=fortcom.pk).update(deposit_paid=D(0))
-        fortcom.refresh_from_db()
-        _bill_august(fortcom)
-        _the_75k(fortcom, deposit="0", rent="75000")
-
-        with pytest.raises(CommandError, match="did not foot"):
-            call_command("reconcile_fortcom_mcf01", "--apply")
-
-        fortcom.refresh_from_db()
-        assert fortcom.deposit_paid == D("0.00")
-
-    def test_is_idempotent(self, fortcom):
-        _bill_august(fortcom)
-        _the_75k(fortcom)
-
+    def test_the_note_is_not_appended_twice(self, fortcom):
         call_command("reconcile_fortcom_mcf01", "--apply")
         fortcom.refresh_from_db()
         notes = fortcom.notes
@@ -201,106 +250,80 @@ class TestDeposit:
         call_command("reconcile_fortcom_mcf01", "--apply")
 
         fortcom.refresh_from_db()
-        assert fortcom.agreed_deposit == D("50000.00")
-        assert fortcom.notes == notes, "the deposit note was appended twice"
+        assert fortcom.notes == notes
 
 
-class TestSeptember:
-    def test_raises_the_charge_the_statement_makes(self, fortcom):
-        _bill_august(fortcom)
-        _the_75k(fortcom)
+class TestOctober:
+    def test_is_dropped_once_the_cash_has_moved_off_it(self, fortcom):
+        assert _arr(fortcom, 10) is not None
 
         call_command("reconcile_fortcom_mcf01", "--apply")
 
-        sep = _arr(fortcom, 9)
-        assert (sep.expected_rent, sep.expected_vat) == (D("25000.00"), D("4000.00"))
-        assert sep.balance == D("29000.00")
+        assert _arr(fortcom, 10) is None
 
-    def test_leaves_a_charge_the_biller_already_raised(self, fortcom):
-        """From 25 August the cron raises September itself, at the same figures.
-        The command must find nothing to do rather than rewrite it."""
-        _bill_august(fortcom)
-        _the_75k(fortcom)
-        Arrears.objects.create(
-            tenant=fortcom, period_year=2026, period_month=9,
-            expected_rent=D("25000"), expected_vat=D("4000"),
-            amount_paid=D(0), balance=D("29000"), is_cleared=False,
-        )
-        raised = _arr(fortcom, 9).pk
+    def test_is_kept_while_cash_still_sits_against_it(self, fortcom, monkeypatch):
+        """Dropping it first would strand the 4,000 on a period with nothing
+        left to settle."""
+        monkeypatch.setattr(cmd, "CREDITS", [])
 
-        call_command("reconcile_fortcom_mcf01", "--apply")
+        call_command("reconcile_fortcom_mcf01")
 
-        assert _arr(fortcom, 9).pk == raised
+        assert _arr(fortcom, 10) is not None
 
-    def test_corrects_a_charge_that_disagrees_with_the_statement(self, fortcom):
-        """A September left at rent with no VAT — the shape the mis-split's
-        re-derivation leaves behind."""
-        _bill_august(fortcom)
-        _the_75k(fortcom)
-        Arrears.objects.create(
-            tenant=fortcom, period_year=2026, period_month=9,
-            expected_rent=D("25000"), expected_vat=D(0),
-            amount_paid=D(0), balance=D("25000"), is_cleared=False,
-        )
+    def test_is_kept_once_the_biller_has_reached_it(self, fortcom, monkeypatch):
+        """From 25 September the cron raises October itself. Dropping it then
+        only gets it re-raised on the next run."""
+        from apps.payments import billing_calendar
 
-        call_command("reconcile_fortcom_mcf01", "--apply")
+        monkeypatch.setattr(billing_calendar, "billing_period", lambda *a, **k: (2026, 10))
 
-        sep = _arr(fortcom, 9)
-        assert (sep.expected_rent, sep.expected_vat) == (D("25000.00"), D("4000.00"))
+        with pytest.raises(CommandError, match="did not foot"):
+            call_command("reconcile_fortcom_mcf01", "--apply")
+
+        assert _arr(fortcom, 10) is not None
 
 
 class TestDryRun:
     def test_writes_nothing(self, fortcom):
-        _bill_august(fortcom)
-        _the_75k(fortcom)
-
         call_command("reconcile_fortcom_mcf01")
 
         fortcom.refresh_from_db()
         assert fortcom.agreed_deposit is None
-        assert _arr(fortcom, 9) is None
+        assert _arr(fortcom, 10) is not None
+        assert _shape(fortcom, REF1) == {
+            (D("25000.00"), "rent", 8), (D("25000.00"), "rent", 9), (D("25000.00"), "rent", 10),
+        }
 
 
 class TestItFoots:
-    def test_reproduces_the_statement(self, fortcom):
-        """The acceptance test. August closes owing its VAT, September closes
-        owing rent and VAT, and the two make the statement's 33,000."""
-        _bill_august(fortcom)
-        _the_75k(fortcom)
-
+    def test_reproduces_the_position(self, fortcom):
+        """The acceptance test. August cleared by 25,000 + 4,000, September
+        holding 28,000 against 29,000, October gone."""
         call_command("reconcile_fortcom_mcf01", "--apply")
 
-        assert _arr(fortcom, 8).balance == cmd.SUMMARY_ARREARS
-        assert _arr(fortcom, 9).balance == cmd.SUMMARY_CURRENT
-        assert _arr(fortcom, 8).balance + _arr(fortcom, 9).balance == cmd.TOTAL_DUE
+        assert _arr(fortcom, 8).amount_paid == D("29000.00")
+        assert _arr(fortcom, 8).balance == D("0.00")
+        assert _arr(fortcom, 9).amount_paid == D("28000.00")
+        assert _arr(fortcom, 9).balance == D("1000.00")
+        assert _arr(fortcom, 10) is None
+
+    def test_the_shortfall_is_the_statement_less_what_they_paid(self, fortcom):
+        call_command("reconcile_fortcom_mcf01", "--apply")
+
+        assert _arr(fortcom, 9).balance == cmd.TOTAL_DUE - cmd.paid_since_the_statement()
 
     def test_the_deposit_never_settles_rent(self, fortcom):
         """50,000 of the 75,000 banked is a liability, not income. If it ever
-        starts paying rent down, August clears and the 4,000 VAT disappears."""
-        _bill_august(fortcom)
-        _the_75k(fortcom)
-
+        starts paying rent down, August over-clears and September vanishes."""
         call_command("reconcile_fortcom_mcf01", "--apply")
 
-        assert _arr(fortcom, 8).amount_paid == D("25000.00")
-        deposits = Payment.objects.filter(
-            tenant=fortcom, payment_type=PaymentType.DEPOSIT, voided_at__isnull=True,
-        )
+        deposits = _live(fortcom).filter(payment_type=PaymentType.DEPOSIT)
         assert sum((p.amount for p in deposits), D(0)) == D("50000.00")
+        assert _arr(fortcom, 8).amount_paid == D("29000.00"), "the deposit settled rent"
 
-    def test_refuses_to_pass_when_the_books_do_not_tie(self, fortcom):
-        """A stray rent payment clears August, so the tenancy no longer owes the
-        statement's 33,000. Better to fail loudly than to report a reconciled
-        tenancy that is not."""
-        _bill_august(fortcom)
-        _the_75k(fortcom)
-        from apps.payments.services import process_payment
-
-        process_payment(
-            tenant=fortcom, amount=D("4000"), payment_date=_dt.date(2026, 8, 30),
-            period_month=8, period_year=2026, source="mpesa",
-            reference="STRAY", idempotency_key="STRAY",
-        )
+    def test_refuses_to_pass_when_the_books_do_not_tie(self, fortcom, monkeypatch):
+        """Better to fail loudly than to report a reconciled tenancy that is not."""
+        monkeypatch.setattr(cmd, "CHARGES", [((2026, 8), D("25000"), D("4000"))])
 
         with pytest.raises(CommandError, match="did not foot"):
             call_command("reconcile_fortcom_mcf01", "--apply")
@@ -308,7 +331,4 @@ class TestItFoots:
     def test_a_dry_run_reports_the_gap_without_raising(self, fortcom):
         """Nothing has been written yet, so there is nothing to fail over — the
         run is describing the position it is about to fix."""
-        _bill_august(fortcom)
-        _the_75k(fortcom)
-
         call_command("reconcile_fortcom_mcf01")
