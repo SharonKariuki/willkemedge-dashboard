@@ -41,10 +41,6 @@ from .monthly_ledger import OPENING_MARKER
 
 ZERO = Decimal("0.00")
 
-#: Ledger label for the line that allocates a receipt to the deposit account.
-#: Matches the wording on the landlord's own statement — no period suffix.
-DEPOSIT_ROW_LABEL = "Rent Security Deposit"
-
 # Project-wide fallbacks used when a Building has no per-building override.
 DEFAULT_ENTITY_NAME = "Wilkem Edge Apartments"
 DEFAULT_POSTAL_ADDRESS = "PO Box 66741 - 00800, Nairobi, Kenya"
@@ -172,9 +168,9 @@ def _build_ledger(
             continue
         events.append((util.posting_date, 2, util.description(), _money(util.amount), ZERO))
 
-    # Deposits are handled separately below — a security deposit is a
-    # refundable liability, not a payment against rent, so crediting it here on
-    # its own would discharge rent the money was never meant to clear. Voided
+    # Deposits are excluded: a security deposit is a refundable liability, not a
+    # payment against rent. Crediting it here reduced the rent owed *and* showed
+    # the same money again on the "Security Deposit" breakdown line. Voided
     # payments are excluded because the money was never really received.
     payments = (
         Payment.objects.filter(tenant=tenant, voided_at__isnull=True)
@@ -185,24 +181,6 @@ def _build_ledger(
         if as_of and pay.payment_date > as_of:
             continue
         events.append((pay.payment_date, 3, "Payment Received", ZERO, _money(pay.amount)))
-
-    # A deposit still belongs on the statement: the tenant paid it and expects
-    # to see it. It shows as the receipt followed by the line allocating it to
-    # the deposit account, so the pair nets to nil against the rent balance —
-    # the landlord's own statement format, and what the back office used to
-    # reproduce by booking the money as rent and raising an offsetting charge by
-    # hand (Ignite Access, MCG07). Sourcing both rows from the deposit payment
-    # keeps the statement reading exactly as it always did while the money posts
-    # to 1030/2100 instead of commercial rental income and VAT.
-    deposits = Payment.objects.filter(
-        tenant=tenant, payment_type=PaymentType.DEPOSIT, voided_at__isnull=True
-    ).order_by("payment_date", "created_at")
-    for dep in deposits:
-        if as_of and dep.payment_date > as_of:
-            continue
-        amount = _money(dep.amount)
-        events.append((dep.payment_date, 3, "Payment Received", ZERO, amount))
-        events.append((dep.payment_date, 5, DEPOSIT_ROW_LABEL, amount, ZERO))
 
     events.sort(key=lambda e: (e[0], e[1]))
 
