@@ -23,9 +23,10 @@ replacement both stay in the ledger.
          corrected before this ran, so the roster was right and the tenancy
          stays. It is the statement that is wrong to show the unit vacant.
 
-Two things are reported every run rather than acted on: which unit Ignite
-Energy actually occupies, and whether MCF04 should be billed at all. Both are
-decisions, not data fixes.
+One thing is reported every run rather than acted on: whether MCF04 should be
+billed at all. That is a decision, not a data fix. Which unit Ignite Energy
+occupies was the other; it was answered on 7 Sept 2026 — MCG07, as the roster
+already had it — and has come off the list.
 
 MCF01 has left this command. Fortcom's two bank credits, its charges and its
 deposit agreement are all settled by ``reconcile_fortcom_mcf01`` now — one
@@ -180,13 +181,12 @@ DISCARD_PERIODS = [
 
 # Reported every run so it is not quietly forgotten.
 UNRESOLVED = [
-    (
-        "MCF07 / MCG07 — Ignite Energy Access Limited",
-        "The answer names MCF07 as newly occupied. The roster has Ignite on MCG07 "
-        "with 3 payments totalling 180,000 and 3 arrears rows. MCF07 exists and is "
-        "vacant. Confirm which unit before moving the tenancy — the unit label is "
-        "the payment reference tenants quote.",
-    ),
+    # ANSWERED 7 Sept 2026 — Ignite Energy Access Limited is on MCG07, so the
+    # roster was right and the first answer naming MCF07 was a slip. Nothing to
+    # move: the tenancy, its 3 payments and its 3 arrears rows are already on
+    # MCG07, and MCF07 stays vacant. Removed from this list rather than left
+    # reported, because a question that keeps printing after it is settled
+    # trains the reader to skim the section it lives in.
     (
         "MCF04 — Wilkem Ventures Co. Ltd., occupied but never billed",
         "Confirmed occupied at 25,000 a month, so the roster is right and the "
@@ -200,8 +200,9 @@ UNRESOLVED = [
 
 class Command(BaseCommand):
     help = (
-        "Apply Dr Osoro's answers on the Matasia Commercial queries: vacate MCF04, "
-        "create MCF20, and correct two payment channels. Dry-run unless --apply."
+        "Apply Dr Osoro's answers on the Matasia Commercial queries: create MCF20, "
+        "restate the deposits, correct two payment channels and strike out the "
+        "pre-August periods. Dry-run unless --apply."
     )
 
     def add_arguments(self, parser):
