@@ -528,6 +528,43 @@ def post_utility_charge(charge, *, replace: bool = False) -> JournalEntry:
     )
 
 
+def reverse_utility_charge(charge) -> JournalEntry:
+    """
+    Reversal (mirror-image) for a deleted UtilityCharge.
+
+    Every other source row had one — Payment, Expense, ManualIncome — but a
+    deleted utility charge left its NORMAL entry standing, so cancelling a
+    charge removed it from the tenant's statement while the GL kept reporting
+    the receivable and the recovered income indefinitely. The original entry is
+    preserved for audit; this adds the offsetting REVERSAL.
+    """
+    amt = charge.amount
+    building = getattr(charge.tenant.unit, "building", None)
+
+    if amt < 0:
+        # The original was a credit note (DR 4150 / CR 1040); undo that.
+        pos = abs(amt)
+        lines = [
+            (RENT_RECEIVABLE, pos, Decimal("0"), f"REVERSAL — credit note: {charge.label} — {charge.tenant}"),
+            (SERVICE_CHARGE_UTILITIES, Decimal("0"), pos, f"REVERSAL — credit note: {charge.label}"),
+        ]
+    else:
+        lines = [
+            (SERVICE_CHARGE_UTILITIES, amt, Decimal("0"), f"REVERSAL — {charge.label} — {charge.tenant}"),
+            (RENT_RECEIVABLE, Decimal("0"), amt, f"REVERSAL — {charge.label} billed"),
+        ]
+
+    return _build_entry(
+        date=charge.posting_date,
+        memo=f"REVERSAL: {charge.label} {charge.tenant} {charge.period_month}/{charge.period_year}",
+        building=building,
+        source_type="utility_charge",
+        source_id=charge.pk,
+        kind="reversal",
+        lines=lines,
+    )
+
+
 def post_petty_cash_topup(payment) -> JournalEntry:
     """
     Post a petty-cash top-up: DR 1010 Petty Cash / CR 1020 Operating Bank.
