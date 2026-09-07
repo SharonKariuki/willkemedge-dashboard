@@ -291,7 +291,10 @@ class UtilityCharge(models.Model):
     def description(self) -> str:
         """Render the description used in the rent statement ledger."""
         try:
-            period_short = _dt.date(self.period_year, self.period_month, 1).strftime("%b. '%y")
+            # Full month and year, matching every other month named on the
+            # statement. "Water usage May. '26" was the only abbreviation left
+            # on the page once the rent lines and dates were spelled out.
+            period_short = _dt.date(self.period_year, self.period_month, 1).strftime("%B %Y")
         except ValueError:
             period_short = f"{self.period_month}/{self.period_year}"
         first = f"{self.label} {period_short}"
