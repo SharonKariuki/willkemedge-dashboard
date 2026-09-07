@@ -64,9 +64,11 @@ export interface SmsBalance {
   topup: { paybill: string; account: string; note: string };
 }
 
+export const SMS_BALANCE_KEY = ["notifications", "sms-balance"];
+
 export function useSmsBalance() {
   return useQuery<SmsBalance>({
-    queryKey: ["notifications", "sms-balance"],
+    queryKey: SMS_BALANCE_KEY,
     queryFn: async () => {
       const { data } = await api.get<SmsBalance>("/notifications/sms-balance/");
       return data;
@@ -75,6 +77,28 @@ export function useSmsBalance() {
     // without a matching client stale time, moving between them would re-ask
     // Africa's Talking for a number that barely moves.
     staleTime: 1000 * 60,
+  });
+}
+
+/**
+ * Force a fresh read of the wallet, past both caches.
+ *
+ * A plain `refetch()` is not enough: it clears React Query's stale window but
+ * still lands on the server's own 60s cache, so someone who has just loaded
+ * airtime taps Refresh and sees the old balance stare back. `?refresh=1` is
+ * the only thing that reaches Africa's Talking, and the result is written
+ * straight into the shared query cache so all three cards update together.
+ */
+export function useRefreshSmsBalance() {
+  const qc = useQueryClient();
+  return useMutation<SmsBalance>({
+    mutationFn: async () => {
+      const { data } = await api.get<SmsBalance>("/notifications/sms-balance/", {
+        params: { refresh: 1 },
+      });
+      return data;
+    },
+    onSuccess: (data) => qc.setQueryData(SMS_BALANCE_KEY, data),
   });
 }
 

@@ -2,7 +2,7 @@ import { AlertTriangle, Check, Copy, MessageSquare, RefreshCw } from "lucide-rea
 import { useState } from "react";
 
 import { Badge, Button, Card, CardHeader, CardTitle, Skeleton } from "@/components/ui";
-import { useSmsBalance, type SmsBalance } from "@/hooks/useNotifications";
+import { useRefreshSmsBalance, useSmsBalance, type SmsBalance } from "@/hooks/useNotifications";
 import { cn } from "@/lib/cn";
 
 /**
@@ -80,8 +80,10 @@ interface Props {
 }
 
 export default function SmsBalanceCard({ compact = false, className }: Props) {
-  const { data, isLoading, isFetching, refetch } = useSmsBalance();
+  const { data, isLoading, isFetching } = useSmsBalance();
+  const refresh = useRefreshSmsBalance();
 
+  const busy = isFetching || refresh.isPending;
   const amount = data?.balance != null ? Number(data.balance) : null;
 
   return (
@@ -93,9 +95,9 @@ export default function SmsBalanceCard({ compact = false, className }: Props) {
         </div>
         <div className="flex items-center gap-2">
           {data?.low && <Badge tone="unpaid" withDot>Running low</Badge>}
-          <Button size="sm" variant="glass" onClick={() => refetch()} disabled={isFetching}>
-            <RefreshCw className={cn("h-3.5 w-3.5", isFetching && "animate-spin")} />
-            {isFetching ? "Checking…" : "Refresh"}
+          <Button size="sm" variant="glass" onClick={() => refresh.mutate()} disabled={busy}>
+            <RefreshCw className={cn("h-3.5 w-3.5", busy && "animate-spin")} />
+            {busy ? "Checking…" : "Refresh"}
           </Button>
         </div>
       </CardHeader>
