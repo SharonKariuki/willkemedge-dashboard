@@ -10,9 +10,12 @@ logged only):
     EMAIL_HOST_USER, EMAIL_HOST_PASSWORD, DEFAULT_FROM_EMAIL
 """
 import logging
+import re
+from decimal import Decimal, InvalidOperation
 
 from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
+from django.utils import timezone
 from django.utils.html import escape
 
 logger = logging.getLogger(__name__)
@@ -156,6 +159,120 @@ def send_sms(phone: str, message: str) -> dict | None:
     except Exception as exc:
         logger.error("SMS failed to %s: %s", to, exc)
         raise
+
+
+# ---------------------------------------------------------------------------
+# SMS credit — Africa's Talking account balance
+# ---------------------------------------------------------------------------
+
+#: How long a fetched balance is reused before we call Africa's Talking again.
+#: The figure only moves when a message is sent or airtime is loaded, and the
+#: dashboard polls it on every Settings visit — without this, a page refresh
+#: loop would hammer AT's account endpoint for a number that barely changes.
+SMS_BALANCE_CACHE_SECONDS = 60
+_SMS_BALANCE_CACHE_KEY = "at:sms_balance"
+
+#: `"KES 1785.5000"` — AT returns the balance as one currency-prefixed string.
+_AT_BALANCE_RE = re.compile(r"^\s*(?P<currency>[A-Za-z]{3})?\s*(?P<amount>-?[\d,]+(?:\.\d+)?)\s*$")
+
+
+def _at_base_url(username: str) -> str:
+    """Africa's Talking API host for the account `username` belongs to.
+
+    The sandbox lives on its own host; every real account shares the live one.
+    """
+    return "https://api.sandbox.africastalking.com" if username == "sandbox" else "https://api.africastalking.com"
+
+
+def _parse_at_balance(raw: str) -> tuple[Decimal | None, str]:
+    """Split AT's `"KES 1785.5000"` into (amount, currency).
+
+    Returns ``(None, "")`` when the string isn't in the documented shape — a
+    balance we cannot parse must read as "unknown", never as zero, or the UI
+    would show an empty wallet and panic the director into buying airtime he
+    already has.
+    """
+    match = _AT_BALANCE_RE.match(str(raw or ""))
+    if not match:
+        return None, ""
+    try:
+        amount = Decimal(match.group("amount").replace(",", ""))
+    except (InvalidOperation, AttributeError):
+        return None, ""
+    return amount, (match.group("currency") or "").upper()
+
+
+def fetch_sms_balance(*, refresh: bool = False) -> dict:
+    """Read the Africa's Talking account balance that pays for tenant SMS.
+
+    This is a read-only view of the SMS wallet so the director can see when it
+    needs topping up. Loading airtime itself happens on M-Pesa (see the paybill
+    in the response); nothing here moves money.
+
+    Never raises: an unreachable AT, a rejected API key or an unconfigured
+    environment all come back as ``balance=None`` with a human-readable
+    ``error``, because the top-up instructions in the same payload are still
+    worth showing when the balance lookup is the thing that's broken.
+
+    Returns a dict with ``configured``, ``balance``, ``currency``,
+    ``sms_remaining`` (an estimate), ``checked_at``, ``error`` and ``cached``.
+    """
+    import httpx
+    from django.core.cache import cache
+
+    if not refresh:
+        cached = cache.get(_SMS_BALANCE_CACHE_KEY)
+        if cached:
+            return {**cached, "cached": True}
+
+    api_key = getattr(settings, "AT_API_KEY", "")
+    username = getattr(settings, "AT_USERNAME", "sandbox")
+    unit_cost = Decimal(str(getattr(settings, "AT_SMS_UNIT_COST", "1.60") or "0"))
+
+    result = {
+        "configured": bool(api_key),
+        "username": username,
+        "balance": None,
+        "currency": "",
+        "raw": "",
+        "unit_cost": unit_cost,
+        "sms_remaining": None,
+        "checked_at": timezone.now(),
+        "error": None,
+        "cached": False,
+    }
+
+    if not api_key:
+        result["error"] = "Africa's Talking is not configured on this server (AT_API_KEY is unset)."
+        return result
+
+    try:
+        resp = httpx.get(
+            f"{_at_base_url(username)}/version1/user",
+            params={"username": username},
+            headers={"apiKey": api_key, "Accept": "application/json"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        raw = str((resp.json().get("UserData") or {}).get("balance", "")).strip()
+    except Exception as exc:  # network error, 4xx/5xx, or a non-JSON body
+        logger.error("Africa's Talking balance lookup failed: %s", exc)
+        result["error"] = "Could not reach Africa's Talking to read the balance. Try again in a moment."
+        return result
+
+    amount, currency = _parse_at_balance(raw)
+    result["raw"] = raw
+    result["balance"] = amount
+    result["currency"] = currency or "KES"
+    if amount is None:
+        result["error"] = f"Africa's Talking returned a balance we could not read: {raw or '(empty)'}"
+        return result
+
+    if unit_cost > 0:
+        result["sms_remaining"] = int(amount / unit_cost)
+
+    cache.set(_SMS_BALANCE_CACHE_KEY, result, SMS_BALANCE_CACHE_SECONDS)
+    return result
 
 
 # ---------------------------------------------------------------------------
