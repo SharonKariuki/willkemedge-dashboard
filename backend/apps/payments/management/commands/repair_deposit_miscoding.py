@@ -61,7 +61,7 @@ Usage (Render Shell):
 """
 from decimal import Decimal
 
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction as db_transaction
 
 ZERO = Decimal("0.00")
@@ -93,8 +93,93 @@ class Command(BaseCommand):
             "--window", type=int, default=DEFAULT_WINDOW_DAYS,
             help=f"Days either side of the charge to match the payment (default {DEFAULT_WINDOW_DAYS}).",
         )
+        parser.add_argument(
+            "--payment", type=int, default=None,
+            help="Reclassify this one payment id as a deposit. For money booked "
+                 "as rent with NO offsetting charge — the scan cannot find those, "
+                 "because nothing in the data distinguishes a rent receipt from a "
+                 "deposit booked as one. It has to be named.",
+        )
 
     def handle(self, *args, **opts):
+        if opts["payment"]:
+            return self._reclassify_one(opts["payment"], apply_changes=opts["apply"])
+        return self._repair_pairs(**opts)
+
+    # -- explicit single-payment reclassification ---------------------------
+
+    def _reclassify_one(self, payment_id: int, *, apply_changes: bool):
+        """Re-book one named rent payment as a security deposit.
+
+        No offsetting charge is involved: the money was simply typed in as rent.
+        That is the shape in production for Ignite Access (MCG07) — a 180,000
+        deposit booked as rent on 25 Aug 2026, quietly consumed by August,
+        September and October rent.
+        """
+        from django.db import transaction as db_transaction
+        from django.db.models import Sum
+
+        from apps.payments.models import Payment, PaymentType
+        from apps.payments.services import process_payment, void_payment
+
+        payment = (
+            Payment.objects.select_related("tenant", "tenant__unit")
+            .filter(pk=payment_id)
+            .first()
+        )
+        if payment is None:
+            raise CommandError(f"No payment with id {payment_id}.")
+        if payment.voided_at:
+            raise CommandError(f"Payment #{payment_id} is already voided.")
+        if payment.payment_type == PaymentType.DEPOSIT:
+            self.stdout.write(self.style.WARNING(
+                f"Payment #{payment_id} is already a deposit — nothing to do."
+            ))
+            return
+
+        tenant = payment.tenant
+        self.stdout.write(self.style.MIGRATE_HEADING("\nReclassify as security deposit"))
+        self.stdout.write(
+            f"  {self._unit(tenant):<10} {str(tenant)[:32]:<34} "
+            f"KES {payment.amount:>12,.2f}  payment #{payment.pk} "
+            f"({payment.payment_date}, currently '{payment.payment_type}')"
+        )
+        self.stdout.write(
+            "  The rent it currently settles will go back to being owed, and the "
+            "money moves to 1030/2100."
+        )
+
+        if not apply_changes:
+            self.stdout.write(self.style.WARNING(
+                "\nDRY RUN — nothing written. Re-run with --apply to commit."
+            ))
+            return
+
+        amount, date = payment.amount, payment.payment_date
+        source, reference, pk = payment.source, payment.reference, payment.pk
+
+        with db_transaction.atomic():
+            void_payment(payment, reason="Security deposit booked as rent — re-booked to 1030/2100")
+            deposit = process_payment(
+                tenant=tenant, amount=amount, payment_date=date,
+                period_month=date.month, period_year=date.year,
+                source=source, payment_type=PaymentType.DEPOSIT, reference=reference,
+                notes=f"Security deposit. Reclassified from rent payment #{pk}.",
+            )
+            held = Payment.objects.filter(
+                tenant=tenant, payment_type=PaymentType.DEPOSIT, voided_at__isnull=True
+            ).aggregate(t=Sum("amount"))["t"] or ZERO
+            tenant.deposit_paid = held
+            tenant.save(update_fields=["deposit_paid", "updated_at"])
+
+        self.stdout.write(self.style.SUCCESS(
+            f"\n  payment #{pk} voided, deposit payment #{deposit.pk} created, "
+            f"deposit_paid = {held:,.2f}"
+        ))
+
+    # -- scan for rent-payment + offsetting-charge pairs --------------------
+
+    def _repair_pairs(self, **opts):
         import datetime as _dt
 
         from django.db.models import Sum
