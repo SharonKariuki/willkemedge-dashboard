@@ -269,3 +269,58 @@ def test_repair_skips_an_ambiguous_pair(ignite):
     assert "ambiguous" in out.getvalue()
     assert UtilityCharge.objects.filter(pk=charge.pk).exists()
     assert not Payment.objects.filter(payment_type=PaymentType.DEPOSIT).exists()
+
+
+# --- F9: reclassifying a bare rent payment (no offsetting charge) -----------
+
+def test_reclassify_one_payment_with_no_offsetting_charge(ignite):
+    """Production's actual shape: money typed in as rent, nothing to pair it with."""
+    payment = process_payment(
+        tenant=ignite, amount=DEPOSIT, payment_date=PAY_DATE,
+        period_month=8, period_year=2026, source=PaymentSource.BANK,
+        reference="FT26236ABCD",
+    )
+    # The scan finds nothing — there is no charge to match on.
+    out = StringIO()
+    call_command("repair_deposit_miscoding", "--unit", "MCG07", "--apply", stdout=out)
+    assert "Nothing to repair" in out.getvalue()
+    payment.refresh_from_db()
+    assert payment.voided_at is None
+
+    call_command("repair_deposit_miscoding", "--payment", str(payment.pk), "--apply",
+                 stdout=StringIO())
+
+    payment.refresh_from_db()
+    assert payment.voided_at is not None
+    deposit = Payment.objects.get(tenant=ignite, payment_type=PaymentType.DEPOSIT)
+    assert deposit.amount == DEPOSIT
+    assert deposit.payment_date == PAY_DATE
+    lines = _lines("payment", deposit.pk, "normal")
+    assert lines["1030"] == (DEPOSIT, D("0.00"))
+    assert lines["2100"] == (D("0.00"), DEPOSIT)
+    ignite.refresh_from_db()
+    assert ignite.deposit_paid == DEPOSIT
+
+
+def test_reclassify_preview_writes_nothing(ignite):
+    payment = process_payment(
+        tenant=ignite, amount=DEPOSIT, payment_date=PAY_DATE,
+        period_month=8, period_year=2026, source=PaymentSource.BANK, reference="FT2",
+    )
+    out = StringIO()
+    call_command("repair_deposit_miscoding", "--payment", str(payment.pk), stdout=out)
+    assert "DRY RUN" in out.getvalue()
+    payment.refresh_from_db()
+    assert payment.voided_at is None
+
+
+def test_reclassify_rejects_an_already_voided_payment(ignite):
+    from apps.payments.services import void_payment
+    payment = process_payment(
+        tenant=ignite, amount=DEPOSIT, payment_date=PAY_DATE,
+        period_month=8, period_year=2026, source=PaymentSource.BANK, reference="FT3",
+    )
+    void_payment(payment, reason="test")
+    with pytest.raises(Exception, match="already voided"):
+        call_command("repair_deposit_miscoding", "--payment", str(payment.pk), "--apply",
+                     stdout=StringIO())
