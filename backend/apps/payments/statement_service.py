@@ -81,17 +81,18 @@ def _month_name(month: int, year: int) -> str:
 
 
 def _fmt_date(d) -> str:
-    """'4 September 2026' — month in full, no leading zero on the day.
+    """'4 Sep 2026' — month abbreviated, no leading zero on the day.
 
-    Written out rather than abbreviated so every month on the statement is
-    spelled the same way: the rent lines and the due date already use the full
-    name, and a page mixing 'September-2026' with '1 Sep 2026' reads as two
-    different conventions. ``%d`` is avoided because it zero-pads, and ``%-d``
-    is not portable to Windows.
+    The landlord's own statement dates every posting this way ('10 Aug 2026'),
+    and the date column is narrow: spelled in full, a long month pushed the
+    column wide enough to crowd the description beside it. The rent-period
+    labels keep their full month ('August-2026') — that is how the landlord
+    writes them too. ``%d`` is avoided because it zero-pads, and ``%-d`` is not
+    portable to Windows.
     """
     if not hasattr(d, "strftime"):
         return str(d)
-    return f"{d.day} {d.strftime('%B %Y')}"
+    return f"{d.day} {d.strftime('%b %Y')}"
 
 
 def _fmt_money(value) -> str:
@@ -105,6 +106,20 @@ def _fmt_money_whole(value) -> str:
     if amt == amt.to_integral_value():
         return f"{int(amt):,}"
     return f"{amt:,.2f}"
+
+
+def _fmt_balance(value) -> str:
+    """'(46,000)' for a credit balance, '29,000' for a debit.
+
+    Accountants' notation, and what the landlord's statement prints: a running
+    balance the tenant is in credit on shows in brackets, not with a minus sign
+    that reads as a typo beside five other unsigned figures. The template pairs
+    it with `balance_negative` to colour the same rows red.
+    """
+    amt = _money(value)
+    if amt < 0:
+        return f"({_fmt_money_whole(-amt)})"
+    return _fmt_money_whole(amt)
 
 
 #: Deposits are quoted in months of rent, not figures, in every lease and on
@@ -262,9 +277,12 @@ def _build_ledger(
             "posting_date": _fmt_date(posting),
             "description": desc,
             "description_lines": desc.split("\n"),
-            "invoice_amount": _fmt_money(invoice) if invoice else "",
-            "payment": _fmt_money(payment) if payment else "",
-            "balance": _fmt_money_whole(balance),
+            # Whole shillings across the ledger columns. The landlord's sheet
+            # carries no cents in the body — every charge is a round figure —
+            # and ".00" six times a row only competes with the balance.
+            "invoice_amount": _fmt_money_whole(invoice) if invoice else "",
+            "payment": _fmt_money_whole(payment) if payment else "",
+            "balance": _fmt_balance(balance),
             "balance_negative": balance < 0,
         })
     return rows, balance, brought_forward

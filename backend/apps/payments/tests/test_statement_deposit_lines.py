@@ -87,7 +87,7 @@ class TestTheDepositIsVisible:
 
         _st, rows = _ledger(tenant)
 
-        assert ("10 August 2026", "Payment Received", "", "75,000.00", "-46,000") in rows
+        assert ("10 Aug 2026", "Payment Received", "", "75,000", "(46,000)") in rows
 
     def test_the_deposit_is_invoiced_straight_back_out(self, let):
         tenant = let("MCD01")
@@ -97,7 +97,7 @@ class TestTheDepositIsVisible:
 
         _st, rows = _ledger(tenant)
 
-        assert ("10 August 2026", "Two Months Rent Deposit", "50,000.00", "", "4,000") in rows
+        assert ("10 Aug 2026", "Two Months Rent Deposit", "50,000", "", "4,000") in rows
 
     def test_the_pair_nets_to_nothing_against_rent(self, let):
         """The whole safety property: showing the deposit must not pay rent down.
@@ -165,6 +165,25 @@ class TestTheDepositLabel:
         assert [r[1] for r in rows if "Deposit" in r[1]] == ["Rent Security Deposit"]
 
 
+class TestCreditBalancesAreBracketed:
+    def test_a_credit_balance_prints_in_brackets(self, let):
+        """The landlord's sheet shows (75,000), not -75,000.
+
+        The running balance dips into credit for as long as it takes the deposit
+        invoice to follow the receipt that paid it, and a minus sign there reads
+        as a typo beside five unsigned figures.
+        """
+        tenant = let("MCD01")
+        _charge(tenant, 8)
+        _pay(tenant, "50000", kind="deposit")
+        _pay(tenant, "25000")
+
+        _st, rows = _ledger(tenant)
+
+        balances = [r[4] for r in rows]
+        assert balances == ["25,000", "29,000", "(46,000)", "4,000"]
+
+
 class TestOneTransferIsOneLine:
     def test_a_credit_split_across_periods_prints_once(self, let):
         """FIFO cuts one bank credit into a row per period it settles. The
@@ -178,7 +197,7 @@ class TestOneTransferIsOneLine:
         _st, rows = _ledger(tenant)
 
         received = [r for r in rows if r[1] == "Payment Received"]
-        assert [r[3] for r in received] == ["32,000.00"]
+        assert [r[3] for r in received] == ["32,000"]
 
     def test_separate_transfers_stay_separate(self, let):
         tenant = let("MCD01")
@@ -221,12 +240,12 @@ class TestTheFortcomStatement:
         st, rows = _ledger(tenant)
 
         assert [(r[1], r[2], r[3]) for r in rows] == [
-            ("Month Rent - August-2026", "25,000.00", ""),
-            ("16% VAT on Rent", "4,000.00", ""),
-            ("Payment Received", "", "75,000.00"),
-            ("Two Months Rent Deposit", "50,000.00", ""),
-            ("Month Rent - September-2026", "25,000.00", ""),
-            ("16% VAT on Rent", "4,000.00", ""),
+            ("Month Rent - August-2026", "25,000", ""),
+            ("16% VAT on Rent", "4,000", ""),
+            ("Payment Received", "", "75,000"),
+            ("Two Months Rent Deposit", "50,000", ""),
+            ("Month Rent - September-2026", "25,000", ""),
+            ("16% VAT on Rent", "4,000", ""),
         ]
         assert st["total_due_whole"] == "33,000"
         assert st["arrears_others"] == "4,000.00"
