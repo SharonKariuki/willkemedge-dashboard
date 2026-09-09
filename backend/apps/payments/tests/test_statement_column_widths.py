@@ -25,11 +25,12 @@ BODY_FONT, BODY_SIZE = "Times-Roman", 10      # .ledger td
 HEAD_FONT, HEAD_SIZE = "Times-Bold", 10       # .ledger th
 PADDING = 10                                  # td padding: 4px 5px, both sides
 
-# The longest thing each column ever has to print. September is the longest
-# month name; the water line is the longest description the ledger builds.
+# The longest thing each column ever has to print. The water line is the longest
+# description the ledger builds; a credit balance carries brackets, which are
+# part of the string the Balance column has to fit.
 WORST_CASE = {
     "#": ["18"],
-    "Posting Date": ["30 September 2026"],
+    "Posting Date": ["30 Sep 2026"],
     "Description": [
         "Water usage September 2026 (12 Units @ KES 200)",
         "Balance brought forward - September-2026",
@@ -37,7 +38,7 @@ WORST_CASE = {
     ],
     "Invoice Amount": ["1,234,567.89"],
     "Payments": ["1,234,567.89"],
-    "Balance": ["1,234,567.89"],
+    "Balance": ["(1,234,567.89)"],
 }
 
 
