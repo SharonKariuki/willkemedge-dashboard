@@ -79,12 +79,48 @@ class Command(BaseCommand):
             help="Write the repairs. Without this the command only previews them.",
         )
 
-    def _periods_to_drop(self, tenant, *, ignore_pk, report: bool):
+    def _deposit_group(self, tenant):
+        """The rent payments that together make up the deposit, or None.
+
+        The 180,000 is not one row. It arrived as one credit and was allocated
+        across periods, leaving three 60,000 rent payments — August, September
+        and October — sharing a payment date and reference. The statement hides
+        this: ``_build_ledger`` groups credits on exactly that key, so three
+        rows render as the single "Payment Received 180,000" line, and the first
+        cut of this command looked for a payment of 180,000 that never existed.
+
+        Grouping on (date, reference) is the same key the statement uses, so
+        what is matched here is precisely what a reader sees as one receipt.
+        """
+        from collections import defaultdict
+
+        from apps.payments.models import Payment, PaymentType
+
+        groups = defaultdict(list)
+        for pay in Payment.objects.filter(
+            tenant=tenant, payment_type=PaymentType.RENT, voided_at__isnull=True
+        ).order_by("payment_date", "id"):
+            # A blank reference cannot be grouped on — key on the row itself so
+            # unrelated cash is never welded into one receipt.
+            groups[(pay.payment_date, pay.reference or f"\x00{pay.pk}")].append(pay)
+
+        matches = [
+            rows for rows in groups.values()
+            if sum((p.amount for p in rows), ZERO) == DEPOSIT_AMOUNT
+        ]
+        if len(matches) > 1:
+            raise CommandError(
+                f"Ambiguous — {len(matches)} separate receipts of "
+                f"{DEPOSIT_AMOUNT:,.2f}. Resolve by hand."
+            )
+        return matches[0] if matches else None
+
+    def _periods_to_drop(self, tenant, *, ignore_pks, report: bool):
         """Arrears rows from DROP_PERIODS that carry no cash of their own.
 
-        ``ignore_pk`` discounts the payment queued for reclassification — it is
-        the 180,000 deposit sitting on August, and counting it would make the
-        command refuse to remove the very row it exists to remove.
+        ``ignore_pks`` discounts the payments queued for reclassification — the
+        deposit chunks sitting on August and October. Counting them would make
+        the command refuse to remove the very rows it exists to remove.
         """
         from django.db.models import Sum
 
@@ -102,8 +138,8 @@ class Command(BaseCommand):
                 continue
 
             paid = rent_payments_for(tenant, month, year)
-            if ignore_pk is not None:
-                paid = paid.exclude(pk=ignore_pk)
+            if ignore_pks:
+                paid = paid.exclude(pk__in=ignore_pks)
             paid = paid.aggregate(t=Sum("amount"))["t"] or ZERO
 
             # Cash against a period means somebody meant to pay it. Removing it
@@ -153,24 +189,10 @@ class Command(BaseCommand):
         )
 
         # --- 1. the deposit booked as rent ---------------------------------
-        candidates = list(
-            Payment.objects.filter(
-                tenant=tenant,
-                amount=DEPOSIT_AMOUNT,
-                payment_type=PaymentType.RENT,
-                voided_at__isnull=True,
-            ).order_by("payment_date", "id")
-        )
-        if len(candidates) > 1:
-            ids = ", ".join(str(p.pk) for p in candidates)
-            raise CommandError(
-                f"Ambiguous — {len(candidates)} unvoided rent payments of "
-                f"{DEPOSIT_AMOUNT:,.2f} ({ids}). Resolve by hand."
-            )
-        deposit_payment = candidates[0] if candidates else None
+        group = self._deposit_group(tenant)
 
         self.stdout.write(self.style.MIGRATE_HEADING("\n1. Security deposit booked as rent"))
-        if deposit_payment is None:
+        if group is None:
             already = Payment.objects.filter(
                 tenant=tenant, payment_type=PaymentType.DEPOSIT, voided_at__isnull=True
             ).aggregate(t=Sum("amount"))["t"] or ZERO
@@ -178,23 +200,28 @@ class Command(BaseCommand):
                 self.stdout.write(f"  already re-booked — {already:,.2f} held as deposit")
             else:
                 self.stdout.write(self.style.WARNING(
-                    f"  no unvoided rent payment of {DEPOSIT_AMOUNT:,.2f} found"
+                    f"  no unvoided rent receipt totalling {DEPOSIT_AMOUNT:,.2f} found"
                 ))
         else:
             self.stdout.write(
-                f"  payment #{deposit_payment.pk}  {deposit_payment.payment_date}  "
-                f"KES {deposit_payment.amount:,.2f}  -> DEPOSIT (DR 1030 / CR 2100)"
+                f"  one receipt of {DEPOSIT_AMOUNT:,.2f} on {group[0].payment_date} "
+                f"across {len(group)} payment row(s) -> DEPOSIT (DR 1030 / CR 2100)"
             )
+            for pay in group:
+                self.stdout.write(
+                    f"    #{pay.pk:<7} {pay.period_month:>2}/{pay.period_year}  "
+                    f"KES {pay.amount:>12,.2f}"
+                )
 
         # --- 2 & 3. periods that should not be billed ----------------------
-        # The deposit is itself the cash sitting on August, so the periods can
-        # only be judged once it is out of the way. In preview nothing has moved
-        # yet, so its contribution is discounted explicitly; under --apply the
-        # rows are re-read after the reclassification instead.
-        ignore_pk = deposit_payment.pk if deposit_payment else None
+        # The deposit chunks ARE the cash sitting on August and October, so the
+        # periods can only be judged once they are out of the way. In preview
+        # nothing has moved yet, so they are discounted explicitly; under
+        # --apply the rows are re-read after the reclassification instead.
+        ignore_pks = {p.pk for p in group} if group else set()
 
         self.stdout.write(self.style.MIGRATE_HEADING("\n2. Periods billed in error"))
-        self._periods_to_drop(tenant, ignore_pk=ignore_pk, report=True)
+        self._periods_to_drop(tenant, ignore_pks=ignore_pks, report=True)
 
         if not apply_changes:
             self.stdout.write(self.style.WARNING(
@@ -204,26 +231,28 @@ class Command(BaseCommand):
 
         # --- write ----------------------------------------------------------
         with db_transaction.atomic():
-            if deposit_payment is not None:
-                amount = deposit_payment.amount
-                date = deposit_payment.payment_date
-                source, reference, pk = (
-                    deposit_payment.source, deposit_payment.reference, deposit_payment.pk,
-                )
-                void_payment(
-                    deposit_payment,
-                    reason="Security deposit booked as rent — re-booked to 1030/2100",
-                )
+            if group is not None:
+                date = group[0].payment_date
+                source, reference = group[0].source, group[0].reference
+                pks = ", ".join(f"#{p.pk}" for p in group)
+                for pay in group:
+                    void_payment(
+                        pay,
+                        reason="Security deposit booked as rent — re-booked to 1030/2100",
+                    )
+                # One receipt in, one deposit out: the split across periods was
+                # the allocator's doing, not the tenant's, and a deposit settles
+                # no period at all.
                 process_payment(
-                    tenant=tenant, amount=amount, payment_date=date,
+                    tenant=tenant, amount=DEPOSIT_AMOUNT, payment_date=date,
                     period_month=date.month, period_year=date.year,
                     source=source, payment_type=PaymentType.DEPOSIT, reference=reference,
-                    notes=f"Security deposit. Reclassified from rent payment #{pk}.",
+                    notes=f"Security deposit. Reclassified from rent payments {pks}.",
                 )
 
-            # Re-read now the deposit is off the rent ledger: August's
-            # `amount_paid` was that 180,000 and is nil again.
-            for row in self._periods_to_drop(tenant, ignore_pk=None, report=False):
+            # Re-read now the deposit is off the rent ledger: the cash that sat
+            # on August and October went with it.
+            for row in self._periods_to_drop(tenant, ignore_pks=set(), report=False):
                 row.delete()
 
             held = Payment.objects.filter(

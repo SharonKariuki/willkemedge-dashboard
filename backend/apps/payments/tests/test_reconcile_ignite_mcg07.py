@@ -58,12 +58,19 @@ def mcg07(db):
             expected_rent=D("60000"), expected_vat=D("9600"),
             amount_paid=D("0"), balance=D("69600"), is_cleared=False,
         )
-    payment = process_payment(
-        tenant=tenant, amount=DEPOSIT, payment_date=PAY_DATE,
-        period_month=8, period_year=2026, source=PaymentSource.BANK,
-        reference="FT26236ABCD",
-    )
-    return tenant, payment
+    # Production's actual shape: ONE 180,000 receipt allocated across the three
+    # periods, so it is three 60,000 rent rows sharing a date and reference —
+    # not a single 180,000 payment. The statement collapses them back into one
+    # "Payment Received 180,000" line, which is what hid this.
+    payments = [
+        process_payment(
+            tenant=tenant, amount=D("60000"), payment_date=PAY_DATE,
+            period_month=month, period_year=2026, source=PaymentSource.BANK,
+            reference="FT26236ABCD",
+        )
+        for month in (8, 9, 10)
+    ]
+    return tenant, payments
 
 
 def test_before_the_repair_the_account_reads_28800(mcg07):
@@ -74,19 +81,20 @@ def test_before_the_repair_the_account_reads_28800(mcg07):
 
 
 def test_preview_writes_nothing(mcg07):
-    tenant, payment = mcg07
+    tenant, payments = mcg07
     out = StringIO()
 
     call_command("reconcile_ignite_mcg07", stdout=out)
 
     assert "DRY RUN" in out.getvalue()
-    payment.refresh_from_db()
-    assert payment.voided_at is None
+    for pay in payments:
+        pay.refresh_from_db()
+        assert pay.voided_at is None
     assert Arrears.objects.filter(tenant=tenant).count() == 3
 
 
 def test_repair_produces_the_issued_statement(mcg07):
-    tenant, payment = mcg07
+    tenant, _ = mcg07
 
     call_command("reconcile_ignite_mcg07", "--apply", stdout=StringIO())
 
@@ -110,15 +118,16 @@ def test_august_and_october_are_removed_september_kept(mcg07):
 
 
 def test_deposit_moves_off_rental_income_and_vat(mcg07):
-    tenant, payment = mcg07
-    payment_pk = payment.pk
+    tenant, payments = mcg07
+    payment_pks = [p.pk for p in payments]
 
     call_command("reconcile_ignite_mcg07", "--apply", stdout=StringIO())
 
-    # The wrong entry is reversed — 155,172.41 income and 24,827.59 VAT undone.
-    reversal = _lines("payment", payment_pk, "reversal")
-    assert reversal["4120"][0] == D("155172.41")
-    assert reversal["2600"][0] == D("24827.59")
+    # Every chunk of the receipt is reversed off rental income and VAT.
+    for pk in payment_pks:
+        reversal = _lines("payment", pk, "reversal")
+        assert reversal["4120"][0] == D("51724.14")
+        assert reversal["2600"][0] == D("8275.86")
 
     deposit = Payment.objects.get(tenant=tenant, payment_type=PaymentType.DEPOSIT)
     lines = _lines("payment", deposit.pk, "normal")
@@ -163,3 +172,33 @@ def test_rerun_is_idempotent(mcg07):
     assert Payment.objects.filter(
         tenant=tenant, payment_type=PaymentType.DEPOSIT, voided_at__isnull=True
     ).count() == 1
+
+
+def test_three_rows_become_one_deposit(mcg07):
+    """The split was the allocator's doing — one receipt in, one deposit out."""
+    tenant, payments = mcg07
+
+    call_command("reconcile_ignite_mcg07", "--apply", stdout=StringIO())
+
+    live = Payment.objects.filter(tenant=tenant, voided_at__isnull=True)
+    assert live.count() == 1
+    assert live.first().payment_type == PaymentType.DEPOSIT
+    assert live.first().amount == DEPOSIT
+    assert all(p.voided_at is not None for p in Payment.objects.filter(
+        pk__in=[p.pk for p in payments]))
+
+
+def test_two_separate_receipts_of_the_same_total_are_refused(mcg07):
+    """Two candidate receipts is a human's call, not the command's."""
+    from django.core.management.base import CommandError
+
+    tenant, _ = mcg07
+    for month in (8, 9, 10):
+        process_payment(
+            tenant=tenant, amount=D("60000"), payment_date=_dt.date(2026, 8, 26),
+            period_month=month, period_year=2026, source=PaymentSource.BANK,
+            reference="OTHER-REF",
+        )
+
+    with pytest.raises(CommandError, match="Ambiguous"):
+        call_command("reconcile_ignite_mcg07", "--apply", stdout=StringIO())
