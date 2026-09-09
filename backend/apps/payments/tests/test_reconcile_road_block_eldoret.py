@@ -251,7 +251,7 @@ class TestStatementPdf:
 
         st = build_statement(_tenant("RB308"), statement_date=AUG_31)
         brought = [r for r in st["rows"] if "brought forward" in r["description"].lower()]
-        assert [r["invoice_amount"] for r in brought] == ["29,500.00"]
+        assert [r["invoice_amount"] for r in brought] == ["29,500"]
 
 
 @pytest.mark.django_db

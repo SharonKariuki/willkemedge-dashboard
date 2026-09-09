@@ -65,6 +65,7 @@
             border-bottom: 1px dotted #808080; padding: 3px 6px;
         }
         .ledger .money { text-align: center; }
+        .ledger .money.neg { color: #c00000; }
         .ledger .center { text-align: center; }
         .ledger .desc-extra { display: block; font-size: 8.5px; }
     </style>
@@ -198,7 +199,7 @@
                 </td>
                 <td class="money" style="width: 112px;">{{ row.invoice_amount }}</td>
                 <td class="money" style="width: 100px;">{{ row.payment }}</td>
-                <td class="money" style="width: 108px;">{{ row.balance }}</td>
+                <td class="money {% if row.balance_negative %}neg{% endif %}" style="width: 108px;">{{ row.balance }}</td>
             </tr>
             {% empty %}
             <tr><td colspan="6" class="center">No transactions on record.</td></tr>
