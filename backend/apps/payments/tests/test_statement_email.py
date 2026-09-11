@@ -169,7 +169,7 @@ class TestMonthlyStatementRun:
 
         send.assert_not_called()
         assert counts == {"sent": 0, "failed": 0, "skipped": 0, "no_email": 2,
-                          "as_at": "2026-09-02", "period": "2026-09"}
+                          "as_at": "2026-09-02", "periods": {}}
         assert TenantNotification.objects.count() == 0
 
     def test_skips_tenants_who_are_not_active(self, building):
@@ -190,7 +190,7 @@ class TestMonthlyStatementRun:
 
         assert first["sent"] == 1
         assert second == {"sent": 0, "failed": 0, "skipped": 1, "no_email": 0,
-                          "as_at": "2026-09-02", "period": "2026-09"}
+                          "as_at": "2026-09-02", "periods": {"2026-09": 1}}
         assert send.call_count == 1
 
     def test_a_failed_send_is_retried_on_the_next_run(self, building):
@@ -218,7 +218,7 @@ class TestMonthlyStatementRun:
             counts = send_monthly_statements("2026-08")
 
         assert counts["as_at"] == "2026-08-31"
-        assert counts["period"] == "2026-08"
+        assert counts["periods"] == {"2026-08": 1}
 
     def test_a_month_that_has_not_closed_is_dated_today_not_in_the_future(self, building):
         """The advance run states September from 25 August. Re-issuing it that
@@ -231,7 +231,7 @@ class TestMonthlyStatementRun:
             counts = send_monthly_statements("2026-09")
 
         assert counts["as_at"] == "2026-08-26"
-        assert counts["period"] == "2026-09"
+        assert counts["periods"] == {"2026-09": 1}
 
     def test_a_bad_period_falls_back_to_today_rather_than_crashing(self, building):
         _make_tenant(building)

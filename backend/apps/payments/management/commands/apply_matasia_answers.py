@@ -478,15 +478,15 @@ class Command(BaseCommand):
 
         On the BILLING CALENDAR: a mis-split leftover and a genuinely billed
         month are the same row — same rent, same VAT, nothing paid — so age is
-        the only thing that tells them apart. Once ``billing_period`` has
-        reached the period, ``generate_monthly_arrears`` owns it: it raises
+        the only thing that tells them apart. Once the tenant's own billing
+        period has reached it, ``generate_monthly_arrears`` owns it: it raises
         every month a tenant is short of, so a drop here is undone on the next
         cron and re-applied on the next run of this command, with the tenant's
         statement disagreeing with the ledger in between. MCF01's September was
         exactly this — dropped as the mis-split's, then billed for real on
         25 August and charged on the 1 Sept statement.
         """
-        from apps.payments.billing_calendar import billing_period
+        from apps.payments.billing_calendar import tenant_billing_period
         from apps.payments.models import Arrears, Payment
 
         charge = Arrears.objects.filter(
@@ -495,7 +495,7 @@ class Command(BaseCommand):
         if charge is None:
             self._skip(f"{label} {tenant.full_name}: no charge for {month}/{year}")
             return
-        billing = billing_period()
+        billing = tenant_billing_period(tenant)
         if (year, month) <= billing:
             self._skip(
                 f"{label} {tenant.full_name}: the cycle is billing {billing[1]}/{billing[0]}, "

@@ -433,14 +433,14 @@ class TenantViewSet(viewsets.ModelViewSet):
         """GET /api/tenants/<id>/statement-pdf/ — official Wilkem rent statement."""
         from django.http import HttpResponse
 
-        from apps.payments.billing_calendar import billing_period
+        from apps.payments.billing_calendar import tenant_billing_period
         from apps.payments.statement_service import build_statement
 
         tenant = self.get_object()
-        # The month the cycle is on, so the copy the office downloads is the
-        # same statement the tenant was emailed on the 25th rather than the
-        # previous month's.
-        data = build_statement(tenant, period=billing_period())
+        # The month THIS tenant's cycle is on, so the copy the office downloads
+        # is the same statement they were emailed — on the 1st for a house, on
+        # the 25th before for the arcade — rather than the previous month's.
+        data = build_statement(tenant, period=tenant_billing_period(tenant))
 
         pdf = render_to_pdf("payments/statement_pdf.html", data)
         if pdf:

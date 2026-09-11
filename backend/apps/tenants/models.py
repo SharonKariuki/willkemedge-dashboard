@@ -76,10 +76,21 @@ class Tenant(models.Model):
             "rule. Leave blank to use one month's rent (three if commercial)."
         ),
     )
+    # Portfolio policy is the 5th of the month being billed, for residential
+    # and commercial alike — see apps.payments.billing_calendar.RENT_DUE_DAY,
+    # which is what the two cycles converge on even though they raise the
+    # charge on different days. Migration 0006 pinned the stored data to it;
+    # the field stays editable for a letting genuinely agreed otherwise, and
+    # everything that quotes a deadline (reminder SMS, overdue SMS, the due
+    # date on the statement) reads it rather than assuming the 5th.
     due_day = models.PositiveSmallIntegerField(
         default=5,
         validators=[MinValueValidator(1), MaxValueValidator(31)],
-        help_text="Day of the month the rent is due (1-31). Defaults to 5th."
+        help_text=(
+            "Day of the month rent is due, in the month being billed. "
+            "Portfolio policy is the 5th and every tenant is on it — "
+            "change this only for a letting genuinely agreed otherwise."
+        ),
     )
 
 

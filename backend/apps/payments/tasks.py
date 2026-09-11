@@ -4,17 +4,19 @@ Celery tasks for the payments app.
 Tasks:
   send_payment_confirmation  — SMS + email after every payment
   recalculate_all_statuses   — nightly unit status sweep
-  generate_monthly_arrears   — 25th + 1st: create arrears records
+  generate_monthly_arrears   — 1st + 25th: create arrears records
   send_rent_reminders        — daily: SMS N days before each tenant's due day
   send_arrears_reminders     — daily: SMS on/after due day when rent unpaid
-  send_monthly_statements    — 25th: emailed rent statement PDF per tenant
+  send_monthly_statements    — 1st + 25th: emailed rent statement PDF per tenant
   poll_bank_statement        — hourly fallback for banks without webhooks
 
-The two monthly jobs run a month ahead of the calendar: on the 25th they raise
-and state the FOLLOWING month, so a tenant has their September statement in
-hand before September starts. Both read the period from
-``billing_calendar.billing_period`` rather than deciding for themselves — see
-that module for what else depends on the cycle.
+The two monthly jobs run on two days, because the roster is on two cycles: the
+1st raises and states the month just begun for residential tenants, and the
+25th raises and states the month AHEAD for commercial ones, whose VAT invoice
+has to arrive before the month it covers. Both jobs read each tenant's month
+from ``billing_calendar.tenant_billing_period`` rather than deciding for
+themselves — see that module for what else depends on the cycle. Rent falls due
+on the 5th of the month billed either way.
 
 All tasks use bind=True + max_retries=3 with exponential backoff.
 """
@@ -25,11 +27,11 @@ from django.db import models
 from django.utils import timezone
 
 from .billing_calendar import (
-    billing_period,
     next_period,
     parse_period,
     period_end,
     period_start,
+    tenant_billing_period,
 )
 
 logger = logging.getLogger(__name__)
@@ -468,12 +470,21 @@ def generate_monthly_arrears() -> int:
     """
     Creates the Arrears records every active tenant is missing.
 
-    Runs on the 25th, ahead of the statement run, and again on the 1st as a
-    safety net. From the 25th it bills a month ahead of the calendar: the run on
-    25 August raises September, so the statement that goes out the same morning
-    states a September the ledger has actually charged. Billing on the 1st and
-    stating on the 2nd — the old order — cannot produce a statement for a month
-    that has not started.
+    Runs on the 1st and again on the 25th, ahead of each statement run, and
+    raises whichever month each tenant's own cycle is on:
+
+      * A RESIDENTIAL tenant is billed on the 1st for the month just begun, and
+        pays by the 5th. The 25th run raises nothing new for them — their month
+        was raised three weeks earlier and the next one is not theirs yet.
+      * A COMMERCIAL tenant is billed on the 25th for the month AHEAD, so the
+        VAT invoice that goes out the same morning states a September the
+        ledger has actually charged. The 1st run is then their catch-up: a
+        statement cannot state a month that has not been raised, so a failed
+        25th has to be repaired before the statement run that follows it.
+
+    Each run is also a catch-up for the other, and for itself: the task bills
+    every month a tenant is short of, so a missed trigger is a delay rather
+    than a write-off.
 
     A period raised in advance is charged, not overdue. Nothing that reports
     debt counts it: the rent roll, the aging table and the unit-status sweep all
@@ -502,13 +513,17 @@ def generate_monthly_arrears() -> int:
     from .models import Arrears
     from .services import apply_available_credit, expected_vat_for
 
-    through = billing_period(timezone.localdate())
+    today = timezone.localdate()
     floor = billing_floor()
     active = Tenant.objects.filter(status=TenantStatus.ACTIVE).select_related("unit")
     created = 0
     credited = 0
 
     for tenant in active:
+        # Per tenant, not per run: the two cycles are a month apart, so the
+        # same 25 August run raises September for the arcade and stops at
+        # August for everybody else.
+        through = tenant_billing_period(tenant, today)
         have = set(
             Arrears.objects.filter(tenant=tenant)
             .values_list("period_year", "period_month")
@@ -692,34 +707,38 @@ def _statement_target(period_iso: str | None):
     """Resolve ``(as_at, period)`` for a statement run.
 
     ``as_at`` is the date printed on the statement — when it was drawn.
-    ``period`` is the month it is *about*, which since the cycle moved to the
-    25th is no longer the month ``as_at`` falls in: a statement drawn on
-    25 August 2026 is the September 2026 statement.
+    ``period`` is the month it is *about*, which is not the month ``as_at``
+    falls in for a commercial tenant: their statement drawn on 25 August 2026
+    is the September 2026 one.
+
+    A ``period`` of ``None`` means "each tenant's own month", which is what the
+    scheduled run wants — the roster is on two cycles and one run serves both.
+    Only an explicit ``YYYY-MM`` pins every tenant to the same month, because
+    re-issuing a closed month is a deliberate instruction about which month.
 
     Accepts:
-      * nothing       — today, billing whatever month the cycle is on. This is
-                        the scheduled run.
-      * ``YYYY-MM``   — re-issue that month. Dated its last day, or today when
-                        the month has not closed yet, since a statement cannot
-                        honestly be drawn on a date that has not happened.
+      * nothing       — today, each tenant on their own cycle. The scheduled run.
+      * ``YYYY-MM``   — re-issue that month for everyone. Dated its last day, or
+                        today when the month has not closed yet, since a
+                        statement cannot honestly be drawn on a date that has
+                        not happened.
       * ``YYYY-MM-DD``— run as though it were that date, cycle rules and all.
     """
     import datetime as _dt
 
     today = timezone.localdate()
     if not period_iso:
-        return today, billing_period(today)
+        return today, None
     try:
         if len(period_iso) == 7:
             period = parse_period(period_iso)
             return min(period_end(period), today), period
-        as_at = _dt.date.fromisoformat(period_iso[:10])
-        return as_at, billing_period(as_at)
+        return _dt.date.fromisoformat(period_iso[:10]), None
     except (ValueError, TypeError):
         logger.warning(
             "send_monthly_statements: bad period=%r — using today", period_iso
         )
-        return today, billing_period(today)
+        return today, None
 
 
 @shared_task
@@ -727,10 +746,18 @@ def send_monthly_statements(period_iso: str | None = None) -> dict:
     """
     Email every active tenant their rent statement with the PDF attached.
 
-    Runs on the 25th and states the month *ahead*: on 25 August 2026 every
-    tenant is emailed their September statement, which is what they asked for —
-    the bill arrives with a week's notice instead of after the month it covers
-    has already begun. `_statement_target` works out which month that is.
+    Runs on the 1st and again on the 25th, and each tenant is emailed the month
+    THEIR cycle is on: a residential tenant gets September on 1 September, the
+    day it was raised and four days before it falls due; a commercial tenant
+    gets September on 25 August, so the VAT invoice arrives before the month it
+    covers. `billing_calendar.tenant_billing_period` works out which.
+
+    One run therefore serves both cycles and neither run sends twice, because
+    the dedupe key is the month STATED. On 25 August a residential tenant is
+    still on August, which went out on the 1st, so they are skipped; on
+    1 September a commercial tenant is on September, which went out on 25
+    August, so they are skipped. Nobody has to reason about who a given day's
+    run is "for".
 
     Schedule this *after* `monthly-arrears` on the same morning: that job is
     what raises the month's rent, and a statement sent before it has run states
@@ -757,16 +784,15 @@ def send_monthly_statements(period_iso: str | None = None) -> dict:
         statement_dedupe_key,
     )
 
-    as_at, period = _statement_target(period_iso)
-    # Dedupe on the month the statement is *about*, not the day it was drawn.
-    # Keyed on the send date, the run on 25 August and a re-issue of August
-    # would collide on "2026-08" and the September statement would be swallowed
-    # as a duplicate of the August one.
-    period_key = period_start(period)
+    as_at, forced_period = _statement_target(period_iso)
     counts = {
         "sent": 0, "failed": 0, "skipped": 0, "no_email": 0,
         "as_at": as_at.isoformat(),
-        "period": f"{period[0]:04d}-{period[1]:02d}",
+        # Which months this run covered, and how many tenants each. A single
+        # "period" cannot describe a mixed roster: the 1 September run states
+        # September for the houses and skips the arcade, which is already on
+        # September from 25 August.
+        "periods": {},
     }
 
     tenants = Tenant.objects.filter(status=TenantStatus.ACTIVE).select_related(
@@ -778,7 +804,15 @@ def send_monthly_statements(period_iso: str | None = None) -> dict:
                 counts["no_email"] += 1
                 continue
 
-            key = statement_dedupe_key(tenant.id, period_key)
+            period = forced_period or tenant_billing_period(tenant, as_at)
+            label = f"{period[0]:04d}-{period[1]:02d}"
+            counts["periods"][label] = counts["periods"].get(label, 0) + 1
+
+            # Dedupe on the month the statement is *about*, not the day it was
+            # drawn. Keyed on the send date, the residential run on 1 September
+            # and the commercial run on 25 August would both land in the month
+            # they fired in, and the two cycles would collide.
+            key = statement_dedupe_key(tenant.id, period_start(period))
             already_sent = TenantNotification.objects.filter(
                 dedupe_key=key, status=NotificationStatus.SENT
             ).exists()
@@ -796,9 +830,9 @@ def send_monthly_statements(period_iso: str | None = None) -> dict:
                 counts["failed"] += 1
 
     logger.info(
-        "send_monthly_statements for %s (as at %s): %d sent, %d failed, "
+        "send_monthly_statements (as at %s): %d sent %s, %d failed, "
         "%d already sent, %d with no email on file",
-        counts["period"], as_at, counts["sent"], counts["failed"],
+        as_at, counts["sent"], counts["periods"] or "{}", counts["failed"],
         counts["skipped"], counts["no_email"],
     )
     return counts

@@ -443,7 +443,7 @@ class Command(BaseCommand):
         the calendar is the only thing that tells them apart — and past that
         point ``generate_monthly_arrears`` would raise it straight back.
         """
-        from apps.payments.billing_calendar import billing_period
+        from apps.payments.billing_calendar import tenant_billing_period
         from apps.payments.models import Arrears, Payment
 
         year, month = period
@@ -454,7 +454,7 @@ class Command(BaseCommand):
             self._skip(f"{UNIT}: no charge for {month}/{year}")
             return
 
-        billing = billing_period()
+        billing = tenant_billing_period(tenant)
         if period <= billing:
             self._skip(
                 f"{UNIT}: the cycle is billing {billing[1]}/{billing[0]}, so {month}/{year} "
