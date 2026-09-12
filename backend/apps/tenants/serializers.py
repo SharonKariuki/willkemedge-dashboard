@@ -4,6 +4,8 @@ from decimal import ROUND_HALF_UP, Decimal
 from django.utils import timezone
 from rest_framework import serializers
 
+from apps.payments.models import PaymentSource
+
 from .models import DocumentType, Tenant, TenantDocument
 
 
@@ -78,7 +80,8 @@ class TenantListSerializer(serializers.ModelSerializer):
         fields = [
             "id", "full_name", "first_name", "last_name", "phone", "email",
             "unit", "unit_label", "building_name", "building_id",
-            "monthly_rent", "deposit_paid", "due_day", "status", "status_display",
+            "monthly_rent", "deposit_paid", "due_day", "is_billable",
+            "status", "status_display",
             "kyc_status", "kyc_status_display", "balance", "payment_status",
             "move_in_date", "move_out_date", "notice_date", "intended_move_out_date",
 
@@ -148,7 +151,7 @@ class TenantDetailSerializer(serializers.ModelSerializer):
             "id", "full_name", "first_name", "last_name", "id_number", "kra_pin",
             "phone", "email", "emergency_contact", "emergency_phone", "care_of",
             "unit", "unit_label", "building_name", "building_id", "unit_classification",
-            "monthly_rent", "deposit_paid", "due_day",
+            "monthly_rent", "deposit_paid", "due_day", "is_billable",
             "deposit_months", "expected_deposit", "deposit_shortfall",
             "agreed_deposit", "deposit_is_agreed",
 
@@ -201,14 +204,56 @@ class TenantDetailSerializer(serializers.ModelSerializer):
 
 
 class TenantCreateSerializer(serializers.ModelSerializer):
+    """Register a new letting.
+
+    ``deposit_paid`` is not just a note here: a non-zero figure is booked as a
+    DEPOSIT payment by the view (see ``services.record_initial_deposit``), so
+    the three fields below describe the money actually received — how it came
+    in, when, and under what reference — exactly as the payments screen would
+    ask for a deposit keyed in later. They are write-only: nothing stores them
+    on the Tenant, they are carried through to the Payment.
+    """
+
+    deposit_source = serializers.ChoiceField(
+        choices=PaymentSource.choices, required=False, default=PaymentSource.CASH,
+        write_only=True,
+        help_text="How the deposit was received. Ignored when the deposit is 0.",
+    )
+    deposit_date = serializers.DateField(
+        required=False, allow_null=True, write_only=True,
+        help_text="When the deposit was received. Defaults to the move-in date.",
+    )
+    deposit_reference = serializers.CharField(
+        required=False, allow_blank=True, default="", max_length=100, write_only=True,
+        help_text="M-Pesa code, bank reference or receipt number for the deposit.",
+    )
+
     class Meta:
         model = Tenant
         fields = [
             "id", "first_name", "last_name", "id_number", "kra_pin", "phone", "email",
             "emergency_contact", "emergency_phone", "unit",
             "monthly_rent", "deposit_paid", "due_day", "move_in_date", "notes",
-
+            "is_billable",
+            "deposit_source", "deposit_date", "deposit_reference",
         ]
+
+    def validate(self, attrs):
+        """A deposit cannot be dated before the keys were handed over."""
+        deposit_date = attrs.get("deposit_date")
+        move_in = attrs.get("move_in_date")
+        if deposit_date and move_in and deposit_date < move_in:
+            raise serializers.ValidationError({
+                "deposit_date": "The deposit cannot be dated before the move-in date.",
+            })
+        return attrs
+
+    def create(self, validated_data):
+        # Pulled off before the model is built — they belong to the Payment the
+        # view posts afterwards, not to the Tenant row.
+        for key in ("deposit_source", "deposit_date", "deposit_reference"):
+            validated_data.pop(key, None)
+        return super().create(validated_data)
 
     def validate_unit(self, unit):
         from apps.buildings.models import UnitStatus
@@ -235,6 +280,7 @@ class TenantEditSerializer(serializers.ModelSerializer):
             "first_name", "last_name", "kra_pin", "phone", "email",
             "emergency_contact", "emergency_phone", "care_of",
             "monthly_rent", "deposit_paid", "agreed_deposit", "due_day",
+            "is_billable",
             "deposit_refund_percentage",
             "notes",
 

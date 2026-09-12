@@ -175,7 +175,14 @@ def recalculate_unit_status(
         return unit
 
     rent = obligation if obligation is not None else unit.monthly_rent
-    if amount_paid <= 0:
+    if rent <= 0:
+        # Nothing is owed for the period, so nothing can be outstanding. The
+        # caretakers' units are charged no rent (see ``Tenant.is_billable``),
+        # and measuring "paid nothing" against "owes nothing" as UNPAID left
+        # them reading Occupied - Unpaid on the units board permanently, and
+        # counted as unpaid in the dashboard's occupancy breakdown.
+        new = UnitStatus.OCCUPIED_PAID
+    elif amount_paid <= 0:
         new = UnitStatus.OCCUPIED_UNPAID
     elif amount_paid < rent:
         new = UnitStatus.OCCUPIED_PARTIAL

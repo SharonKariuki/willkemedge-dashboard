@@ -3,7 +3,7 @@
  * Wraps a native <input type="date"> with consistent styling.
  */
 import { Calendar } from "lucide-react";
-import { forwardRef } from "react";
+import { forwardRef, useId } from "react";
 import { cn } from "@/lib/cn";
 
 interface DatePickerProps extends React.InputHTMLAttributes<HTMLInputElement> {
@@ -14,11 +14,19 @@ interface DatePickerProps extends React.InputHTMLAttributes<HTMLInputElement> {
 }
 
 export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
-  ({ label, error, className, wrapperClassName, ...props }, ref) => {
+  ({ label, error, className, wrapperClassName, id, ...props }, ref) => {
+    // The label carried no `for`, and the input no `id`, so every date field in
+    // the app was announced to a screen reader as an unlabelled control — and
+    // could not be reached by its visible name. Matches the `Field` helper.
+    const generated = useId();
+    const inputId = id ?? generated;
     return (
       <div className={wrapperClassName}>
         {label && (
-          <label className="mb-1 block text-[11px] font-medium uppercase tracking-[0.14em] text-ink-500">
+          <label
+            htmlFor={inputId}
+            className="mb-1 block text-[11px] font-medium uppercase tracking-[0.14em] text-ink-500"
+          >
             {label}
           </label>
         )}
@@ -28,6 +36,7 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
           </span>
           <input
             ref={ref}
+            id={inputId}
             type="date"
             className={cn(
               "w-full rounded-md bg-surface-raised hairline pl-9 pr-3 py-2.5 text-sm text-ink-900",

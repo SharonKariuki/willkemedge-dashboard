@@ -7,6 +7,7 @@ move_out_tenant: Record move-out date → unit status → VACANT → tenant arch
 import os
 import re
 from datetime import date
+from decimal import Decimal
 
 from django.db import transaction
 
@@ -116,6 +117,68 @@ def move_in_tenant(tenant: Tenant) -> Tenant:
     """
     unit_move_in(tenant.unit)
     return tenant
+
+
+def record_initial_deposit(
+    tenant: Tenant,
+    *,
+    received_on: date | None = None,
+    source: str = "cash",
+    reference: str = "",
+    created_by=None,
+):
+    """Book the rent security deposit a new tenant arrived with.
+
+    ``Tenant.deposit_paid`` on its own is only a note of how much is held; it
+    moves no money. Registering a letting used to leave it at that, so the
+    cash never reached the books: 1030 (Tenant Security Deposit Bank) and 2100
+    (Tenant Security Deposits Held) both stayed flat, and a deposit was visible
+    on the tenant's card while being absent from the balance sheet. Existing
+    tenants only have theirs on the books because the cutover posted it through
+    ``post_opening_balances``; a tenant registered afterwards had no equivalent.
+
+    Posting it as a DEPOSIT payment reuses the path the dashboard's own
+    "record a payment" screen uses, so the ledger entry, the Transaction row
+    and the void/reversal trail are exactly what they would be for a deposit
+    keyed in by hand. ``process_payment`` leaves arrears alone for anything
+    that is not RENT, so this settles no rent obligation — correct, since a
+    deposit is a liability the landlord holds, not income.
+
+    No receipt is sent: the notification tasks are called explicitly by the
+    payments views, not by a signal, and a move-in is not the moment to SMS
+    somebody a receipt for money they handed over in person.
+
+    Returns the Payment, or None when there is no deposit to book.
+    """
+    from apps.payments.models import PaymentType
+    from apps.payments.services import process_payment
+
+    amount = Decimal(str(tenant.deposit_paid or 0))
+    if amount <= 0:
+        return None
+
+    received_on = received_on or tenant.move_in_date or date.today()
+
+    return process_payment(
+        tenant=tenant,
+        amount=amount,
+        payment_date=received_on,
+        # The deposit belongs to the month it was received, which is the month
+        # the tenancy starts. It settles no period — process_payment only
+        # touches arrears for RENT — but Payment requires a period, and the
+        # move-in month is the one a reader would expect to find it under.
+        period_month=received_on.month,
+        period_year=received_on.year,
+        source=source,
+        payment_type=PaymentType.DEPOSIT,
+        reference=reference,
+        notes="Rent security deposit received at move-in.",
+        # A tenant can only be registered once, so this key is unique by
+        # construction; it exists so a double-submitted registration that got
+        # as far as creating the tenant cannot book the deposit twice.
+        idempotency_key=f"DEPOSIT-MOVEIN-{tenant.pk}",
+        created_by=created_by,
+    )
 
 
 @transaction.atomic

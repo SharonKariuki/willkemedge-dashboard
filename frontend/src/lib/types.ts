@@ -118,6 +118,10 @@ export interface TenantListItem {
   move_in_date: string;
   move_out_date: string | null;
   due_day: number;
+  /** False for an occupancy that is not charged rent — a caretaker housed as
+   *  part of their job. Excluded from the monthly rent run, both reminder jobs
+   *  and the monthly statements. True for every ordinary letting. */
+  is_billable: boolean;
 }
 
 export interface TenantDetail extends TenantListItem {

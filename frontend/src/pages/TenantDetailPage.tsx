@@ -39,7 +39,7 @@ const editSchema = z.object({
   phone: z.string().min(1, "Required"),
   email: z.string().email("Enter a valid email").or(z.literal("")).optional(),
   care_of: z.string().optional(),
-  monthly_rent: z.string().min(1, "Required").refine(isPositiveAmount, "Enter an amount greater than 0"),
+  monthly_rent: z.string().min(1, "Required").refine(isNonNegativeAmountOrBlank, "Enter a valid amount"),
   deposit_paid: z.string().optional().refine(isNonNegativeAmountOrBlank, "Enter a valid amount"),
   agreed_deposit: z.string().optional().refine(isNonNegativeAmountOrBlank, "Enter a valid amount"),
   due_day: z.coerce.number().int().min(1).max(31).optional(),
@@ -48,7 +48,19 @@ const editSchema = z.object({
     .min(0, "Cannot be below 0").max(100, "Cannot exceed 100"),
   emergency_contact: z.string().optional(),
   emergency_phone: z.string().optional(),
+  is_billable: z.boolean().optional(),
   notes: z.string().optional(),
+}).superRefine((values, ctx) => {
+  // Zero rent only means something for an occupancy that is not charged — a
+  // caretaker housed as part of their job. On a letting it is a typo that
+  // would bill nothing, silently, every month.
+  if (values.is_billable !== false && !isPositiveAmount(values.monthly_rent)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["monthly_rent"],
+      message: "Enter an amount greater than 0, or untick 'charge rent'",
+    });
+  }
 });
 type EditFormValues = z.infer<typeof editSchema>;
 
@@ -149,6 +161,7 @@ export default function TenantDetailPage() {
         emergency_contact: tenant.emergency_contact ?? "",
         emergency_phone: tenant.emergency_phone ?? "",
         due_day: tenant.due_day ?? 5,
+        is_billable: tenant.is_billable ?? true,
         notes: tenant.notes ?? "",
       });
     }
@@ -290,6 +303,21 @@ export default function TenantDetailPage() {
               <Field label="Emergency phone"><input {...editForm.register("emergency_phone")} className={inputCls} /></Field>
               <Field label="c/o (appears on rent statement)"><input {...editForm.register("care_of")} className={inputCls} placeholder="e.g. David Chibeka" /></Field>
             </div>
+            <label className="flex items-start gap-2.5 text-sm">
+              <input
+                type="checkbox"
+                {...editForm.register("is_billable")}
+                className="mt-0.5 h-4 w-4 rounded border-border accent-sage-600"
+              />
+              <span>
+                <span className="font-medium text-content">Charge rent for this tenancy</span>
+                <span className="mt-0.5 block text-[11px] text-ink-500">
+                  Untick for an occupancy that is not charged rent, such as a caretaker
+                  housed as part of their job. Excluded from the monthly rent run, the
+                  rent and arrears reminders, and monthly statements.
+                </span>
+              </span>
+            </label>
             <div className="flex justify-end gap-2">
               <Button type="button" variant="ghost" onClick={() => setMode("view")}>Cancel</Button>
               <Button type="submit" loading={updateTenant.isPending}>Save changes</Button>
@@ -352,15 +380,23 @@ export default function TenantDetailPage() {
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card padding="md">
           <p className="text-xs uppercase tracking-wider text-content-muted">Status</p>
-          <div className="mt-2">
+          <div className="mt-2 flex flex-wrap items-center gap-1">
             <Badge tone={tenant.status === "active" ? "sage" : tenant.status === "notice_given" ? "ochre" : "neutral"} withDot>
               {tenant.status_display}
             </Badge>
+            {/* Otherwise the page reads as a tenant who simply never owes
+                anything, with nothing to say the rent run skips them. */}
+            {!tenant.is_billable && <Badge tone="neutral">Rent-free</Badge>}
           </div>
         </Card>
         <Card padding="md">
           <p className="text-xs uppercase tracking-wider text-content-muted">Monthly rent</p>
           <p className="mt-2 font-semibold tabular-nums text-content">{KES(tenant.monthly_rent)}</p>
+          {!tenant.is_billable && (
+            <p className="mt-1 text-[11px] text-ink-500">
+              Not charged - excluded from billing, reminders and statements.
+            </p>
+          )}
         </Card>
         {/* The rule is one month's rent — three for a commercial letting — and
             the card names it under the figure held, so the reader knows what
