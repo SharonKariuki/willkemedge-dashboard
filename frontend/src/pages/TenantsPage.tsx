@@ -31,43 +31,113 @@ import { downloadCsv } from "@/lib/downloadPdf";
 import { isNonNegativeAmountOrBlank, isPositiveAmount } from "@/lib/formValidators";
 import { avatarFor } from "@/lib/images";
 import { formatBalance } from "@/lib/money";
-import type { TenantListItem } from "@/lib/types";
+import type { TenantListItem, UnitClassification } from "@/lib/types";
 
 // ─── Create Tenant Form ──────────────────────────────────────────────────────
-const createSchema = z.object({
-  first_name: z.string().min(1, "Required"),
-  last_name: z.string().min(1, "Required"),
-  id_number: z.string().min(1, "Required"),
-  kra_pin: z.string().regex(/^[AP]\d{9}[A-Z]$/, "Format: A007523148T").or(z.literal("")).optional(),
-  phone: z.string().min(1, "Required"),
-  email: z.string().email().or(z.literal("")).optional(),
-  emergency_contact: z.string().optional(),
-  emergency_phone: z.string().optional(),
-  unit: z.coerce.number().min(1, "Select a unit"),
-  monthly_rent: z
-    .string()
-    .min(1, "Required")
-    .refine(isPositiveAmount, "Enter an amount greater than 0"),
-  deposit_paid: z
-    .string()
-    .optional()
-    .refine(isNonNegativeAmountOrBlank, "Enter a valid amount"),
-  due_day: z.coerce.number().int().min(1).max(31).optional(),
-  move_in_date: z.string().min(1, "Required"),
-  notes: z.string().optional(),
-});
+// The deposit is not a note on the tenant record: a non-zero figure is booked
+// as a DEPOSIT payment (DR 1030 / CR 2100), so the three fields beside it
+// describe the money actually received — how, when, and under what reference —
+// the same three the payments screen asks for.
+const createSchema = z
+  .object({
+    first_name: z.string().min(1, "Required"),
+    last_name: z.string().min(1, "Required"),
+    id_number: z.string().min(1, "Required"),
+    kra_pin: z.string().regex(/^[AP]\d{9}[A-Z]$/, "Format: A007523148T").or(z.literal("")).optional(),
+    phone: z.string().min(1, "Required"),
+    email: z.string().email().or(z.literal("")).optional(),
+    emergency_contact: z.string().optional(),
+    emergency_phone: z.string().optional(),
+    unit: z.coerce.number().min(1, "Select a unit"),
+    monthly_rent: z
+      .string()
+      .min(1, "Required")
+      .refine(isNonNegativeAmountOrBlank, "Enter a valid amount"),
+    deposit_paid: z
+      .string()
+      .optional()
+      .refine(isNonNegativeAmountOrBlank, "Enter a valid amount"),
+    deposit_source: z.enum(["cash", "mpesa", "bank", "cheque"]).optional(),
+    deposit_date: z.string().optional(),
+    deposit_reference: z.string().optional(),
+    // Kept as the string the input actually yields, and converted on submit.
+    // It was `z.coerce.number()`, which turns an empty box into 0 and then
+    // failed its own `.min(1)` — so a field marked optional blocked the entire
+    // registration, reporting the error against Rent Due Day rather than
+    // against anything that had been typed. Blank means "use the portfolio
+    // default" (the 5th), which the API applies when the field is absent.
+    due_day: z
+      .string()
+      .optional()
+      .refine(
+        (v) => !v || (/^\d+$/.test(v) && Number(v) >= 1 && Number(v) <= 31),
+        "Between 1 and 31",
+      ),
+    move_in_date: z.string().min(1, "Required"),
+    is_billable: z.boolean().optional(),
+    notes: z.string().optional(),
+  })
+  .superRefine((values, ctx) => {
+    // Zero rent is only meaningful for an occupancy that is not charged — a
+    // caretaker housed as part of their job. For a letting it is a typo that
+    // would otherwise bill nothing, silently, every month.
+    if (values.is_billable !== false && !isPositiveAmount(values.monthly_rent)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["monthly_rent"],
+        message: "Enter an amount greater than 0, or untick 'charge rent'",
+      });
+    }
+    if (values.deposit_date && values.move_in_date && values.deposit_date < values.move_in_date) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["deposit_date"],
+        message: "Cannot be before the move-in date",
+      });
+    }
+  });
 type CreateFormValues = z.infer<typeof createSchema>;
 
-function CreateTenantForm({ onClose }: { onClose: () => void }) {
+/** What the deposit should be: one month's rent, three for a commercial unit.
+ *  Mirrors apps/tenants/deposits.py — the rule lives there; this only previews
+ *  it while the form is being filled in, and never overwrites what is typed. */
+function expectedDeposit(rent: string, classification?: UnitClassification): number | null {
+  const amount = Number(rent);
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+  return amount * (classification === "BUSINESS" ? 3 : 1);
+}
+
+export function CreateTenantForm({ onClose }: { onClose: () => void }) {
   const { data: vacantUnits } = useUnits({ status: "vacant" });
   const createTenant = useCreateTenant();
-  const { register, handleSubmit, formState: { errors } } = useForm<CreateFormValues>({
+  const {
+    register, handleSubmit, watch, setValue, formState: { errors },
+  } = useForm<CreateFormValues>({
     resolver: zodResolver(createSchema),
-    defaultValues: { deposit_paid: "0", move_in_date: new Date().toISOString().slice(0, 10) },
+    defaultValues: {
+      deposit_paid: "0",
+      deposit_source: "cash",
+      is_billable: true,
+      move_in_date: new Date().toISOString().slice(0, 10),
+    },
   });
+
+  const [unitId, rent, deposit, isBillable] = watch([
+    "unit", "monthly_rent", "deposit_paid", "is_billable",
+  ]);
+  const selectedUnit = vacantUnits?.find((u) => u.id === Number(unitId));
+  const expected = expectedDeposit(rent ?? "", selectedUnit?.classification);
+  const depositAmount = Number(deposit ?? 0);
+  const booksMoney = Number.isFinite(depositAmount) && depositAmount > 0;
+
   const onSubmit = async (values: CreateFormValues) => {
+    const { due_day, ...rest } = values;
+    const payload: Record<string, unknown> = { ...rest };
+    // Omitted entirely when blank, so the API applies its own default rather
+    // than being handed an empty string or a zero.
+    if (due_day) payload.due_day = Number(due_day);
     try {
-      await createTenant.mutateAsync(values as unknown as Record<string, unknown>);
+      await createTenant.mutateAsync(payload);
       toast.success("Tenant registered");
       onClose();
     } catch (e) { toast.error(getErrorMessage(e, "Failed to register tenant")); }
@@ -106,10 +176,11 @@ function CreateTenantForm({ onClose }: { onClose: () => void }) {
         <Field label="Monthly rent (KES) *" error={errors.monthly_rent?.message}>
           <input {...register("monthly_rent")} className={inputCls} />
         </Field>
-        <Field label="Rent security deposit (KES)">
-          <input {...register("deposit_paid")} className={inputCls} />
-        </Field>
-        <Field label="Rent Due Day (1-31)" error={errors.due_day?.message}>
+        <Field
+          label="Rent Due Day (1-31)"
+          error={errors.due_day?.message}
+          hint="Leave blank for the 5th."
+        >
           <input type="number" min={1} max={31} {...register("due_day")} className={inputCls} />
         </Field>
 
@@ -121,10 +192,80 @@ function CreateTenantForm({ onClose }: { onClose: () => void }) {
           <input {...register("emergency_phone")} className={inputCls} />
         </Field>
       </div>
+
+      <fieldset className="rounded-lg hairline p-4">
+        <legend className="px-1.5 text-sm font-medium text-ink-900">Rent security deposit</legend>
+        <p className="mb-4 text-[11px] text-ink-500">
+          Recorded against the deposits the landlord holds (a liability), not as
+          rental income. Leave at 0 if no deposit was taken.
+        </p>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div>
+            <Field label="Deposit received (KES)" error={errors.deposit_paid?.message}>
+              <input {...register("deposit_paid")} className={inputCls} inputMode="decimal" />
+            </Field>
+            {expected !== null && (
+              <p className="mt-1.5 text-[11px] text-ink-500">
+                Expected KES {expected.toLocaleString()} (
+                {selectedUnit?.classification === "BUSINESS" ? "3 months" : "1 month"}
+                {"’"}s rent){" · "}
+                <button
+                  type="button"
+                  className="underline underline-offset-2 hover:text-ink-900"
+                  onClick={() => setValue("deposit_paid", String(expected), {
+                    shouldValidate: true,
+                  })}
+                >
+                  use this
+                </button>
+              </p>
+            )}
+          </div>
+          <Field label="How it was received">
+            <select {...register("deposit_source")} className={inputCls} disabled={!booksMoney}>
+              <option value="cash">Cash</option>
+              <option value="mpesa">M-Pesa</option>
+              <option value="bank">Bank Transfer</option>
+              <option value="cheque">Cheque</option>
+            </select>
+          </Field>
+          <DatePicker
+            label="Date received"
+            {...register("deposit_date")}
+            error={errors.deposit_date?.message}
+            disabled={!booksMoney}
+          />
+          <Field label="Reference">
+            <input
+              {...register("deposit_reference")}
+              className={inputCls}
+              disabled={!booksMoney}
+              placeholder="M-Pesa code / receipt no."
+            />
+          </Field>
+        </div>
+      </fieldset>
+
+      <label className="flex items-start gap-2.5 text-sm">
+        <input
+          type="checkbox"
+          {...register("is_billable")}
+          className="mt-0.5 h-4 w-4 rounded border-border accent-sage-600"
+        />
+        <span>
+          <span className="font-medium text-ink-900">Charge rent for this tenancy</span>
+          <span className="mt-0.5 block text-[11px] text-ink-500">
+            {isBillable === false
+              ? "Not charged rent — excluded from the monthly rent run, rent and arrears reminders, and monthly statements. Use for a caretaker housed as part of their job."
+              : "Leave ticked for an ordinary letting. Untick only for an occupancy that is not charged rent, such as a caretaker housed as part of their job."}
+          </span>
+        </span>
+      </label>
+
       <div className="flex justify-end gap-2">
         <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
         <Button type="submit" loading={createTenant.isPending}>
-          <Plus className="h-4 w-4" /> Register & move in
+          <Plus className="h-4 w-4" /> Register &amp; move in
         </Button>
       </div>
     </form>
@@ -461,9 +602,22 @@ export default function TenantsPage() {
                       </TD>
                       <TD className="text-ink-500">{t.move_in_date}</TD>
                       <TD>
+                        {/* Siblings in the cell's own inline flow, deliberately
+                            not wrapped in a flex container: a wrapper changed
+                            the row height for EVERY tenant and tripped the
+                            responsive E2E gate, which holds a row to one line
+                            of text plus padding. A billable tenant's markup is
+                            what it always was. */}
                         <Badge tone={t.status === "active" ? "sage" : t.status === "notice_given" ? "ochre" : "neutral"} withDot>
                           {t.status_display}
                         </Badge>
+                        {/* Without this the row just looks like a tenant who
+                            never owes anything and is never reminded. */}
+                        {t.is_billable === false && (
+                          <Badge tone="neutral" className="ml-1" title="Not charged rent — excluded from billing, reminders and statements">
+                            Rent-free
+                          </Badge>
+                        )}
                       </TD>
                       <TD>
                         <Badge tone={KYC_TONE[t.kyc_status]} withDot>{t.kyc_status_display}</Badge>
@@ -529,6 +683,7 @@ export default function TenantsPage() {
                         </div>
                         <div className="flex flex-col items-end gap-1">
                           <Badge tone={t.status === "active" ? "sage" : t.status === "notice_given" ? "ochre" : "neutral"} withDot>{t.status_display}</Badge>
+                          {t.is_billable === false && <Badge tone="neutral">Rent-free</Badge>}
                           <Badge tone={KYC_TONE[t.kyc_status]} withDot>{t.kyc_status_display}</Badge>
                         </div>
                       </div>

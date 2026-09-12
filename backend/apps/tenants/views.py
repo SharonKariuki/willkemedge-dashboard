@@ -24,7 +24,13 @@ from .serializers import (
     TenantListSerializer,
     rent_roll_balances,
 )
-from .services import FileValidationError, move_in_tenant, move_out_tenant, validate_upload
+from .services import (
+    FileValidationError,
+    move_in_tenant,
+    move_out_tenant,
+    record_initial_deposit,
+    validate_upload,
+)
 
 
 def _money(value) -> str:
@@ -170,8 +176,24 @@ class TenantViewSet(viewsets.ModelViewSet):
         return TenantListSerializer
 
     def perform_create(self, serializer):
-        tenant = serializer.save()
-        move_in_tenant(tenant)
+        """Register the letting, occupy the unit, and book the deposit.
+
+        All three in one transaction: a tenant recorded as holding a deposit
+        whose money never reached the ledger is precisely the state this is
+        here to prevent, so a failure to post it must take the registration
+        down with it rather than leave the two disagreeing.
+        """
+        data = serializer.validated_data
+        with transaction.atomic():
+            tenant = serializer.save()
+            move_in_tenant(tenant)
+            record_initial_deposit(
+                tenant,
+                received_on=data.get("deposit_date") or tenant.move_in_date,
+                source=data.get("deposit_source") or "cash",
+                reference=data.get("deposit_reference", ""),
+                created_by=self.request.user,
+            )
 
     @action(detail=False, methods=["get"], url_path="export")
     def export_csv(self, request):
