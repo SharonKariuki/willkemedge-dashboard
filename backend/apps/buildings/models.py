@@ -88,7 +88,10 @@ class Building(models.Model):
 
     water_rate_per_unit = models.DecimalField(
         max_digits=8, decimal_places=2, default=Decimal("200.00"),
-        help_text="Tariff charged per unit of water consumed (KES). Donholm bills at 200/unit.",
+        help_text=(
+            "Tariff charged per unit of water consumed (KES). Set per property: "
+            "Donholm bills at 150/unit, Matasia commercial and residential at 200/unit."
+        ),
     )
 
     paybill_number = models.CharField(
