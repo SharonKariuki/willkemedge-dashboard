@@ -172,7 +172,7 @@ class TestRentIsDueOnTheFifth:
         statement = build_statement(tenant, statement_date=FIRST, period=SEPTEMBER)
 
         assert statement["due_date"] == "5th September 2026"
-        assert statement["statement_date"] == "1 September 2026"
+        assert statement["statement_date"] == "1 Sept 2026"
 
     def test_both_cycles_land_on_the_same_due_date(self):
         """The two cycles differ in when the charge is RAISED, not in when it
@@ -197,7 +197,10 @@ class TestOneRunServesBothCycles:
 
         assert counts["sent"] == 1
         assert counts["periods"] == {"2026-09": 1}
-        assert "September-2026" in send.call_args.args[2]
+        # The emailed ledger is a copy of the statement ledger, so it carries
+        # the ledger's own month label ("Sept-2026"), not the period name the
+        # subject line and the rent roll use.
+        assert "Sept-2026" in send.call_args.args[2]
         assert TenantNotification.objects.get(tenant=tenant).dedupe_key == (
             f"statement:{tenant.id}:2026-09"
         )

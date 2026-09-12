@@ -120,19 +120,17 @@
                 <div class="panel-title">Statement Summary</div>
                 <table class="summary-tbl">
                     <tr>
-                        <td>Arrears / Others</td>
+                        <td>Arrears / Other Costs</td>
                         <td class="amt">{{ arrears_others }}</td>
                     </tr>
                     <tr>
-                        <td>Current Month</td>
-                        <td class="amt">{{ current_month_rent }}</td>
+                        <td>Current Month Rent</td>
+                        <td class="amt">{{ current_month_charged }}</td>
                     </tr>
-                    {% if is_business %}
-                    <tr>
-                        <td>16% VAT on Rent</td>
-                        <td class="amt">{{ vat_on_rent }}</td>
-                    </tr>
-                    {% endif %}
+                    {# VAT is inside the Current Month Rent figure, as the
+                       landlord's statement states it. Payments keep their own
+                       line: without it the box stops footing to the total the
+                       moment a tenant pays anything. #}
                     {% if payments_received_value %}
                     <tr>
                         <td>Less: Payments Received</td>
@@ -140,8 +138,8 @@
                     </tr>
                     {% endif %}
                     <tr class="grand">
-                        <td>Total KES Due:</td>
-                        <td class="amt">{{ total_due }}</td>
+                        <td>Total KES:</td>
+                        <td class="amt">Ksh{{ total_due }}</td>
                     </tr>
                 </table>
             </td>
