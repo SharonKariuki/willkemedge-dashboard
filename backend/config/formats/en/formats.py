@@ -13,6 +13,8 @@ month gets billed.
 
 ``DATE_INPUT_FORMATS`` therefore reads day-first, and ``DATE_FORMAT`` prints
 the month by name so a date read back off a page cannot be re-entered wrongly.
+Two-digit years are left out on purpose, matching the API and the dashboard:
+``01/10/20`` is as likely to be an unfinished 2026 as it is to be 2020.
 ISO stays at the head of the input list: it is unambiguous, it is what the
 frontend's ``<input type="date">`` submits, and it is what every management
 command writes.
@@ -28,7 +30,6 @@ DATE_INPUT_FORMATS = [
     "%d.%m.%Y",  # 01.10.2026
     "%d %b %Y",  # 01 Oct 2026
     "%d %B %Y",  # 01 October 2026
-    "%d/%m/%y",  # 01/10/26
 ]
 
 DATETIME_INPUT_FORMATS = [

@@ -36,6 +36,7 @@ import {
 import { useTenants } from "@/hooks/useTenants";
 import { getErrorMessage } from "@/lib/apiError";
 import { cn } from "@/lib/cn";
+import { toDayFirst, todayIso } from "@/lib/dates";
 import { downloadPdf } from "@/lib/downloadPdf";
 import { avatarFor } from "@/lib/images";
 
@@ -171,7 +172,7 @@ export default function PaymentsPage() {
     defaultValues: {
       tenant: 0,
       amount: "",
-      payment_date: now.toISOString().slice(0, 10),
+      payment_date: todayIso(),
       period_month: now.getMonth() + 1,
       period_year: now.getFullYear(),
       source: "cash",
@@ -447,7 +448,7 @@ export default function PaymentsPage() {
                     >
                       KES {Number(p.amount).toLocaleString()}
                     </TD>
-                    <TD className="text-ink-500">{p.payment_date}</TD>
+                    <TD className="text-ink-500">{toDayFirst(p.payment_date)}</TD>
                     <TD className="tabular-nums text-ink-500">
                       {p.period_month}/{p.period_year}
                     </TD>
@@ -523,7 +524,7 @@ export default function PaymentsPage() {
                     </div>
                     <div className="mt-2 flex items-center justify-between gap-2">
                       <SourceChip source={p.source} label={p.source_display} />
-                      <p className="text-[11px] text-ink-400">{p.payment_date}</p>
+                      <p className="text-[11px] text-ink-400">{toDayFirst(p.payment_date)}</p>
                       <div className="flex items-center gap-3">
                         {p.transaction_id && (
                           <button
