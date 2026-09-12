@@ -265,7 +265,17 @@ class TenantCreateSerializer(serializers.ModelSerializer):
 
 
 class TenantEditSerializer(serializers.ModelSerializer):
-    """For admin editing of tenant details — rent, deposit, status."""
+    """For admin editing of tenant details — rent, deposit, status.
+
+    ``id_number`` is editable here on purpose. A tenancy can be recorded before
+    the occupant's papers are to hand — the caretakers seeded by
+    ``seed_caretaker_units`` carry a placeholder 'PENDING-<unit>' because the
+    column is unique and required — and without this field the only way to
+    replace one was a shell on the production box. Uniqueness is still enforced:
+    ModelSerializer derives a UniqueValidator from the model, and it excludes
+    the row being edited, so re-saving a tenant with their own ID is fine while
+    taking somebody else's is rejected.
+    """
 
     # An empty box means "back to the rule", not "agreed at zero" — a blank
     # arrives from the form as "" and would otherwise be rejected outright.
@@ -277,7 +287,7 @@ class TenantEditSerializer(serializers.ModelSerializer):
     class Meta:
         model = Tenant
         fields = [
-            "first_name", "last_name", "kra_pin", "phone", "email",
+            "first_name", "last_name", "id_number", "kra_pin", "phone", "email",
             "emergency_contact", "emergency_phone", "care_of",
             "monthly_rent", "deposit_paid", "agreed_deposit", "due_day",
             "is_billable",
@@ -285,6 +295,13 @@ class TenantEditSerializer(serializers.ModelSerializer):
             "notes",
 
         ]
+
+    def validate_id_number(self, value):
+        """Trimmed, and never blanked — it is the tenant's identity on file."""
+        value = (value or "").strip()
+        if not value:
+            raise serializers.ValidationError("An ID number is required.")
+        return value
 
     def to_internal_value(self, data):
         if data.get("agreed_deposit") in ("", " "):

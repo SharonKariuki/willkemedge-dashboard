@@ -602,18 +602,22 @@ export default function TenantsPage() {
                       </TD>
                       <TD className="text-ink-500">{t.move_in_date}</TD>
                       <TD>
-                        <div className="flex flex-wrap items-center gap-1">
-                          <Badge tone={t.status === "active" ? "sage" : t.status === "notice_given" ? "ochre" : "neutral"} withDot>
-                            {t.status_display}
+                        {/* Siblings in the cell's own inline flow, deliberately
+                            not wrapped in a flex container: a wrapper changed
+                            the row height for EVERY tenant and tripped the
+                            responsive E2E gate, which holds a row to one line
+                            of text plus padding. A billable tenant's markup is
+                            what it always was. */}
+                        <Badge tone={t.status === "active" ? "sage" : t.status === "notice_given" ? "ochre" : "neutral"} withDot>
+                          {t.status_display}
+                        </Badge>
+                        {/* Without this the row just looks like a tenant who
+                            never owes anything and is never reminded. */}
+                        {t.is_billable === false && (
+                          <Badge tone="neutral" className="ml-1" title="Not charged rent — excluded from billing, reminders and statements">
+                            Rent-free
                           </Badge>
-                          {/* Without this the row just looks like a tenant who
-                              never owes anything and is never reminded. */}
-                          {!t.is_billable && (
-                            <Badge tone="neutral" title="Not charged rent — excluded from billing, reminders and statements">
-                              Rent-free
-                            </Badge>
-                          )}
-                        </div>
+                        )}
                       </TD>
                       <TD>
                         <Badge tone={KYC_TONE[t.kyc_status]} withDot>{t.kyc_status_display}</Badge>
@@ -679,7 +683,7 @@ export default function TenantsPage() {
                         </div>
                         <div className="flex flex-col items-end gap-1">
                           <Badge tone={t.status === "active" ? "sage" : t.status === "notice_given" ? "ochre" : "neutral"} withDot>{t.status_display}</Badge>
-                          {!t.is_billable && <Badge tone="neutral">Rent-free</Badge>}
+                          {t.is_billable === false && <Badge tone="neutral">Rent-free</Badge>}
                           <Badge tone={KYC_TONE[t.kyc_status]} withDot>{t.kyc_status_display}</Badge>
                         </div>
                       </div>

@@ -35,6 +35,7 @@ const KES = formatKES;
 const editSchema = z.object({
   first_name: z.string().min(1, "Required"),
   last_name: z.string().min(1, "Required"),
+  id_number: z.string().trim().min(1, "Required"),
   kra_pin: z.string().regex(/^[AP]\d{9}[A-Z]$/, "Format: A007523148T").or(z.literal("")).optional(),
   phone: z.string().min(1, "Required"),
   email: z.string().email("Enter a valid email").or(z.literal("")).optional(),
@@ -119,6 +120,8 @@ export default function TenantDetailPage() {
   // below the rule is worth knowing — but a tenant page is not the place to
   // dun a figure the landlord may well have agreed to.
   const depositMonths = Number(tenant?.deposit_months ?? 1);
+  // Matches PLACEHOLDER_ID_PREFIX in buildings/management/commands/seed_caretaker_units.py.
+  const idIsPlaceholder = Boolean(tenant?.id_number?.startsWith("PENDING-"));
   // A deposit can be agreed at a figure the rule does not produce — say a
   // letting settled at 14,000 against a 15,000 rent. Where it has been, the
   // card must say so rather than quoting months of rent that were never the
@@ -151,6 +154,7 @@ export default function TenantDetailPage() {
     if (tenant) {
       editForm.reset({
         first_name: tenant.first_name, last_name: tenant.last_name,
+        id_number: tenant.id_number ?? "",
         kra_pin: tenant.kra_pin ?? "",
         phone: tenant.phone, email: tenant.email ?? "",
         care_of: tenant.care_of ?? "",
@@ -279,6 +283,16 @@ export default function TenantDetailPage() {
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               <Field label="First name" error={editForm.formState.errors.first_name?.message}><input {...editForm.register("first_name")} className={inputCls} /></Field>
               <Field label="Last name" error={editForm.formState.errors.last_name?.message}><input {...editForm.register("last_name")} className={inputCls} /></Field>
+              {/* Editable because a tenancy can be recorded before the papers
+                  are to hand — a seeded caretaker carries a PENDING- placeholder
+                  until the real number is known. */}
+              <Field
+                label="ID number"
+                error={editForm.formState.errors.id_number?.message}
+                hint={idIsPlaceholder ? "Placeholder — replace with the real ID number." : undefined}
+              >
+                <input {...editForm.register("id_number")} className={inputCls} />
+              </Field>
               <Field label="KRA PIN" error={editForm.formState.errors.kra_pin?.message}><input {...editForm.register("kra_pin")} className={inputCls} placeholder="A007523148T" /></Field>
               <Field label="Phone" error={editForm.formState.errors.phone?.message}><input {...editForm.register("phone")} className={inputCls} /></Field>
               <Field label="Email" error={editForm.formState.errors.email?.message}><input {...editForm.register("email")} className={inputCls} /></Field>
@@ -386,13 +400,13 @@ export default function TenantDetailPage() {
             </Badge>
             {/* Otherwise the page reads as a tenant who simply never owes
                 anything, with nothing to say the rent run skips them. */}
-            {!tenant.is_billable && <Badge tone="neutral">Rent-free</Badge>}
+            {tenant.is_billable === false && <Badge tone="neutral">Rent-free</Badge>}
           </div>
         </Card>
         <Card padding="md">
           <p className="text-xs uppercase tracking-wider text-content-muted">Monthly rent</p>
           <p className="mt-2 font-semibold tabular-nums text-content">{KES(tenant.monthly_rent)}</p>
-          {!tenant.is_billable && (
+          {tenant.is_billable === false && (
             <p className="mt-1 text-[11px] text-ink-500">
               Not charged - excluded from billing, reminders and statements.
             </p>
