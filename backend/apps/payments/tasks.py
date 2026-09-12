@@ -421,6 +421,24 @@ def recalculate_all_statuses() -> None:
     logger.info("recalculate_all_statuses: updated %d units", updated)
 
 
+def billable_active_tenants(*select_related: str):
+    """Active tenants who are actually charged rent.
+
+    The monthly rent run, both reminder jobs and the statement run all walk
+    ACTIVE tenants. A caretaker housed rent-free as part of their job is active
+    and does occupy a unit, so without this filter each of those four jobs would
+    treat them as a letting: a 0.00 arrears row raised every month, a reminder
+    SMS chasing it, and a statement email for a balance that does not exist.
+
+    One definition, four callers — see ``Tenant.is_billable``.
+    """
+    from apps.tenants.models import Tenant, TenantStatus
+
+    return Tenant.objects.filter(
+        status=TenantStatus.ACTIVE, is_billable=True
+    ).select_related(*select_related)
+
+
 def billing_floor() -> tuple[int, int] | None:
     """The first month the books charge rent for — the month after cutover.
 
@@ -508,14 +526,13 @@ def generate_monthly_arrears() -> int:
     Returns the number of rows raised, so the cron endpoint's response says what
     actually happened.
     """
-    from apps.tenants.models import Tenant, TenantStatus
 
     from .models import Arrears
     from .services import apply_available_credit, expected_vat_for
 
     today = timezone.localdate()
     floor = billing_floor()
-    active = Tenant.objects.filter(status=TenantStatus.ACTIVE).select_related("unit")
+    active = billable_active_tenants("unit")
     created = 0
     credited = 0
 
@@ -577,8 +594,6 @@ def send_rent_reminders() -> int:
 
     from django.conf import settings
 
-    from apps.tenants.models import Tenant, TenantStatus
-
     from .models import NotificationChannel, NotificationStatus, TenantNotification
     from .notification_services import dispatch_notification
     from .notification_templates import get_template
@@ -589,9 +604,7 @@ def send_rent_reminders() -> int:
     template = get_template("rent_reminder")
     sent = 0
 
-    active = Tenant.objects.filter(status=TenantStatus.ACTIVE).select_related(
-        "unit", "unit__building"
-    )
+    active = billable_active_tenants("unit", "unit__building")
     for tenant in active:
         if not tenant.unit_id or not tenant.phone:
             continue
@@ -641,8 +654,6 @@ def send_arrears_reminders() -> int:
     import calendar
     from datetime import date
 
-    from apps.tenants.models import Tenant, TenantStatus
-
     from .models import (
         Arrears,
         NotificationChannel,
@@ -657,9 +668,7 @@ def send_arrears_reminders() -> int:
     template = get_template("rent_overdue")
     sent = 0
 
-    active = Tenant.objects.filter(status=TenantStatus.ACTIVE).select_related(
-        "unit", "unit__building"
-    )
+    active = billable_active_tenants("unit", "unit__building")
     for tenant in active:
         if not tenant.unit_id or not tenant.phone:
             continue
@@ -775,7 +784,6 @@ def send_monthly_statements(period_iso: str | None = None) -> dict:
     Returns per-outcome counts, which the cron endpoint echoes in its response so
     the scheduler's log says what actually happened.
     """
-    from apps.tenants.models import Tenant, TenantStatus
 
     from .models import NotificationStatus, TenantNotification
     from .statement_delivery import (
@@ -795,9 +803,7 @@ def send_monthly_statements(period_iso: str | None = None) -> dict:
         "periods": {},
     }
 
-    tenants = Tenant.objects.filter(status=TenantStatus.ACTIVE).select_related(
-        "unit", "unit__building"
-    )
+    tenants = billable_active_tenants("unit", "unit__building")
     with open_mail_connection() as mail:
         for tenant in tenants:
             if not tenant.email or not tenant.unit_id:

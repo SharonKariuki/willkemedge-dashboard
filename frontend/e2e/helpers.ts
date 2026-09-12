@@ -36,7 +36,7 @@ const TENANTS = [
     monthly_rent: "12000.00", deposit_paid: "12000.00", status: "active",
     status_display: "Active", kyc_status: "verified", kyc_status_display: "Verified",
     balance: "0.00", payment_status: "paid", move_in_date: "2026-01-01",
-    move_out_date: null, due_day: 5,
+    move_out_date: null, due_day: 5, is_billable: true,
   },
   {
     id: 2, full_name: "Peter Kimani", first_name: "Peter", last_name: "Kimani",
@@ -45,7 +45,7 @@ const TENANTS = [
     monthly_rent: "15000.00", deposit_paid: "15000.00", status: "active",
     status_display: "Active", kyc_status: "pending", kyc_status_display: "Pending Review",
     balance: "15000.00", payment_status: "in_arrears", move_in_date: "2026-02-01",
-    move_out_date: null, due_day: 5,
+    move_out_date: null, due_day: 5, is_billable: true,
   },
 ];
 

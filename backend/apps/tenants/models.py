@@ -93,6 +93,26 @@ class Tenant(models.Model):
         ),
     )
 
+    # A tenancy that is on the books but is not charged rent. The caretakers who
+    # live on the farms and at the Karen residence occupy as part of their
+    # employment, not under a letting: the occupancy, their contact details and
+    # any deposit still belong on record, but the monthly run must not raise an
+    # arrears row against them and the reminders must not chase them for one.
+    #
+    # A zero `monthly_rent` is NOT enough on its own. The monthly run would still
+    # create a 0.00 arrears row per caretaker per month, and the reminder and
+    # statement jobs walk ACTIVE tenants rather than unpaid ones — so every
+    # caretaker would get a reminder SMS and a statement email for nothing.
+    is_billable = models.BooleanField(
+        default=True,
+        db_index=True,
+        help_text=(
+            "Untick for an occupancy that is not charged rent (e.g. a caretaker "
+            "housed as part of their job). Excluded from the monthly rent run, "
+            "the rent and arrears reminders, and monthly statements."
+        ),
+    )
+
 
     # Deposit refund: admin sets % to return on move-out
     deposit_refund_percentage = models.DecimalField(
