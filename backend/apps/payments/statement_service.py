@@ -73,26 +73,43 @@ def _money(value) -> Decimal:
     return (Decimal(value) if value is not None else ZERO).quantize(Decimal("0.01"))
 
 
+#: September is the one month the landlord's statement shortens — "Sept-2026",
+#: "1 Sept 2026" — because spelled in full it is half again as long as any
+#: other. ``%b`` is not used: it gives "Sep", which is not what the sheet this
+#: document replaces has ever said.
+#:
+#: It is the *document's* convention, not the system's, so it reaches the date
+#: column and the ledger's own row labels and stops there. The month named in a
+#: statement email, an SMS or the rent roll stays spelled in full.
+_SEPTEMBER_SHORT = "Sept"
+
+
 def _month_name(month: int, year: int) -> str:
+    """'September-2026' — the period as everything but the ledger names it."""
     try:
         return f"{_dt.date(year, month, 1).strftime('%B')}-{year}"
     except ValueError:
         return f"{month}/{year}"
 
 
-def _fmt_date(d) -> str:
-    """'4 Sep 2026' — month abbreviated, no leading zero on the day.
+def _ledger_period(month: int, year: int) -> str:
+    """'August-2026', but 'Sept-2026' — the label the ledger rows carry."""
+    if month == 9:
+        return f"{_SEPTEMBER_SHORT}-{year}"
+    return _month_name(month, year)
 
-    The landlord's own statement dates every posting this way ('10 Aug 2026'),
-    and the date column is narrow: spelled in full, a long month pushed the
-    column wide enough to crowd the description beside it. The rent-period
-    labels keep their full month ('August-2026') — that is how the landlord
-    writes them too. ``%d`` is avoided because it zero-pads, and ``%-d`` is not
-    portable to Windows.
+
+def _fmt_date(d) -> str:
+    """'10 Aug 2026' — the date column exactly as the landlord's sheet writes it.
+
+    Month abbreviated (and September as 'Sept', per ``_month_word``), no
+    leading zero on the day. ``%d`` is avoided because it zero-pads, and
+    ``%-d`` is not portable to Windows.
     """
     if not hasattr(d, "strftime"):
         return str(d)
-    return f"{d.day} {d.strftime('%b %Y')}"
+    month = _SEPTEMBER_SHORT if d.month == 9 else d.strftime("%b")
+    return f"{d.day} {month} {d.year}"
 
 
 def _fmt_money(value) -> str:
@@ -144,6 +161,59 @@ def _deposit_label(tenant, amount) -> str:
     return "Rent Security Deposit"
 
 
+#: Order of the rows that share a posting date, as the landlord's statement
+#: sequences them: the money that came in, the deposit it is holding, then the
+#: month's charges. A receipt printed after the charge it settles reads like the
+#: tenant paid late.
+_ORDER_OPENING = 0
+_ORDER_PAYMENT = 1
+_ORDER_DEPOSIT = 2
+_ORDER_RENT = 3
+_ORDER_VAT = 4
+_ORDER_UTILITY = 5
+_ORDER_WAIVER = 6
+
+
+def _raised_on(tenant, year: int, month: int, *, in_advance: bool) -> _dt.date:
+    """The date the statement shows a month's rent as having been raised.
+
+    The books hold a charge against a *period*, not a day, so the statement has
+    to decide what date to print beside it. It prints the day the charge fell
+    due on the tenant:
+
+      * commercial rent is billed for the month ahead, so it is raised at the
+        close of the month before — September's on 31 August;
+      * residential rent is raised on the 1st of its own month;
+      * neither is ever shown as raised before the tenant moved in. Fortcom's
+        August rent is dated 10 August, the day their lease began, not 31 July.
+
+    The period a charge belongs to is untouched by this — only the date printed
+    beside it. Arrears, the summary box and the roll-forward all still key off
+    the period, which is why a September charge shown on 31 August does not
+    fall into August's brought-forward figure.
+    """
+    try:
+        first = _dt.date(year, month, 1)
+    except ValueError:
+        return _dt.date(year, max(1, min(12, month)), 1)
+    raised = first - _dt.timedelta(days=1) if in_advance else first
+    move_in = getattr(tenant, "move_in_date", None)
+    if isinstance(move_in, _dt.datetime):
+        move_in = move_in.date()
+    elif isinstance(move_in, str):
+        # A Tenant built in memory keeps whatever was assigned until it is read
+        # back from the database, and that is a plain string.
+        try:
+            move_in = _dt.date.fromisoformat(move_in)
+        except ValueError:
+            move_in = None
+    if move_in and move_in > raised:
+        # A tenant cannot be billed before they hold the unit. Capped at the
+        # period itself so a lease starting mid-month still sorts inside it.
+        raised = move_in
+    return raised
+
+
 def _ordinal(n: int) -> str:
     """5 -> '5th', 1 -> '1st'."""
     if 10 <= n % 100 <= 20:
@@ -168,18 +238,37 @@ def _build_ledger(
     """
     from .models import Arrears, Payment, PaymentType, UtilityCharge
 
-    # (posting_date, sort_order, description, invoice_amount, payment_amount)
-    events: list[tuple[_dt.date, int, str, Decimal, Decimal]] = []
+    # Two dates, and they are not the same thing:
+    #
+    #   ``shown``  the date printed in the Posting Date column — when the charge
+    #              fell due on the tenant, and what the rows sort by.
+    #   ``period`` the month the charge belongs to — what the summary box, the
+    #              brought-forward figure and the arrears roll key off.
+    #
+    # They only diverge for rent: commercial rent for September is shown as
+    # raised on 31 August but belongs to September, and a first month is shown
+    # on the move-in date. Keeping them apart is what lets the ledger read like
+    # the landlord's sheet without September's rent falling into August's
+    # arrears.
+    #
+    # (shown, sort_order, description, invoice_amount, payment_amount, period)
+    events: list[tuple[_dt.date, int, str, Decimal, Decimal, _dt.date]] = []
 
     for arr in Arrears.objects.filter(tenant=tenant).order_by("period_year", "period_month"):
         try:
-            posting = _dt.date(arr.period_year, arr.period_month, 1)
+            period = _dt.date(arr.period_year, arr.period_month, 1)
         except ValueError:
             continue
-        if as_of and posting > as_of:
+        # ``as_of`` cuts on the period, not on the date shown: a statement drawn
+        # on 1 September must carry September's rent even though the charge is
+        # dated 31 August.
+        if as_of and period > as_of:
             continue
+        posting = _raised_on(
+            tenant, arr.period_year, arr.period_month, in_advance=is_business
+        )
         base = _money(arr.expected_rent)
-        period = _month_name(arr.period_month, arr.period_year)
+        period_label = _ledger_period(arr.period_month, arr.period_year)
 
         # A carried opening balance is stored as an Arrears row because that is
         # the only way to seed the roll-forward, but it is not a month's rent —
@@ -192,7 +281,13 @@ def _build_ledger(
             # "Balance brought forward - July-2026" against an empty amount
             # column reads as a missing figure rather than as nothing owed.
             if base:
-                events.append((posting, 0, f"Balance brought forward - {period}", base, ZERO))
+                # An opening position is the state of the account at the start
+                # of the period, so it is dated there and sorts ahead of
+                # everything else that day — not on a move-in or billing date.
+                events.append((
+                    period, _ORDER_OPENING,
+                    f"Balance brought forward - {period_label}", base, ZERO, period,
+                ))
         else:
             # VAT is read from the row, not recomputed. Not every commercial
             # letting is rated — MCG02 is billed with none — and deriving 16%
@@ -202,24 +297,29 @@ def _build_ledger(
             # billing never raised — is left off rather than printed as a rent
             # line with nothing beside it.
             if base:
-                events.append((posting, 0, f"Month Rent - {period}", base, ZERO))
+                events.append((
+                    posting, _ORDER_RENT, f"Month Rent - {period_label}", base, ZERO, period,
+                ))
             if vat > 0:
-                events.append((posting, 1, "16% VAT on Rent", vat, ZERO))
+                events.append((posting, _ORDER_VAT, "16% VAT on Rent", vat, ZERO, period))
 
         # A waiver discharges the obligation just as cash does. Without this
         # credit the statement kept showing debt the business had already
         # written off — permanently, since the charge row is never removed.
         waived = _money(arr.waived_amount)
         if waived > 0:
-            label = f"Waiver - {_month_name(arr.period_month, arr.period_year)}"
+            label = f"Waiver - {period_label}"
             if arr.waive_notes:
                 label = f"{label} ({arr.waive_notes})"
-            events.append((posting, 5, label, ZERO, waived))
+            events.append((posting, _ORDER_WAIVER, label, ZERO, waived, period))
 
     for util in UtilityCharge.objects.filter(tenant=tenant).order_by("posting_date", "id"):
         if as_of and util.posting_date > as_of:
             continue
-        events.append((util.posting_date, 2, util.description(), _money(util.amount), ZERO))
+        events.append((
+            util.posting_date, _ORDER_UTILITY, util.description(),
+            _money(util.amount), ZERO, util.posting_date,
+        ))
 
     # Every credit the tenant sent, shown the way they sent it.
     #
@@ -259,22 +359,35 @@ def _build_ledger(
             slot[1] += _money(pay.amount)
 
     for (posting, _ref), (total, deposit) in credits.items():
-        events.append((posting, 3, "Payment Received", ZERO, total))
+        events.append((posting, _ORDER_PAYMENT, "Payment Received", ZERO, total, posting))
         if deposit > 0:
-            events.append((posting, 4, _deposit_label(tenant, deposit), deposit, ZERO))
+            events.append((
+                posting, _ORDER_DEPOSIT, _deposit_label(tenant, deposit),
+                deposit, ZERO, posting,
+            ))
 
     events.sort(key=lambda e: (e[0], e[1]))
 
+    # Summed over the periods that closed, not read off the running balance at
+    # some row. The rows are sequenced by the date they show, which no longer
+    # tracks the period they belong to, so a prefix of the printed ledger is not
+    # the same thing as "everything before this month" any more.
+    brought_forward = ZERO
+    if period_start:
+        brought_forward = sum(
+            (invoice - payment
+             for _shown, _o, _d, invoice, payment, period in events
+             if period < period_start),
+            ZERO,
+        )
+
     rows = []
     balance = ZERO
-    brought_forward = ZERO
-    for i, (posting, _order, desc, invoice, payment) in enumerate(events, start=1):
-        if period_start and posting < period_start:
-            brought_forward = balance + invoice - payment
+    for i, (shown, _order, desc, invoice, payment, _period) in enumerate(events, start=1):
         balance = balance + invoice - payment
         rows.append({
             "index": i,
-            "posting_date": _fmt_date(posting),
+            "posting_date": _fmt_date(shown),
             "description": desc,
             "description_lines": desc.split("\n"),
             # Whole shillings across the ledger columns. The landlord's sheet
@@ -485,6 +598,11 @@ def build_statement(
         "is_business": is_business,
         "arrears_others": _fmt_money(arrears_others),
         "current_month_rent": _fmt_money(current_base),
+        # What the summary box prints on its "Current Month Rent" line: the
+        # month's rent with its VAT inside it, the way the landlord's statement
+        # states it. The two parts stay available separately above — the COA
+        # breakdown and the SMS still need them apart.
+        "current_month_charged": _fmt_money(current_base + vat_on_rent),
         "current_period_label": current_period_label,
         "vat_on_rent": _fmt_money(vat_on_rent),
         "payments_received": _fmt_money(payments_received),

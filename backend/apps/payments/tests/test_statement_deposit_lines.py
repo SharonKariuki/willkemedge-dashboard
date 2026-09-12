@@ -87,7 +87,7 @@ class TestTheDepositIsVisible:
 
         _st, rows = _ledger(tenant)
 
-        assert ("10 Aug 2026", "Payment Received", "", "75,000", "(46,000)") in rows
+        assert ("10 Aug 2026", "Payment Received", "", "75,000", "(75,000)") in rows
 
     def test_the_deposit_is_invoiced_straight_back_out(self, let):
         tenant = let("MCD01")
@@ -97,7 +97,7 @@ class TestTheDepositIsVisible:
 
         _st, rows = _ledger(tenant)
 
-        assert ("10 Aug 2026", "Two Months Rent Deposit", "50,000", "", "4,000") in rows
+        assert ("10 Aug 2026", "Two Months Rent Deposit", "50,000", "", "(25,000)") in rows
 
     def test_the_pair_nets_to_nothing_against_rent(self, let):
         """The whole safety property: showing the deposit must not pay rent down.
@@ -169,9 +169,9 @@ class TestCreditBalancesAreBracketed:
     def test_a_credit_balance_prints_in_brackets(self, let):
         """The landlord's sheet shows (75,000), not -75,000.
 
-        The running balance dips into credit for as long as it takes the deposit
-        invoice to follow the receipt that paid it, and a minus sign there reads
-        as a typo beside five unsigned figures.
+        The receipt lands before the charges it settles, so the running balance
+        opens in credit and stays there for two rows. A minus sign reads as a
+        typo beside five unsigned figures.
         """
         tenant = let("MCD01")
         _charge(tenant, 8)
@@ -181,7 +181,7 @@ class TestCreditBalancesAreBracketed:
         _st, rows = _ledger(tenant)
 
         balances = [r[4] for r in rows]
-        assert balances == ["25,000", "29,000", "(46,000)", "4,000"]
+        assert balances == ["(75,000)", "(25,000)", "0", "4,000"]
 
 
 class TestOneTransferIsOneLine:
@@ -225,11 +225,10 @@ class TestTheFortcomStatement:
     def test_reproduces_the_landlords_document(self, let):
         """MCF01 as at 1 Sept 2026, against the statement the landlord issued.
 
-        Same six lines, same figures, same closing balance. The posting dates
-        differ — the books post a month's rent on the 1st, the landlord's sheet
-        posts August's on the move-in date and September's on the day the run
-        was cut — so the two charge rows sort before the payment rather than
-        after it. Every amount agrees.
+        The acceptance test for the whole document: same six rows, in the same
+        order, on the same dates, carrying the same running balance down to the
+        zero at row 3, and the same summary box. Nothing in it is incidental —
+        each line failed at least once on the way here.
         """
         tenant = let("MCF01", care_of="Joseph M Kungu", kra_pin="P052143702J")
         _charge(tenant, 8)
@@ -239,19 +238,79 @@ class TestTheFortcomStatement:
 
         st, rows = _ledger(tenant)
 
-        assert [(r[1], r[2], r[3]) for r in rows] == [
-            ("Month Rent - August-2026", "25,000", ""),
-            ("16% VAT on Rent", "4,000", ""),
-            ("Payment Received", "", "75,000"),
-            ("Two Months Rent Deposit", "50,000", ""),
-            ("Month Rent - September-2026", "25,000", ""),
-            ("16% VAT on Rent", "4,000", ""),
+        assert rows == [
+            ("10 Aug 2026", "Payment Received", "", "75,000", "(75,000)"),
+            ("10 Aug 2026", "Two Months Rent Deposit", "50,000", "", "(25,000)"),
+            ("10 Aug 2026", "Month Rent - August-2026", "25,000", "", "0"),
+            ("10 Aug 2026", "16% VAT on Rent", "4,000", "", "4,000"),
+            ("31 Aug 2026", "Month Rent - Sept-2026", "25,000", "", "29,000"),
+            ("31 Aug 2026", "16% VAT on Rent", "4,000", "", "33,000"),
         ]
+        assert st["statement_date"] == "1 Sept 2026"
         assert st["total_due_whole"] == "33,000"
+        # The summary box as the sheet states it: VAT inside the month's rent.
         assert st["arrears_others"] == "4,000.00"
+        assert st["current_month_charged"] == "29,000.00"
+        assert st["total_due"] == "33,000.00"
+        # Still available apart, for the COA breakdown and the SMS.
         assert st["current_month_rent"] == "25,000.00"
         assert st["vat_on_rent"] == "4,000.00"
         assert st["security_deposit"] == "50,000.00"
         assert st["kra_pin"] == "P052143702J"
         assert st["care_of"] == "Joseph M Kungu"
         assert st["paybill_account"] == "90290#MCF01"
+
+    def test_september_is_the_month_the_sheet_abbreviates(self, let):
+        """'Sept-2026', not 'September-2026' and not '%b's 'Sep'.
+
+        Every other month is written out, which is what the landlord's sheet
+        does and is why this cannot just be strftime.
+        """
+        tenant = let("MCF01")
+        _charge(tenant, 8)
+        _charge(tenant, 9)
+
+        _st, rows = _ledger(tenant)
+
+        described = [r[1] for r in rows]
+        assert "Month Rent - August-2026" in described
+        assert "Month Rent - Sept-2026" in described
+
+
+class TestWhenAChargeIsShownAsRaised:
+    def test_commercial_rent_is_raised_at_the_close_of_the_month_before(self, let):
+        """Billed for the month ahead: September's rent is dated 31 August."""
+        tenant = let("MCF02")
+        _charge(tenant, 9)
+
+        _st, rows = _ledger(tenant)
+
+        assert [r[0] for r in rows] == ["31 Aug 2026", "31 Aug 2026"]
+
+    def test_a_first_month_is_never_dated_before_the_tenant_moved_in(self, let):
+        """MCF01 holds the unit from 10 August, so August's rent is dated then,
+        not 31 July — the tenant was not a tenant on 31 July."""
+        tenant = let("MCF03")
+        _charge(tenant, 8)
+
+        _st, rows = _ledger(tenant)
+
+        assert [r[0] for r in rows] == ["10 Aug 2026", "10 Aug 2026"]
+
+    def test_septembers_rent_shown_in_august_is_not_august_arrears(self, let):
+        """The safety property behind the split between the two dates.
+
+        September's charge prints on 31 August but belongs to September, so it
+        must not fall into the brought-forward figure the way a real August
+        charge would. Fortcom carries 4,000 into September — the August VAT they
+        came up short on — and nothing more.
+        """
+        tenant = let("MCF04")
+        _charge(tenant, 8)
+        _charge(tenant, 9)
+        _pay(tenant, "50000", kind="deposit")
+        _pay(tenant, "25000")
+
+        st, _rows = _ledger(tenant)
+
+        assert st["arrears_others"] == "4,000.00"

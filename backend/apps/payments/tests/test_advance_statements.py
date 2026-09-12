@@ -240,7 +240,10 @@ class TestAdvanceStatementRun:
         assert counts["as_at"] == "2026-08-25"
         assert counts["sent"] == 1
         html = send.call_args.args[2]
-        assert "September-2026" in html
+        # The emailed ledger is a copy of the statement ledger, so it carries
+        # the ledger's own month label ("Sept-2026"), not the period name the
+        # subject line and the rent roll use.
+        assert "Sept-2026" in html
 
         note = TenantNotification.objects.get(tenant=tenant)
         assert note.dedupe_key == f"statement:{tenant.id}:2026-09"
@@ -297,7 +300,10 @@ class TestAdvanceStatementRun:
             note = send_tenant_statement(tenant, automatic=False)
 
         assert note.status == NotificationStatus.SENT
-        assert "September-2026" in send.call_args.args[2]
+        # The emailed ledger is a copy of the statement ledger, so it carries
+        # the ledger's own month label ("Sept-2026"), not the period name the
+        # subject line and the rent roll use.
+        assert "Sept-2026" in send.call_args.args[2]
 
 
 class TestAdvanceChargeIsNotOverdue:
