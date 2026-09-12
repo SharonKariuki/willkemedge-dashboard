@@ -101,7 +101,8 @@ describe("CreateTenantForm", () => {
       await user.clear(box);
       await user.type(box, "20000");
       await user.selectOptions(screen.getByLabelText("How it was received"), "mpesa");
-      await user.type(screen.getByLabelText("Date received"), "2026-09-12");
+      // Typed the way it is written in Kenya; what goes to the API is ISO.
+      await user.type(screen.getByLabelText("Date received"), "12/09/2026");
       await user.type(screen.getByLabelText("Reference"), "TJ4X9QW1ZP");
 
       await user.click(screen.getByRole("button", { name: /Register/ }));
@@ -198,7 +199,7 @@ describe("CreateTenantForm", () => {
     const box = screen.getByLabelText("Deposit received (KES)");
     await user.clear(box);
     await user.type(box, "20000");
-    await user.type(screen.getByLabelText("Date received"), "2020-01-01");
+    await user.type(screen.getByLabelText("Date received"), "01/01/2020");
 
     await user.click(screen.getByRole("button", { name: /Register/ }));
 

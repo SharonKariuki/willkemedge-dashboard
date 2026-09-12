@@ -27,6 +27,7 @@ import { useCreateTenant, useTenants } from "@/hooks/useTenants";
 import { useUnits } from "@/hooks/useUnits";
 import { getErrorMessage } from "@/lib/apiError";
 import { cn } from "@/lib/cn";
+import { toDayFirst, todayIso } from "@/lib/dates";
 import { downloadCsv } from "@/lib/downloadPdf";
 import { isNonNegativeAmountOrBlank, isPositiveAmount } from "@/lib/formValidators";
 import { avatarFor } from "@/lib/images";
@@ -118,7 +119,7 @@ export function CreateTenantForm({ onClose }: { onClose: () => void }) {
       deposit_paid: "0",
       deposit_source: "cash",
       is_billable: true,
-      move_in_date: new Date().toISOString().slice(0, 10),
+      move_in_date: todayIso(),
     },
   });
 
@@ -600,7 +601,7 @@ export default function TenantsPage() {
                           {formatBalance(t.balance)}
                         </span>
                       </TD>
-                      <TD className="text-ink-500">{t.move_in_date}</TD>
+                      <TD className="text-ink-500">{toDayFirst(t.move_in_date)}</TD>
                       <TD>
                         {/* Siblings in the cell's own inline flow, deliberately
                             not wrapped in a flex container: a wrapper changed

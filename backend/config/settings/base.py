@@ -134,6 +134,19 @@ REST_FRAMEWORK = {
     "DEFAULT_RENDERER_CLASSES": (
         "rest_framework.renderers.JSONRenderer",
     ),
+    # Every date this product takes is typed by someone in Nairobi, and in
+    # Kenya a date is written day-first. DRF ships ISO-8601 alone, so
+    # "01-10-2026" for 1 October came back as "Date has wrong format. Use one
+    # of these formats instead: YYYY-MM-DD." — which is what the landlord saw
+    # when he tried to register a tenant, and it stops the registration dead.
+    #
+    # ISO stays first so the frontend's <input type="date"> (which always
+    # submits YYYY-MM-DD) is unaffected. The two added formats are both errors
+    # today, so nothing that currently succeeds changes meaning — this only
+    # widens what is accepted. Day-first is the only reading either can have
+    # here; an American "10-01-2026" for 1 October is not a shape any caller
+    # of this system produces.
+    "DATE_INPUT_FORMATS": ["iso-8601", "%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y"],
 }
 
 SIMPLE_JWT = {
@@ -151,6 +164,13 @@ LANGUAGE_CODE = "en-us"
 TIME_ZONE = "Africa/Nairobi"
 USE_I18N = True
 USE_TZ = True
+
+# Django's own forms — the admin, in practice — read their date formats from
+# the active locale, and "en" is month-first. That did something worse than
+# reject a Kenyan date: it accepted "01/10/2026" and silently stored 10
+# January. `config.formats` overrides the locale so day-first is what the
+# admin both parses and prints. See config/formats/en/formats.py.
+FORMAT_MODULE_PATH = "config.formats"
 
 # ---------------------------------------------------------------------------
 # Static / Media

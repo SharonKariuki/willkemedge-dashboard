@@ -37,7 +37,10 @@ from decimal import Decimal
 from pathlib import Path
 
 # Donholm defaults, matching the official template. Any can be overridden per
-# statement via the input dict (or a nested "building" block).
+# statement via the input dict (or a nested "building" block) — the water
+# tariff in particular varies by property (Donholm 150/unit, Matasia
+# commercial and residential 200/unit), so a statement for another building
+# must pass its own "water_rate".
 DEFAULTS = {
     "entity_name": "WILKEM VENTURES COMPANY LIMITED",
     "entity_location": "DONHOLM ESTATE, NAIROBI",
@@ -49,7 +52,7 @@ DEFAULTS = {
     "bank_account": "01136069098300",
     "bank_branch": "Karen Branch",
     "due_day_ordinal": "5th",
-    "water_rate": 200,
+    "water_rate": 150,
 }
 
 
@@ -82,13 +85,18 @@ def _int_if_whole(value):
     return int(amt) if amt == amt.to_integral_value() else amt
 
 
-def _row_description(txn: dict) -> tuple[list[str], Decimal, Decimal]:
+def _row_description(txn: dict, default_rate=None) -> tuple[list[str], Decimal, Decimal]:
     """Return (description_lines, invoice_amount, payments) for one transaction.
 
     A water transaction (``type: "water"`` or opening/closing readings present)
     has its consumption and charge computed here and rendered as a single
     '<label> (N units @ KES rate)' line. The readings themselves drive the
     consumption but are kept off the statement.
+
+    ``default_rate`` is the tariff of the building the statement is for, used
+    only when the transaction does not state its own. The rate is per property,
+    so falling back to a portfolio-wide figure would price Donholm's water at
+    Matasia's tariff.
     """
     is_water = txn.get("type") == "water" or (
         txn.get("opening_reading") is not None and txn.get("closing_reading") is not None
@@ -96,7 +104,8 @@ def _row_description(txn: dict) -> tuple[list[str], Decimal, Decimal]:
     if is_water:
         opening = _dec(txn.get("opening_reading"))
         closing = _dec(txn.get("closing_reading"))
-        rate = _dec(txn.get("rate", DEFAULTS["water_rate"]))
+        fallback = DEFAULTS["water_rate"] if default_rate is None else default_rate
+        rate = _dec(txn.get("rate", fallback))
         units = closing - opening
         invoice = (units * rate) if txn.get("amount") in (None, "") else _dec(txn.get("amount"))
         label = txn.get("label") or txn.get("description") or "Water usage"
@@ -122,6 +131,9 @@ def build_context(data: dict) -> dict:
     src = {**DEFAULTS, **(data.get("building") or {}), **data}
     paybill_account = str(src.get("paybill_account")
                           or DEFAULTS["paybill_account_format"].format(unit=unit))
+    # The per-unit water tariff of this building, applied to any reading-based
+    # transaction that does not carry its own rate.
+    water_rate = src.get("water_rate", DEFAULTS["water_rate"])
 
     rows = []
     balance = _dec(data.get("opening_balance"))
@@ -133,7 +145,7 @@ def build_context(data: dict) -> dict:
     start = int(data.get("start_index", 1))
 
     for i, txn in enumerate(data.get("transactions", []), start=start):
-        lines, invoice, payments = _row_description(txn)
+        lines, invoice, payments = _row_description(txn, water_rate)
         balance += invoice - payments
         if invoice > 0 and re.search(r"\brent\b", lines[0], re.IGNORECASE):
             last_rent = invoice  # current-month rent = the most recent rent charge

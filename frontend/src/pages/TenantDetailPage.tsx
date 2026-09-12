@@ -25,6 +25,7 @@ import {
 } from "@/hooks/useTenants";
 import { getErrorMessage } from "@/lib/apiError";
 import { cn } from "@/lib/cn";
+import { toDayFirst, todayIso } from "@/lib/dates";
 import { downloadPdf } from "@/lib/downloadPdf";
 import { isNonNegativeAmountOrBlank, isPositiveAmount } from "@/lib/formValidators";
 import { formatBalanceKES, formatKES } from "@/lib/money";
@@ -143,11 +144,11 @@ export default function TenantDetailPage() {
   const editForm = useForm<EditFormValues>({ resolver: zodResolver(editSchema) });
   const noticeForm = useForm<NoticeFormValues>({
     resolver: zodResolver(noticeSchema),
-    defaultValues: { notice_date: new Date().toISOString().slice(0, 10), intended_move_out_date: "", notes: "" },
+    defaultValues: { notice_date: todayIso(), intended_move_out_date: "", notes: "" },
   });
   const moveOutForm = useForm<MoveOutFormValues>({
     resolver: zodResolver(moveOutSchema),
-    defaultValues: { move_out_date: new Date().toISOString().slice(0, 10), deposit_refund_percentage: 100, notes: "" },
+    defaultValues: { move_out_date: todayIso(), deposit_refund_percentage: 100, notes: "" },
   });
 
   useEffect(() => {
@@ -467,7 +468,7 @@ export default function TenantDetailPage() {
             <TBody>
               {history.payments.map((p) => (
                 <TR key={p.id}>
-                  <TD className="text-content-muted">{p.payment_date}</TD>
+                  <TD className="text-content-muted">{toDayFirst(p.payment_date)}</TD>
                   <TD>{p.period_month}/{p.period_year}</TD>
                   <TD><Badge tone="neutral">{p.source || "—"}</Badge></TD>
                   <TD className="font-mono text-xs text-content-muted">{p.reference || "—"}</TD>
