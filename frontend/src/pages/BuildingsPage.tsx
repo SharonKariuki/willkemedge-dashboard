@@ -41,6 +41,7 @@ import {
 } from "@/hooks/useBuildings";
 import { getErrorMessage } from "@/lib/apiError";
 import { cn } from "@/lib/cn";
+import { toDayFirst, todayIso } from "@/lib/dates";
 import { propertyImage } from "@/lib/images";
 import type { Building, Unit, UnitType } from "@/lib/types";
 import { api } from "@/lib/api";
@@ -656,7 +657,7 @@ function MaintenanceModal({
   const [form, setForm] = useState({
     description: "",
     cost: "",
-    reported_date: new Date().toISOString().slice(0, 10),
+    reported_date: todayIso(),
     notes: "",
   });
   const [saving, setSaving] = useState(false);
@@ -784,7 +785,7 @@ function MaintenanceModal({
                   </span>
                 </div>
                 <p className="mt-1 text-ink-500">
-                  KES {Number(r.cost).toLocaleString()} · {String(r.reported_date)}
+                  KES {Number(r.cost).toLocaleString()} · {toDayFirst(String(r.reported_date))}
                 </p>
               </li>
             ))}

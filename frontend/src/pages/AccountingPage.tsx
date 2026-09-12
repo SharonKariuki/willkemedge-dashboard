@@ -9,6 +9,7 @@ import {
 } from "@/components/ui";
 import { useReportsAccounting } from "@/hooks/useReports";
 import { cn } from "@/lib/cn";
+import { toDayFirst } from "@/lib/dates";
 
 const selectCls =
   "glass rounded-md px-3 py-2 text-sm text-ink-900 focus:outline-none";
@@ -157,7 +158,7 @@ function LedgerView({ data }: { data: Record<string, unknown> }) {
           <TR><TD colSpan={5} className="text-center text-ink-400">No ledger entries for this period</TD></TR>
         ) : entries.map((e, i) => (
           <TR key={i}>
-            <TD className="text-ink-500 whitespace-nowrap">{e.date}</TD>
+            <TD className="text-ink-500 whitespace-nowrap">{toDayFirst(e.date)}</TD>
             <TD className="max-w-sm whitespace-normal">{e.description}</TD>
             <TD className="text-right tabular-nums">{e.debit > 0 ? `KES ${Number(e.debit).toLocaleString()}` : "—"}</TD>
             <TD className="text-right tabular-nums">{e.credit > 0 ? `KES ${Number(e.credit).toLocaleString()}` : "—"}</TD>
@@ -234,7 +235,7 @@ function PettyCashView({ data }: { data: Record<string, unknown> }) {
             <TR><TD colSpan={4} className="text-center text-ink-400">No petty cash transactions this period</TD></TR>
           ) : entries.map((e, i) => (
             <TR key={i}>
-              <TD className="whitespace-nowrap text-ink-500">{e.date}</TD>
+              <TD className="whitespace-nowrap text-ink-500">{toDayFirst(e.date)}</TD>
               <TD className="max-w-sm whitespace-normal">{e.description}</TD>
               <TD className="text-right tabular-nums text-status-unpaid">{Number(e.amount).toLocaleString()}</TD>
               <TD className="text-right tabular-nums font-medium">{Number(e.running_balance).toLocaleString()}</TD>
