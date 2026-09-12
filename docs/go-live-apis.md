@@ -100,29 +100,39 @@ nothing on a schedule.
    |---|---|---|
    | `rent-reminders` | SMS N days before each tenant's due day | daily 08:00 |
    | `arrears-reminders` | SMS on/after due day when unpaid | daily 09:00 |
-   | `monthly-arrears` | Raise **next** month's rent | 25th of month 06:30 |
-   | `monthly-statements` | Email every tenant **next** month's statement PDF | 25th of month 07:00 |
-   | `monthly-arrears` | Catch up any month the 25th missed | 1st of month 00:30 |
+   | `monthly-arrears` | Raise **this** month's rent (residential) | 1st of month 06:30 |
+   | `monthly-statements` | Email **this** month's statement PDF (residential) | 1st of month 07:00 |
+   | `monthly-arrears` | Raise **next** month's rent (commercial) | 25th of month 06:30 |
+   | `monthly-statements` | Email **next** month's statement PDF (commercial) | 25th of month 07:00 |
    | `recalculate-statuses` | Refresh unit paid/unpaid/arrears status | daily 01:00 |
    | `daily-reconciliation` | Email the unmatched-credit summary | daily 18:00 |
 
-   The two monthly jobs run a month ahead of the calendar, which tenants asked
-   for: on 25 August they raise and email **September**, so the bill arrives
-   before the month it covers rather than after it has begun. The day is
-   `STATEMENT_RUN_DAY` in Django settings (default 25) — move it and you must
-   move the scheduler's cron lines to match, or the jobs fire on a day that
-   bills the month already in progress.
+   The monthly pair fires on **two days**, because the roster is on two cycles.
+   A residential tenant is billed on the 1st for the month just begun; a
+   commercial one on the 25th for the month ahead, so the arcade's VAT invoice
+   arrives before the month it covers. Rent falls due on the **5th of the month
+   billed** either way.
+
+   Both days must be scheduled. Each run covers whichever tenants that day's
+   cycle applies to and skips the rest as already-sent, so dropping one day
+   silently stops billing that half of the portfolio — and each run is also the
+   other's catch-up, since `monthly-arrears` bills every month a tenant is short
+   of. The 25th is `STATEMENT_RUN_DAY` in Django settings (default 25) — move it
+   and you must move the scheduler's cron lines to match, or the commercial jobs
+   fire on a day that bills the month already in progress.
 
    `monthly-statements` runs half an hour *after* `monthly-arrears`, which is
    what raises the rent — a statement sent before it states a balance with the
    stated month missing. It takes an optional `?period=YYYY-MM` to re-issue a
-   month, only writes to tenants who have an email address on file, and sends
-   each tenant at most one statement per month, so it is safe to re-run.
+   month **for everybody** — without it each tenant is stated the month their own
+   cycle is on. It only writes to tenants who have an email address on file, and
+   sends each tenant at most one statement per month, so it is safe to re-run.
+   The response's `periods` names which months the run actually covered.
 
-   A period raised on the 25th is charged, not overdue: the rent roll, the aging
-   table, the unit-status sweep and the reminder SMS balances all stop at the
-   current calendar month, so nobody is reported a month in arrears for the last
-   week of a month.
+   A commercial period raised on the 25th is charged, not overdue: the rent roll,
+   the aging table, the unit-status sweep and the reminder SMS balances all stop
+   at the current calendar month, so the arcade is not reported a month in
+   arrears for the last week of a month.
 
    **`TENANT_NOTIFICATIONS_ENABLED=false` silences this job** along with receipts
    and reminders — the run records each statement as PENDING and sends nothing.
