@@ -358,6 +358,117 @@ def payment_sms_message(
     return msg + " Thank you - Wilkem Edge."
 
 
+def _statement_summary_items(statement: dict) -> list[tuple[str, str, str]]:
+    """The lines a statement summary itemises, as (short, long, amount).
+
+    Shared by the SMS and the email so the two channels cannot drift apart.
+    Every line is a component of the unpaid balance and they add up to it:
+
+        Arrears B/F + Month Rent + VAT + Other Charges - Credits - Paid
+
+    so the only total a tenant sees is the one they owe. The old "Rent +
+    Arrears" subtotal is gone — it read like the amount to pay and was not.
+    Security deposit is left out: a one-off at move-in, not part of the month.
+    Lines that are nil are left out too, bar the two every month has.
+    """
+    items = [
+        ("Arrears B/F", "Arrears Brought Forward", statement["arrears_bf"]),
+        ("Month Rent", "Month Rent", statement["month_rent"]),
+    ]
+    if statement.get("is_business"):
+        items.append(("VAT on Rent", "16% VAT on Rent", statement["vat_on_rent"]))
+    if statement.get("other_charges_value"):
+        items.append(("Other Charges", "Other Charges (water etc.)", statement["other_charges"]))
+    if statement.get("other_credits_value"):
+        items.append(("Less Credits", "Less: Credits", statement["other_credits"]))
+    if statement.get("payments_received_value"):
+        items.append(("Less Paid", "Less: Payments Received", statement["payments_received"]))
+    return items
+
+
+def statement_sms_message(tenant_name: str, unit_label: str, statement: dict) -> str:
+    """Monthly-statement SMS: a short summary ending on the unpaid balance.
+
+    Runs to two SMS segments for most tenants; the full ledger is in the emailed
+    PDF.
+    """
+    parts = ", ".join(f"{short} {amount}" for short, _long, amount in _statement_summary_items(statement))
+    return (
+        f"Dear {tenant_name}, your rent statement for Unit {unit_label} as at "
+        f"{statement['statement_date']} (KES): {parts}. "
+        f"Unpaid Balance {statement['unpaid_balance']}, due by {statement['due_date']}. "
+        f"Thank you - Wilkem Edge."
+    )
+
+
+def statement_summary_email_html(tenant_name: str, statement: dict) -> str:
+    """Covering note for the monthly statement email.
+
+    The same summary the SMS carries, as a table, plus how to pay. The full
+    statement, ledger and all, travels as the attached PDF. The billing month is
+    named up front: an arcade statement drawn on the 25th is next month's, and
+    without the ledger rows in the body nothing else would say so.
+    """
+    rows = []
+    for _short, label, amount in _statement_summary_items(statement):
+        shown = f"({amount})" if label.startswith("Less:") else amount
+        rows.append(_row(_e(label), _e(shown)))
+    rows.append(_row("Unpaid Balance", _e(statement["unpaid_balance"]), bold=True))
+
+    pay_lines = []
+    if statement.get("has_paybill"):
+        acct = _e(statement.get("paybill_account") or "")
+        acct_html = f", Account No. <b>{acct}</b>" if acct else ""
+        pay_lines.append(
+            f'<div style="padding:2px 0">M-Pesa Paybill <b>{_e(statement["paybill_number"])}</b>{acct_html}</div>'
+        )
+    if statement.get("has_bank"):
+        bank = _e(statement["bank_name"])
+        if statement.get("bank_branch"):
+            bank += f", {_e(statement['bank_branch'])}"
+        account_name = statement.get("bank_account_name") or ""
+        name_html = f" ({_e(account_name)})" if account_name else ""
+        pay_lines.append(
+            f'<div style="padding:2px 0">{bank} &mdash; A/C <b>{_e(statement["bank_account"])}</b>{name_html}</div>'
+        )
+    if not pay_lines:
+        pay_lines.append(
+            '<div style="padding:2px 0">Please contact the management office for payment details.</div>'
+        )
+
+    return f"""<div style="font-family:Arial,Helvetica,sans-serif;font-size:13px;color:#222;max-width:560px;margin:0 auto;padding:16px">
+  <div style="background:#0b3d2e;color:#fff;padding:14px 16px;border-radius:4px 4px 0 0">
+    <div style="font-size:18px;font-weight:bold;letter-spacing:1px">WILKEM EDGE</div>
+    <div style="font-size:11px;opacity:.85">{_e(statement["entity_name"])}</div>
+  </div>
+  <div style="border:1px solid #d8d8d8;border-top:none;padding:16px;border-radius:0 0 4px 4px">
+    <p style="margin:0 0 10px">Dear {_e(tenant_name)},</p>
+    <p style="margin:0 0 14px">Your <b>{_e(statement["current_period_label"])}</b> rent statement for
+       <b>{_e(statement["unit_descriptor"])}</b> as at <b>{_e(statement["statement_date"])}</b>
+       is attached to this email as a PDF.</p>
+
+    <div style="background:#f4f7f5;border:1px solid #cfdcd5;padding:12px;margin:0 0 14px;text-align:center">
+      <div style="font-size:11px;color:#555;letter-spacing:1px">UNPAID BALANCE</div>
+      <div style="font-size:26px;font-weight:bold;color:#0b3d2e">KES {_e(statement["unpaid_balance"])}</div>
+      <div style="font-size:11px;color:#555">payable on or before {_e(statement["due_date"])}</div>
+    </div>
+
+    <div style="font-size:12px;font-weight:bold;margin:0 0 4px">Summary (KES)</div>
+    <table style="border-collapse:collapse;width:100%;font-size:12px;margin:0 0 14px">{"".join(rows)}</table>
+
+    <div style="font-size:12px;margin:0 0 14px">
+      <div style="font-weight:bold;margin-bottom:4px">How to pay</div>
+      {"".join(pay_lines)}
+    </div>
+
+    <p style="margin:0 0 10px;font-size:12px;color:#444">
+      The attached PDF shows the full transaction history behind this balance.
+      If you notice any discrepancy, please contact the management office.</p>
+    <p style="margin:0;font-size:12px">Thank you &mdash; <b>Wilkem Edge</b></p>
+  </div>
+</div>"""
+
+
 def _row(label: str, value: str, *, bold: bool = False) -> str:
     weight = "font-weight:bold;" if bold else ""
     return (

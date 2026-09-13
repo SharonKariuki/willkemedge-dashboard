@@ -80,8 +80,8 @@ def statement_dedupe_key(tenant_id: int, period) -> str:
 def _summary_line(tenant, statement: dict) -> str:
     """Short plain-text record of what was sent, for the notification history.
 
-    The email body itself is a full HTML statement running to several hundred
-    lines; storing that on every row would make the notifications list unusable.
+    Doubles as the email's plain-text alternative, which mail clients without
+    HTML fall back to.
     """
     return (
         f"Rent statement as at {statement['statement_date']} for "
@@ -123,7 +123,7 @@ def send_tenant_statement(
     `notification_services.dispatch_notification`.
     """
     from .billing_calendar import tenant_billing_period
-    from .notifications import send_email, statement_email_html
+    from .notifications import send_email, statement_summary_email_html
     from .pdf_service import render_to_pdf
     from .statement_service import build_statement
 
@@ -171,11 +171,13 @@ def send_tenant_statement(
         )
         return notification
 
-    html = statement_email_html(tenant.full_name, statement)
+    html = statement_summary_email_html(tenant.full_name, statement)
 
-    # The HTML body already carries the whole statement, so a PDF that fails to
-    # render costs the tenant the attachment, not the statement. Send anyway and
-    # log it — same call the payment receipt makes in tasks._notify_tenant_payment.
+    # The body is a covering note — unpaid balance, due date, how to pay — and
+    # the full statement travels as the attached PDF. A PDF that fails to render
+    # therefore costs the tenant the working, not the demand: the balance and
+    # the payment instructions still arrive. Send anyway and log it, same as the
+    # payment receipt in tasks._notify_tenant_payment.
     attachments = []
     pdf = render_to_pdf("payments/statement_pdf.html", statement)
     if pdf:

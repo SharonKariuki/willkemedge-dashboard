@@ -79,8 +79,12 @@ class TestSendTenantStatement:
         assert filename == "Rent_Statement_Sarah_Hamisi.pdf"
         assert mimetype == "application/pdf"
         assert content[:4] == b"%PDF"
-        # The body carries the statement too, so the email stands on its own.
-        assert "CUSTOMER RENT STATEMENT AS AT" in html
+        # The body is a covering note: the unpaid balance and how to pay. The
+        # full statement travels only as the attached PDF.
+        assert "UNPAID BALANCE" in html
+        assert "How to pay" in html
+        assert "CUSTOMER RENT STATEMENT AS AT" not in html
+        assert "Posting Date" not in html
 
     def test_body_asks_for_settlement_rather_than_thanking_for_a_payment(self, building):
         """The receipt flavour thanks the tenant for money they sent; a statement

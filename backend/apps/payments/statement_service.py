@@ -316,10 +316,23 @@ def _build_ledger(
     for util in UtilityCharge.objects.filter(tenant=tenant).order_by("posting_date", "id"):
         if as_of and util.posting_date > as_of:
             continue
-        events.append((
-            util.posting_date, _ORDER_UTILITY, util.description(),
-            _money(util.amount), ZERO, util.posting_date,
-        ))
+        amount = _money(util.amount)
+        if amount < 0:
+            # A negative "charge" is money the landlord is giving back — DON2B's
+            # 2,096 August credit, or a reconcile correcting an over-posted
+            # reading downwards. Printed in the invoice column it read as water
+            # billed at a negative price. It goes in the payments column as a
+            # credit instead: invoice minus payment is unchanged, so the running
+            # balance, the total due and the brought-forward figure all stay put.
+            events.append((
+                util.posting_date, _ORDER_UTILITY, f"Credit - {util.description()}",
+                ZERO, -amount, util.posting_date,
+            ))
+        else:
+            events.append((
+                util.posting_date, _ORDER_UTILITY, util.description(),
+                amount, ZERO, util.posting_date,
+            ))
 
     # Every credit the tenant sent, shown the way they sent it.
     #
@@ -547,11 +560,28 @@ def build_statement(
     #  in full, against an unpaid balance of nil on the same page.
     arrears_bf = _money(arrears_bf)
 
-    #  Other charges = non-rent utility charges posted (up to as_of).
+    #  Other charges = the water and other costs raised in the period being
+    #  billed. It used to sum every utility charge the tenant ever had, but the
+    #  ledger already folds earlier months into Arrears Brought Forward, so from
+    #  a tenant's second water bill the breakdown counted last month's water
+    #  twice. The cut is the one `_build_ledger` makes for brought-forward — on
+    #  the posting date, against the current period's start — so the two figures
+    #  partition the charges between them. With no rent period on file there is
+    #  nothing brought forward, and every charge belongs here.
+    #
+    #  Credits are split out rather than netted in: a landlord credit is not
+    #  negative water, and "Other Charges -2,096" is what the tenant used to see.
     util_q = UtilityCharge.objects.filter(tenant=tenant)
     if as_of:
         util_q = util_q.filter(posting_date__lte=as_of)
-    other_charges = _money(util_q.aggregate(t=Sum("amount"))["t"])
+    if period_start:
+        util_q = util_q.filter(posting_date__gte=period_start)
+    other_charges = _money(
+        util_q.filter(amount__gt=0).aggregate(t=Sum("amount"))["t"] or ZERO
+    )
+    other_credits = -_money(
+        util_q.filter(amount__lt=0).aggregate(t=Sum("amount"))["t"] or ZERO
+    )
 
     #  Rent income code depends on the unit's tax classification.
     rent_code = RENT_COMMERCIAL if is_business else RENT_RESIDENTIAL
@@ -620,6 +650,9 @@ def build_statement(
         "arrears_bf": _fmt_money(arrears_bf),
         "month_rent": _fmt_money(current_base),
         "other_charges": _fmt_money(other_charges),
+        "other_charges_value": other_charges,
+        "other_credits": _fmt_money(other_credits),
+        "other_credits_value": other_credits,
         "rent_plus_arrears": _fmt_money(current_base + arrears_bf),
         "unpaid_balance": _fmt_money(total_due),
 
@@ -631,6 +664,12 @@ def build_statement(
             ("Arrears Brought Forward", _fmt_money(arrears_bf), RENT_RECEIVABLE, "Accounts Receivable (Rent Arrears)"),
             ("Month Rent", _fmt_money(current_base), rent_code, rent_name),
             ("Other Charges", _fmt_money(other_charges), SERVICE_CHARGE_UTILITIES, "Service Charge / Utilities"),
+            # Only when there is one, so a tenant with no credit sees the
+            # breakdown exactly as before.
+            *(
+                [("Less: Credits", f"({_fmt_money(other_credits)})", SERVICE_CHARGE_UTILITIES, "Service Charge / Utilities")]
+                if other_credits else []
+            ),
             ("Rent + Arrears", _fmt_money(current_base + arrears_bf), RENT_RECEIVABLE, "Accounts Receivable (Rent Arrears)"),
             ("Unpaid Balance", _fmt_money(total_due), RENT_RECEIVABLE, "Accounts Receivable (Rent Arrears)"),
         ],
