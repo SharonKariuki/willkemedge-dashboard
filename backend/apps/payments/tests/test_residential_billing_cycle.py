@@ -201,7 +201,7 @@ class TestOneRunServesBothCycles:
         # the billing month spelled in full — "Sept" is the PDF ledger's own
         # shorthand and stops at the document.
         assert "September-2026" in send.call_args.args[2]
-        assert TenantNotification.objects.get(tenant=tenant).dedupe_key == (
+        assert TenantNotification.objects.get(tenant=tenant, channel="email").dedupe_key == (
             f"statement:{tenant.id}:2026-09"
         )
 

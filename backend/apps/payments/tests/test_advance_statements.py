@@ -245,7 +245,7 @@ class TestAdvanceStatementRun:
         # shorthand and stops at the document.
         assert "September-2026" in html
 
-        note = TenantNotification.objects.get(tenant=tenant)
+        note = TenantNotification.objects.get(tenant=tenant, channel="email")
         assert note.dedupe_key == f"statement:{tenant.id}:2026-09"
 
     def test_the_september_run_is_not_swallowed_as_an_august_duplicate(self, building):
@@ -268,7 +268,7 @@ class TestAdvanceStatementRun:
         assert august["sent"] == 1 and september["sent"] == 1
         assert send.call_count == 2
         assert set(
-            TenantNotification.objects.filter(tenant=tenant).values_list(
+            TenantNotification.objects.filter(tenant=tenant, channel="email").values_list(
                 "dedupe_key", flat=True
             )
         ) == {f"statement:{tenant.id}:2026-08", f"statement:{tenant.id}:2026-09"}

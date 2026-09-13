@@ -30,6 +30,9 @@ from apps.tenants.models import Tenant, TenantStatus
 
 User = get_user_model()
 AS_AT = date(2026, 9, 2)
+AT_OK = {"SMSMessageData": {"Recipients": [
+    {"status": "Success", "statusCode": 101, "messageId": "ATXid_1"},
+]}}
 
 
 @pytest.fixture(autouse=True)
@@ -39,6 +42,9 @@ def _smtp_configured(settings):
     settings.EMAIL_HOST_USER = "wilkem.ventures@gmail.com"
     settings.EMAIL_HOST_PASSWORD = "app-password"
     settings.TENANT_NOTIFICATIONS_ENABLED = True
+    # The monthly run now texts as well; an unpatched send reads "not
+    # configured" rather than reaching Africa's Talking.
+    settings.AT_API_KEY = ""
 
 
 @pytest.fixture
@@ -168,13 +174,16 @@ class TestMonthlyStatementRun:
         _make_tenant(building, id_number="T1", email="")
         _make_tenant(building, id_number="T2", email="")
 
-        with patch("apps.payments.notifications.send_email", return_value=True) as send:
+        with patch("apps.payments.notifications.send_email", return_value=True) as send,              patch("apps.payments.notifications.send_sms", return_value=AT_OK):
             counts = send_monthly_statements(AS_AT.isoformat())
 
         send.assert_not_called()
         assert counts == {"sent": 0, "failed": 0, "skipped": 0, "no_email": 2,
+                          "sms_sent": 2, "sms_failed": 0, "sms_skipped": 0, "no_phone": 0,
                           "as_at": "2026-09-02", "periods": {}}
-        assert TenantNotification.objects.count() == 0
+        # No email rows for the missing addresses. The SMS still went, which is
+        # the only copy these tenants get.
+        assert TenantNotification.objects.filter(channel=NotificationChannel.EMAIL).count() == 0
 
     def test_skips_tenants_who_are_not_active(self, building):
         _make_tenant(building, id_number="T1", status=TenantStatus.MOVED_OUT)
@@ -188,12 +197,13 @@ class TestMonthlyStatementRun:
     def test_rerunning_the_same_month_does_not_send_twice(self, building):
         _make_tenant(building)
 
-        with patch("apps.payments.notifications.send_email", return_value=True) as send:
+        with patch("apps.payments.notifications.send_email", return_value=True) as send,              patch("apps.payments.notifications.send_sms", return_value=AT_OK):
             first = send_monthly_statements(AS_AT.isoformat())
             second = send_monthly_statements(AS_AT.isoformat())
 
         assert first["sent"] == 1
         assert second == {"sent": 0, "failed": 0, "skipped": 1, "no_email": 0,
+                          "sms_sent": 0, "sms_failed": 0, "sms_skipped": 1, "no_phone": 0,
                           "as_at": "2026-09-02", "periods": {"2026-09": 1}}
         assert send.call_count == 1
 
