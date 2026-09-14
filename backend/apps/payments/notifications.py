@@ -122,6 +122,10 @@ def send_sms(phone: str, message: str) -> dict | None:
     """
     import httpx
 
+    if not getattr(settings, "SMS_ENABLED", False):
+        logger.warning("SMS skipped (SMS_ENABLED is off): %d-char message suppressed", len(message or ""))
+        return None
+
     api_key = getattr(settings, "AT_API_KEY", "")
     username = getattr(settings, "AT_USERNAME", "sandbox")
     sender_id = getattr(settings, "AT_SENDER_ID", "")

@@ -210,6 +210,10 @@ MPESA_ACCOUNT_PREFIX = config("MPESA_ACCOUNT_PREFIX", default="90290")
 # ---------------------------------------------------------------------------
 # Notifications
 # ---------------------------------------------------------------------------
+# Hard kill switch for ALL outbound SMS (tenant, admin, manual, test command).
+# Off unless explicitly set to true: when false, send_sms() returns before any
+# call to Africa's Talking, whatever AT_API_KEY holds.
+SMS_ENABLED = config("SMS_ENABLED", default=False, cast=bool)
 AT_API_KEY = config("AT_API_KEY", default="")
 AT_USERNAME = config("AT_USERNAME", default="sandbox")
 AT_SENDER_ID = config("AT_SENDER_ID", default="")
