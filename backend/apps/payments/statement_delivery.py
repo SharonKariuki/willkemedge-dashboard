@@ -167,6 +167,12 @@ def send_tenant_statement_sms(
         notification.save()
         return notification
 
+    # Hard kill switch, manual sends included.
+    if not getattr(settings, "SMS_ENABLED", False):
+        notification.error = "Suppressed: SMS is disabled"
+        notification.save()
+        return notification
+
     try:
         receipt = send_sms(tenant.phone, notification.body)
     except Exception as exc:
@@ -280,6 +286,13 @@ def send_tenant_statement(
             "Statement for tenant %s suppressed: TENANT_NOTIFICATIONS_ENABLED=false",
             tenant.id,
         )
+        return notification
+
+    # Hard kill switch, manual sends included.
+    if not getattr(settings, "TENANT_EMAIL_ENABLED", False):
+        notification.error = "Suppressed: tenant email is disabled"
+        notification.save()
+        logger.info("Statement for tenant %s suppressed: TENANT_EMAIL_ENABLED=false", tenant.id)
         return notification
 
     html = statement_summary_email_html(tenant.full_name, statement)
