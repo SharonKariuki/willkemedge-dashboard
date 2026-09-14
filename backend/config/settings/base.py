@@ -305,6 +305,11 @@ ALLOW_INSECURE_COOP_IPN = config("ALLOW_INSECURE_COOP_IPN", default=False, cast=
 # send it) and internal admin/director alerts (they are how you check the data
 # is right while tenants stay silent).
 TENANT_NOTIFICATIONS_ENABLED = config("TENANT_NOTIFICATIONS_ENABLED", default=True, cast=bool)
+# The monthly statement run texts each tenant their statement summary as well as
+# emailing the PDF. Turn this off to stop only the SMS — e.g. while the Africa's
+# Talking wallet is empty — without stopping the statement emails. Manual sends
+# from the dashboard are email-only and unaffected.
+STATEMENT_SMS_ENABLED = config("STATEMENT_SMS_ENABLED", default=True, cast=bool)
 # Master switch for INTERNAL staff alerts: unmatched credits, the daily
 # reconciliation summary, and reversal authorisation requests. Set false for a
 # quiet testing window. Note this silences the reversal request too — the

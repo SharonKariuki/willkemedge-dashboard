@@ -7,7 +7,7 @@ Tasks:
   generate_monthly_arrears   — 1st + 25th: create arrears records
   send_rent_reminders        — daily: SMS N days before each tenant's due day
   send_arrears_reminders     — daily: SMS on/after due day when rent unpaid
-  send_monthly_statements    — 1st + 25th: emailed rent statement PDF per tenant
+  send_monthly_statements    — 1st + 25th: emailed rent statement PDF + summary SMS per tenant
   poll_bank_statement        — hourly fallback for banks without webhooks
 
 The two monthly jobs run on two days, because the roster is on two cycles: the
@@ -781,6 +781,12 @@ def send_monthly_statements(period_iso: str | None = None) -> dict:
     has no address on file yet, and writing a failure row for each of them every
     month would bury the real failures.
 
+    Every tenant with a phone number is also texted the statement summary —
+    including the many with no email, for whom the SMS is the only copy. The SMS
+    has its own dedupe key, so one that failed is retried on a re-run even when
+    the email already went. STATEMENT_SMS_ENABLED switches the SMS off on its
+    own, without stopping the email.
+
     Returns per-outcome counts, which the cron endpoint echoes in its response so
     the scheduler's log says what actually happened.
     """
@@ -789,56 +795,82 @@ def send_monthly_statements(period_iso: str | None = None) -> dict:
     from .statement_delivery import (
         open_mail_connection,
         send_tenant_statement,
+        send_tenant_statement_sms,
         statement_dedupe_key,
+        statement_sms_dedupe_key,
     )
 
     as_at, forced_period = _statement_target(period_iso)
     counts = {
         "sent": 0, "failed": 0, "skipped": 0, "no_email": 0,
+        "sms_sent": 0, "sms_failed": 0, "sms_skipped": 0, "no_phone": 0,
         "as_at": as_at.isoformat(),
-        # Which months this run covered, and how many tenants each. A single
+        # Which months this run emailed, and how many tenants each. A single
         # "period" cannot describe a mixed roster: the 1 September run states
         # September for the houses and skips the arcade, which is already on
         # September from 25 August.
         "periods": {},
     }
 
+    def _already_sent(key):
+        return TenantNotification.objects.filter(
+            dedupe_key=key, status=NotificationStatus.SENT
+        ).exists()
+
     tenants = billable_active_tenants("unit", "unit__building")
     with open_mail_connection() as mail:
         for tenant in tenants:
-            if not tenant.email or not tenant.unit_id:
+            if not tenant.unit_id:
                 counts["no_email"] += 1
+                counts["no_phone"] += 1
                 continue
 
             period = forced_period or tenant_billing_period(tenant, as_at)
-            label = f"{period[0]:04d}-{period[1]:02d}"
-            counts["periods"][label] = counts["periods"].get(label, 0) + 1
 
-            # Dedupe on the month the statement is *about*, not the day it was
-            # drawn. Keyed on the send date, the residential run on 1 September
-            # and the commercial run on 25 August would both land in the month
-            # they fired in, and the two cycles would collide.
-            key = statement_dedupe_key(tenant.id, period_start(period))
-            already_sent = TenantNotification.objects.filter(
-                dedupe_key=key, status=NotificationStatus.SENT
-            ).exists()
-            if already_sent:
-                counts["skipped"] += 1
-                continue
-
-            notification = send_tenant_statement(
-                tenant, statement_date=as_at, period=period, dedupe_key=key,
-                connection=mail,
-            )
-            if notification.status == NotificationStatus.SENT:
-                counts["sent"] += 1
+            if not tenant.email:
+                counts["no_email"] += 1
             else:
-                counts["failed"] += 1
+                label = f"{period[0]:04d}-{period[1]:02d}"
+                counts["periods"][label] = counts["periods"].get(label, 0) + 1
+
+                # Dedupe on the month the statement is *about*, not the day it
+                # was drawn. Keyed on the send date, the residential run on 1
+                # September and the commercial run on 25 August would both land
+                # in the month they fired in, and the two cycles would collide.
+                key = statement_dedupe_key(tenant.id, period_start(period))
+                if _already_sent(key):
+                    counts["skipped"] += 1
+                else:
+                    notification = send_tenant_statement(
+                        tenant, statement_date=as_at, period=period, dedupe_key=key,
+                        connection=mail,
+                    )
+                    if notification.status == NotificationStatus.SENT:
+                        counts["sent"] += 1
+                    else:
+                        counts["failed"] += 1
+
+            if not tenant.phone:
+                counts["no_phone"] += 1
+                continue
+            sms_key = statement_sms_dedupe_key(tenant.id, period_start(period))
+            if _already_sent(sms_key):
+                counts["sms_skipped"] += 1
+                continue
+            sms = send_tenant_statement_sms(
+                tenant, statement_date=as_at, period=period, dedupe_key=sms_key,
+            )
+            if sms.status == NotificationStatus.SENT:
+                counts["sms_sent"] += 1
+            else:
+                counts["sms_failed"] += 1
 
     logger.info(
-        "send_monthly_statements (as at %s): %d sent %s, %d failed, "
-        "%d already sent, %d with no email on file",
+        "send_monthly_statements (as at %s): email %d sent %s, %d failed, "
+        "%d already sent, %d with no email; SMS %d sent, %d failed, "
+        "%d already sent, %d with no phone",
         as_at, counts["sent"], counts["periods"] or "{}", counts["failed"],
-        counts["skipped"], counts["no_email"],
+        counts["skipped"], counts["no_email"], counts["sms_sent"],
+        counts["sms_failed"], counts["sms_skipped"], counts["no_phone"],
     )
     return counts
