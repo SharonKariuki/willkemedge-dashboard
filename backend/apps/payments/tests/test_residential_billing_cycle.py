@@ -197,11 +197,11 @@ class TestOneRunServesBothCycles:
 
         assert counts["sent"] == 1
         assert counts["periods"] == {"2026-09": 1}
-        # The emailed ledger is a copy of the statement ledger, so it carries
-        # the ledger's own month label ("Sept-2026"), not the period name the
-        # subject line and the rent roll use.
-        assert "Sept-2026" in send.call_args.args[2]
-        assert TenantNotification.objects.get(tenant=tenant).dedupe_key == (
+        # The email body is a covering note, not a copy of the ledger, so it names
+        # the billing month spelled in full — "Sept" is the PDF ledger's own
+        # shorthand and stops at the document.
+        assert "September-2026" in send.call_args.args[2]
+        assert TenantNotification.objects.get(tenant=tenant, channel="email").dedupe_key == (
             f"statement:{tenant.id}:2026-09"
         )
 

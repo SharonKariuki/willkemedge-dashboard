@@ -240,12 +240,12 @@ class TestAdvanceStatementRun:
         assert counts["as_at"] == "2026-08-25"
         assert counts["sent"] == 1
         html = send.call_args.args[2]
-        # The emailed ledger is a copy of the statement ledger, so it carries
-        # the ledger's own month label ("Sept-2026"), not the period name the
-        # subject line and the rent roll use.
-        assert "Sept-2026" in html
+        # The email body is a covering note, not a copy of the ledger, so it names
+        # the billing month spelled in full — "Sept" is the PDF ledger's own
+        # shorthand and stops at the document.
+        assert "September-2026" in html
 
-        note = TenantNotification.objects.get(tenant=tenant)
+        note = TenantNotification.objects.get(tenant=tenant, channel="email")
         assert note.dedupe_key == f"statement:{tenant.id}:2026-09"
 
     def test_the_september_run_is_not_swallowed_as_an_august_duplicate(self, building):
@@ -268,7 +268,7 @@ class TestAdvanceStatementRun:
         assert august["sent"] == 1 and september["sent"] == 1
         assert send.call_count == 2
         assert set(
-            TenantNotification.objects.filter(tenant=tenant).values_list(
+            TenantNotification.objects.filter(tenant=tenant, channel="email").values_list(
                 "dedupe_key", flat=True
             )
         ) == {f"statement:{tenant.id}:2026-08", f"statement:{tenant.id}:2026-09"}
@@ -300,10 +300,10 @@ class TestAdvanceStatementRun:
             note = send_tenant_statement(tenant, automatic=False)
 
         assert note.status == NotificationStatus.SENT
-        # The emailed ledger is a copy of the statement ledger, so it carries
-        # the ledger's own month label ("Sept-2026"), not the period name the
-        # subject line and the rent roll use.
-        assert "Sept-2026" in send.call_args.args[2]
+        # The email body is a covering note, not a copy of the ledger, so it names
+        # the billing month spelled in full — "Sept" is the PDF ledger's own
+        # shorthand and stops at the document.
+        assert "September-2026" in send.call_args.args[2]
 
 
 class TestAdvanceChargeIsNotOverdue:
