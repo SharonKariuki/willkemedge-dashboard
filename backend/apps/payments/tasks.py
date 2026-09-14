@@ -82,7 +82,7 @@ def _notify_tenant_payment(tenant, amount, reference: str, payment_date) -> None
     msg = payment_sms_message(tenant.full_name, amount, unit_label, reference, statement)
     send_sms(tenant.phone, msg)
 
-    if tenant.email:
+    if tenant.email and getattr(settings, "TENANT_EMAIL_ENABLED", False):
         html = payment_statement_email_html(tenant.full_name, amount, reference, statement)
         attachments = []
         pdf = render_to_pdf("payments/statement_pdf.html", statement)

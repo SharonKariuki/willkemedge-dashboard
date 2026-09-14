@@ -122,6 +122,10 @@ def send_sms(phone: str, message: str) -> dict | None:
     """
     import httpx
 
+    if not getattr(settings, "SMS_ENABLED", False):
+        logger.warning("SMS skipped (SMS_ENABLED is off): %d-char message suppressed", len(message or ""))
+        return None
+
     api_key = getattr(settings, "AT_API_KEY", "")
     username = getattr(settings, "AT_USERNAME", "sandbox")
     sender_id = getattr(settings, "AT_SENDER_ID", "")
@@ -302,6 +306,15 @@ def send_email(
     the outcome need to tell those apart — without it, an unconfigured mailbox
     logs every statement as delivered.
     """
+    # Backstop for TENANT_EMAIL_ENABLED: whatever path got here, an address on
+    # a tenant record is not mailed while tenant email is switched off.
+    if not getattr(settings, "TENANT_EMAIL_ENABLED", False):
+        from apps.tenants.models import Tenant
+
+        if to_email and Tenant.objects.filter(email__iexact=to_email.strip()).exists():
+            logger.warning("Email skipped (TENANT_EMAIL_ENABLED is off): tenant recipient suppressed")
+            return False
+
     from_email = getattr(settings, "DEFAULT_FROM_EMAIL", "wilkem.ventures@gmail.com")
     user = getattr(settings, "EMAIL_HOST_USER", "")
     password = getattr(settings, "EMAIL_HOST_PASSWORD", "")
