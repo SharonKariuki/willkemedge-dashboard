@@ -113,9 +113,26 @@ def dispatch_notification(
         notification.save()
         return notification
 
+    # Hard kill switches, manual sends included. A channel that is switched off
+    # is skipped; when every requested channel is off the row stays PENDING so
+    # it never reads as delivered.
+    sms_wanted = notification.channel in (NotificationChannel.SMS, NotificationChannel.BOTH)
+    email_wanted = notification.channel in (NotificationChannel.EMAIL, NotificationChannel.BOTH)
+    sms_on = bool(getattr(settings, "SMS_ENABLED", False))
+    email_on = bool(getattr(settings, "TENANT_EMAIL_ENABLED", False))
+    if not ((sms_wanted and sms_on) or (email_wanted and email_on)):
+        logger.info(
+            "Notification %s suppressed for tenant %s: SMS_ENABLED/TENANT_EMAIL_ENABLED off",
+            notification.id, tenant.id,
+        )
+        notification.status = NotificationStatus.PENDING
+        notification.error = "Suppressed: SMS and tenant email are disabled"
+        notification.save()
+        return notification
+
     error: str | None = None
     try:
-        if notification.channel in (NotificationChannel.SMS, NotificationChannel.BOTH):
+        if sms_wanted and sms_on:
             if not tenant.phone:
                 raise ValueError("Tenant has no phone number on file")
             sms_receipt = send_sms(tenant.phone, rendered_body)
@@ -130,7 +147,7 @@ def dispatch_notification(
                 # recorded as FAILED, not a false 'sent'.
                 error = at_delivery_error(sms_receipt)
 
-        if notification.channel in (NotificationChannel.EMAIL, NotificationChannel.BOTH):
+        if email_wanted and email_on:
             if tenant.email:
                 send_email(
                     tenant.email,
