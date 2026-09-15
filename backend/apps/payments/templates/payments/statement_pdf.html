@@ -46,6 +46,7 @@
         .summary-tbl td { border: 1px solid #000000; padding: 4px 8px; font-weight: bold; }
         .summary-tbl .amt { text-align: right; }
         .summary-tbl .grand td { font-weight: bold; }
+        .deposit-tbl { margin-top: 4px; }
 
         .pay-tbl td { border: 1px solid #000000; padding: 4px 8px; font-size: 9.5px; }
         .pay-tbl .k { font-style: italic; width: 100px; }
@@ -142,6 +143,22 @@
                         <td class="amt">Ksh{{ total_due }}</td>
                     </tr>
                 </table>
+                {# Refundable and held apart from rent, so it sits below the
+                   total rather than inside it — the box still foots. #}
+                {% if security_deposit_value or deposit_is_agreed %}
+                <table class="summary-tbl deposit-tbl">
+                    <tr>
+                        <td>Security Deposit Held</td>
+                        <td class="amt">{{ security_deposit }}</td>
+                    </tr>
+                    {% if deposit_is_agreed %}
+                    <tr>
+                        <td>Agreed Security Deposit</td>
+                        <td class="amt">{{ agreed_deposit }}</td>
+                    </tr>
+                    {% endif %}
+                </table>
+                {% endif %}
             </td>
             <td class="p-gap"></td>
             <td class="p-right" style="width: 312px;">

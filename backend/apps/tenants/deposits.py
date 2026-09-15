@@ -73,3 +73,47 @@ def deposit_shortfall(tenant) -> Decimal:
     """
     held = Decimal(tenant.deposit_paid or ZERO)
     return max(expected_deposit(tenant) - held, ZERO).quantize(CENTS)
+
+
+def opening_deposit_on_books(tenant, as_of=None) -> Decimal:
+    """The deposit the cutover posted for this tenant straight to 2100.
+
+    ``post_opening_balances`` booked deposits already held at go-live as a bare
+    journal entry, with no Payment behind it, so a sum over DEPOSIT payments
+    alone reads those tenants as holding nothing.
+    """
+    from django.db.models import Sum
+
+    from apps.ledger.models import JournalLine
+
+    lines = JournalLine.objects.filter(
+        entry__source_type="opening_deposit",
+        entry__source_id=tenant.pk,
+        account__code="2100",
+    )
+    if as_of:
+        lines = lines.filter(entry__date__lte=as_of)
+    totals = lines.aggregate(cr=Sum("credit"), dr=Sum("debit"))
+    return (Decimal(totals["cr"] or ZERO) - Decimal(totals["dr"] or ZERO)).quantize(CENTS)
+
+
+def deposit_held_on_books(tenant, as_of=None) -> Decimal:
+    """What 2100 (Tenant Security Deposits Held) says this tenant has lodged.
+
+    The deposit as the ledger knows it — unvoided DEPOSIT payments plus any
+    cutover opening deposit — and so the figure the statement, the payment
+    history and ``Tenant.deposit_paid`` are all kept to. The card used to read
+    ``deposit_paid`` while the statement summed payments, and an edit to one
+    never reached the other.
+    """
+    from django.db.models import Sum
+
+    from apps.payments.models import Payment, PaymentType
+
+    payments = Payment.objects.filter(
+        tenant=tenant, payment_type=PaymentType.DEPOSIT, voided_at__isnull=True,
+    )
+    if as_of:
+        payments = payments.filter(payment_date__lte=as_of)
+    paid = Decimal(payments.aggregate(t=Sum("amount"))["t"] or ZERO)
+    return (paid + opening_deposit_on_books(tenant, as_of=as_of)).quantize(CENTS)

@@ -151,7 +151,14 @@ def _deposit_label(tenant, amount) -> str:
     Only when the figure is whole months of the current rent. An odd amount, or
     a rent that has moved since the deposit was taken, gets the plain label
     rather than a month count that would not be true.
+
+    A deposit the landlord agreed by hand is not months of anything, even when
+    the figure happens to divide evenly, so it is named as agreed.
     """
+    from apps.tenants.deposits import has_agreed_deposit
+
+    if has_agreed_deposit(tenant):
+        return "Rent Security Deposit (Agreed)"
     rent = _money(tenant.monthly_rent)
     if rent > 0:
         months = _money(amount) / rent
@@ -540,13 +547,14 @@ def build_statement(
     # `total_due` ("Unpaid Balance"). They are additive to the account rather
     # than a re-derivation of the net balance.
 
-    #  Security deposit held = deposit-type payments received (up to as_of).
-    deposit_q = Payment.objects.filter(
-        tenant=tenant, payment_type=PaymentType.DEPOSIT, voided_at__isnull=True
-    )
-    if as_of:
-        deposit_q = deposit_q.filter(payment_date__lte=as_of)
-    security_deposit = _money(deposit_q.aggregate(t=Sum("amount"))["t"])
+    #  Security deposit held = what 2100 holds for the tenant (up to as_of):
+    #  deposit payments plus any deposit the cutover posted without a payment.
+    #  An edit to the deposit is booked (``adjust_deposit_held``), so this is
+    #  also the figure the director last set.
+    from apps.tenants.deposits import deposit_held_on_books, expected_deposit, has_agreed_deposit
+
+    security_deposit = _money(deposit_held_on_books(tenant, as_of=as_of))
+    deposit_is_agreed = has_agreed_deposit(tenant)
 
     #  Arrears brought forward comes off the ledger above — the running balance
     #  the month before the current one closed on. It used to be a separate
@@ -647,6 +655,11 @@ def build_statement(
 
         # --- receipt breakdown: the named totals ---
         "security_deposit": _fmt_money(security_deposit),
+        "security_deposit_value": security_deposit,
+        # The agreed figure, printed beside what is held only where the
+        # director overrode the rule — the rule itself is not news to a tenant.
+        "deposit_is_agreed": deposit_is_agreed,
+        "agreed_deposit": _fmt_money(expected_deposit(tenant)) if deposit_is_agreed else "",
         "arrears_bf": _fmt_money(arrears_bf),
         "month_rent": _fmt_money(current_base),
         "other_charges": _fmt_money(other_charges),
