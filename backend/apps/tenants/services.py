@@ -181,6 +181,115 @@ def record_initial_deposit(
     )
 
 
+class DepositAdjustmentError(Exception):
+    """An edited deposit that cannot be put on the books as asked."""
+
+
+@transaction.atomic
+def adjust_deposit_held(tenant: Tenant, new_amount, *, actor=None, on: date | None = None):
+    """Bring the booked deposit to ``new_amount`` after the director edits it.
+
+    Editing ``deposit_paid`` used to change the card and nothing else: the
+    statement and 2100 read DEPOSIT payments, so the edit looked lost the
+    moment a statement was drawn. The difference is now booked instead.
+
+      * Raised  — a DEPOSIT payment for the difference, dated ``on`` (today).
+      * Lowered — DEPOSIT payments are voided newest first until the books are
+        at or below the new figure, and any remainder of the last one voided is
+        re-booked on that payment's own date, source and reference, so the
+        statement still shows the deposit when it was actually received.
+
+    A cutover deposit is a bare journal entry with no payment to void, so the
+    figure cannot be taken below it here; that needs an accountant's journal.
+
+    Returns the Payments created.
+    """
+    from apps.accounts import audit
+    from apps.payments.models import Payment, PaymentSource, PaymentType
+    from apps.payments.services import void_payment
+
+    from .deposits import CENTS, deposit_held_on_books, opening_deposit_on_books
+
+    # Serialise concurrent edits of the same tenant: both would otherwise read
+    # the same "before" and book the difference twice.
+    Tenant.objects.select_for_update().filter(pk=tenant.pk).first()
+
+    new = Decimal(str(new_amount or 0)).quantize(CENTS)
+    before = deposit_held_on_books(tenant)
+    created = []
+    created_by = actor if getattr(actor, "is_authenticated", False) else None
+
+    if new != before:
+        held = before
+        if new < before:
+            opening = opening_deposit_on_books(tenant)
+            if new < opening:
+                raise DepositAdjustmentError(
+                    f"KES {opening:,.2f} of this deposit was brought in at cutover and "
+                    f"cannot be reduced from here. Ask the accountant to post a journal."
+                )
+            deposits = Payment.objects.filter(
+                tenant=tenant, payment_type=PaymentType.DEPOSIT, voided_at__isnull=True,
+            ).order_by("-payment_date", "-created_at")
+            for pay in deposits:
+                if held <= new:
+                    break
+                void_payment(pay, actor=actor, reason=f"Deposit edited to KES {new:,.2f}")
+                held -= pay.amount
+                if held < new:
+                    created.append(_book_deposit(
+                        tenant, new - held, on=pay.payment_date, source=pay.source,
+                        reference=pay.reference, created_by=created_by,
+                        notes=f"Deposit edited to KES {new:,.2f}; remainder of payment #{pay.pk}.",
+                    ))
+                    held = new
+        if new > held:
+            on = on or date.today()
+            created.append(_book_deposit(
+                tenant, new - held, on=on, source=PaymentSource.CASH, reference="",
+                created_by=created_by,
+                notes=f"Deposit edited from KES {before:,.2f} to KES {new:,.2f}.",
+            ))
+
+        audit.record(
+            actor=actor,
+            action="tenant.deposit_adjust",
+            object_type="tenant",
+            object_id=tenant.pk,
+            summary=f"Deposit held for {tenant} changed from KES {before} to KES {new}",
+            old_values={"deposit_held": before},
+            new_values={"deposit_held": new, "payments": [p.pk for p in created]},
+        )
+
+    if tenant.deposit_paid != new:
+        tenant.deposit_paid = new
+        tenant.save(update_fields=["deposit_paid", "updated_at"])
+    return created
+
+
+def _book_deposit(tenant, amount, *, on, source, reference, notes, created_by):
+    from apps.payments.models import Payment, PaymentType
+    from apps.payments.services import process_payment
+
+    # Numbered by how many deposit rows this tenant already has, voided ones
+    # included, so an edit that returns to an earlier figure on the same day is
+    # not mistaken for a replay of the first booking.
+    ordinal = Payment.objects.filter(tenant=tenant, payment_type=PaymentType.DEPOSIT).count()
+    return process_payment(
+        tenant=tenant,
+        amount=amount,
+        payment_date=on,
+        period_month=on.month,
+        period_year=on.year,
+        source=source,
+        payment_type=PaymentType.DEPOSIT,
+        reference=reference,
+        notes=notes,
+        idempotency_key=f"DEPOSIT-ADJ-{tenant.pk}-{ordinal}",
+        created_by=created_by,
+    )
+
+
 @transaction.atomic
 def move_out_tenant(
     tenant: Tenant,

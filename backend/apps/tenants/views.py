@@ -25,7 +25,9 @@ from .serializers import (
     rent_roll_balances,
 )
 from .services import (
+    DepositAdjustmentError,
     FileValidationError,
+    adjust_deposit_held,
     move_in_tenant,
     move_out_tenant,
     record_initial_deposit,
@@ -195,6 +197,26 @@ class TenantViewSet(viewsets.ModelViewSet):
                 created_by=self.request.user,
             )
 
+    def perform_update(self, serializer):
+        """Save the edit, and book any change the director made to the deposit.
+
+        Only a figure the director actually changed is booked. The form sends
+        ``deposit_paid`` on every save, and a tenant whose card and books
+        already disagree must not have a deposit booked because someone fixed
+        their phone number — ``sync_deposit_bookings`` is for those.
+        """
+        from rest_framework.exceptions import ValidationError
+
+        before = serializer.instance.deposit_paid
+        after = serializer.validated_data.get("deposit_paid", before)
+        with transaction.atomic():
+            tenant = serializer.save()
+            if Decimal(str(after)) != Decimal(str(before)):
+                try:
+                    adjust_deposit_held(tenant, after, actor=self.request.user)
+                except DepositAdjustmentError as exc:
+                    raise ValidationError({"deposit_paid": str(exc)}) from exc
+
     @action(detail=False, methods=["get"], url_path="export")
     def export_csv(self, request):
         """GET /api/tenants/export/ — CSV of the (filtered) tenant list.
@@ -348,6 +370,7 @@ class TenantViewSet(viewsets.ModelViewSet):
 
         from apps.payments.models import Arrears, Payment
         from apps.payments.monthly_ledger import build_monthly_ledger
+        from apps.tenants.deposits import deposit_held_on_books
         tenant = self.get_object()
         payments = (
             Payment.objects.filter(tenant=tenant, voided_at__isnull=True)
@@ -365,7 +388,8 @@ class TenantViewSet(viewsets.ModelViewSet):
             "total_paid": _money(total_paid),
             "total_arrears": _money(total_arrears),
             # Deposit held — the "Rent Security Deposit" column of the rent roll.
-            "security_deposit": _money(tenant.deposit_paid),
+            # Read off the books, as the statement does, so the two cannot differ.
+            "security_deposit": _money(deposit_held_on_books(tenant)),
             # Month-by-month rent roll; extends itself as billing posts periods.
             "monthly_ledger": build_monthly_ledger(tenant),
             "payments": [
