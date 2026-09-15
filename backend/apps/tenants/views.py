@@ -215,7 +215,7 @@ class TenantViewSet(viewsets.ModelViewSet):
                 try:
                     adjust_deposit_held(tenant, after, actor=self.request.user)
                 except DepositAdjustmentError as exc:
-                    raise ValidationError({"deposit_paid": str(exc)}) from exc
+                    raise ValidationError({"deposit_paid": [str(exc)]}) from exc
 
     @action(detail=False, methods=["get"], url_path="export")
     def export_csv(self, request):

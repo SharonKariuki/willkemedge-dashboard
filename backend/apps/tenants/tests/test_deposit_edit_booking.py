@@ -185,6 +185,59 @@ class TheStatementCarriesTheAgreedDeposit(DepositBookingTestCase):
         assert build_statement(tenant)["security_deposit"] == "15,000.00"
 
 
+class TheBooksFollowTheEdit(DepositBookingTestCase):
+    """What the Accounting page shows, not only what the posting code writes."""
+
+    def _held_on_balance_sheet(self):
+        today = _dt.date.today()
+        resp = self.client.get(
+            f"/api/reports/accounting/?tab=balance_sheet&month={today.month}&year={today.year}"
+        )
+        assert resp.status_code == status.HTTP_200_OK, resp.content
+        body = resp.json()
+        assert body["balanced"] is True
+        return (
+            D(str(body["liabilities"]["2100 Tenant Security Deposits Held"])),
+            D(str(body["assets"]["1030 Tenant Security Deposit Bank Account"])),
+        )
+
+    def test_the_balance_sheet_follows_a_raise_and_a_cut(self):
+        tenant = self._let("WED50")
+
+        self._edit(tenant, deposit_paid="15000")
+        assert self._held_on_balance_sheet() == (D("15000"), D("15000"))
+
+        self._edit(tenant, deposit_paid="12000")
+        assert self._held_on_balance_sheet() == (D("12000"), D("12000"))
+
+    def test_a_commercial_deposit_carries_no_vat(self):
+        """The 16% is split out of commercial RENT; a deposit is not income."""
+        tenant = self._let("MCG50", rent="50000", classification=UnitClassification.BUSINESS)
+
+        self._edit(tenant, deposit_paid="150000")
+
+        codes = set(
+            JournalLine.objects.filter(
+                entry__source_type="payment",
+                entry__source_id=self._deposits(tenant)[0].pk,
+            ).values_list("account__code", flat=True)
+        )
+        assert codes == {"1030", "2100"}
+        assert self._held_on_balance_sheet() == (D("150000"), D("150000"))
+
+    def test_an_edit_that_cannot_reach_the_ledger_is_not_saved(self):
+        from unittest.mock import patch
+
+        tenant = self._let("WED51")
+
+        with patch("apps.ledger.posting.post_payment", side_effect=RuntimeError("GL down")):
+            resp = self._edit(tenant, expect=status.HTTP_400_BAD_REQUEST, deposit_paid="15000")
+
+        assert "ledger" in resp.json()["deposit_paid"][0]
+        assert tenant.deposit_paid == D("0.00")
+        assert not Payment.objects.filter(tenant=tenant).exists()
+
+
 class SyncDepositBookingsTests(DepositBookingTestCase):
     def _run(self, *args):
         out = StringIO()

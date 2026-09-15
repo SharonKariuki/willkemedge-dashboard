@@ -216,7 +216,7 @@ def adjust_deposit_held(tenant: Tenant, new_amount, *, actor=None, on: date | No
 
     new = Decimal(str(new_amount or 0)).quantize(CENTS)
     before = deposit_held_on_books(tenant)
-    created = []
+    created, voided = [], []
     created_by = actor if getattr(actor, "is_authenticated", False) else None
 
     if new != before:
@@ -235,6 +235,7 @@ def adjust_deposit_held(tenant: Tenant, new_amount, *, actor=None, on: date | No
                 if held <= new:
                     break
                 void_payment(pay, actor=actor, reason=f"Deposit edited to KES {new:,.2f}")
+                voided.append(pay)
                 held -= pay.amount
                 if held < new:
                     created.append(_book_deposit(
@@ -251,6 +252,14 @@ def adjust_deposit_held(tenant: Tenant, new_amount, *, actor=None, on: date | No
                 notes=f"Deposit edited from KES {before:,.2f} to KES {new:,.2f}.",
             ))
 
+        # The ledger signals swallow a posting error (recording a
+        # PostingFailure) so a tenant's payment is never lost to a GL hiccup.
+        # A deposit edit is not a tenant's payment: if its entries did not reach
+        # 1030/2100 the edit must not stand either, or the card and statement
+        # would move while the books did not. Raising unwinds the whole edit.
+        _assert_posted(created, kind="normal")
+        _assert_posted(voided, kind="reversal")
+
         audit.record(
             actor=actor,
             action="tenant.deposit_adjust",
@@ -265,6 +274,21 @@ def adjust_deposit_held(tenant: Tenant, new_amount, *, actor=None, on: date | No
         tenant.deposit_paid = new
         tenant.save(update_fields=["deposit_paid", "updated_at"])
     return created
+
+
+def _assert_posted(payments, *, kind):
+    from apps.ledger.models import JournalEntry
+
+    ids = [p.pk for p in payments]
+    posted = set(
+        JournalEntry.objects.filter(source_type="payment", source_id__in=ids, kind=kind)
+        .values_list("source_id", flat=True)
+    )
+    if set(ids) - posted:
+        raise DepositAdjustmentError(
+            "The deposit change could not be posted to the ledger, so nothing was "
+            "saved. Try again, or check Posting Failures."
+        )
 
 
 def _book_deposit(tenant, amount, *, on, source, reference, notes, created_by):

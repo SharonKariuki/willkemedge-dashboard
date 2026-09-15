@@ -58,7 +58,7 @@ class Command(BaseCommand):
     def handle(self, *args, **opts):
         from apps.payments.models import PaymentSource
         from apps.tenants.models import Tenant, TenantStatus
-        from apps.tenants.services import _book_deposit
+        from apps.tenants.services import DepositAdjustmentError, _assert_posted, _book_deposit
 
         try:
             on = _dt.date.fromisoformat(opts["on"]) if opts["on"] else _dt.date.today()
@@ -111,13 +111,22 @@ class Command(BaseCommand):
             ))
             return
 
-        with transaction.atomic():
-            for tenant, card, books in missing:
-                _book_deposit(
-                    tenant, card - books, on=on, source=PaymentSource.CASH, reference="",
-                    notes="Deposit on the tenant card, booked by sync_deposit_bookings.",
-                    created_by=None,
-                )
+        # All or nothing, and only if every booking reached 1030/2100: a run that
+        # left some deposits as payments with no journal entry would recreate
+        # exactly the card-versus-books gap this command exists to close.
+        try:
+            with transaction.atomic():
+                booked = [
+                    _book_deposit(
+                        tenant, card - books, on=on, source=PaymentSource.CASH, reference="",
+                        notes="Deposit on the tenant card, booked by sync_deposit_bookings.",
+                        created_by=None,
+                    )
+                    for tenant, card, books in missing
+                ]
+                _assert_posted(booked, kind="normal")
+        except DepositAdjustmentError as exc:
+            raise CommandError(f"{exc} Nothing was booked.") from exc
 
         self.stdout.write(self.style.SUCCESS(f"\nBooked {len(missing)} deposit(s)."))
 
