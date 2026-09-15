@@ -298,7 +298,15 @@ export default function TenantDetailPage() {
               <Field label="Phone" error={editForm.formState.errors.phone?.message}><input {...editForm.register("phone")} className={inputCls} /></Field>
               <Field label="Email" error={editForm.formState.errors.email?.message}><input {...editForm.register("email")} className={inputCls} /></Field>
               <Field label="Monthly rent (KES)" error={editForm.formState.errors.monthly_rent?.message}><input {...editForm.register("monthly_rent")} className={inputCls} /></Field>
-              <Field label="Rent security deposit (KES)" error={editForm.formState.errors.deposit_paid?.message}><input {...editForm.register("deposit_paid")} className={inputCls} /></Field>
+              {/* Changing this books the difference to 1030/2100, so the
+                  statement and the balance sheet follow the edit. */}
+              <Field
+                label="Rent security deposit (KES)"
+                error={editForm.formState.errors.deposit_paid?.message}
+                hint="Changing this books the difference to the deposit account and shows on the statement."
+              >
+                <input {...editForm.register("deposit_paid")} className={inputCls} />
+              </Field>
               {/* The override, not the default: blank leaves the letting on the
                   rule (one month's rent, three commercial). It exists because
                   some deposits were agreed at a figure the rule never produces,
