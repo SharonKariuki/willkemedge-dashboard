@@ -8,32 +8,35 @@ name: Scheduled jobs
 #   - secret   CRON_TRIGGER_TOKEN  (must equal CRON_TRIGGER_TOKEN in Render)
 #   - variable API_BASE_URL        (e.g. https://<your-api-domain>/api)
 #
-# The roster is on two billing cycles, so the monthly pair fires on TWO days.
-# Both are load-bearing; dropping either leaves half the portfolio unbilled.
+# Every tenant is invoiced a month ahead — next month's rent plus this month's
+# water, due on the 5th — and the monthly pair fires on the day each kind of
+# letting is invoiced. Both days are load-bearing; dropping either leaves half
+# the portfolio uninvoiced until the catch-up on the 1st.
 #
-#   1st  — RESIDENTIAL. Raises the month just begun and emails its statement,
-#          four days before rent falls due on the 5th.
-#   25th — COMMERCIAL. Raises the month AHEAD and emails it, so the arcade's
-#          VAT invoice is in hand on 25 August for September.
+#   25th — COMMERCIAL. 25 September raises and sends October, so the arcade's
+#          VAT invoice is in hand before the month it covers.
+#   28th — RESIDENTIAL. 28 September raises and sends October, with September's
+#          water read up to that day.
+#   1st  — CATCH-UP for both. Sends nothing new when the 25th and 28th worked;
+#          otherwise the invoice still arrives before rent falls due.
 #
-# Each run serves whichever tenants that day's cycle applies to and skips the
-# rest as already-sent, so neither has to know who it is "for" — the statement
-# dedupe key is the month stated. apps/payments/billing_calendar.py owns the
-# rule and lists what else depends on it.
+# Each run serves whichever tenants that day applies to and skips the rest as
+# already-sent, so no run has to know who it is "for" — the statement dedupe
+# key is the month stated. apps/payments/billing_calendar.py owns the rule and
+# lists what else depends on it.
 #
 # Order matters on both days. monthly-arrears raises the rent; a statement
 # emailed before it has run states a balance with the stated month missing from
 # it. Half an hour apart is ample — arrears is a handful of queries per tenant.
 #
-# The 25th is also STATEMENT_RUN_DAY in Django settings (default 25), which is
-# what the jobs use to work out WHICH month a commercial tenant is on. Both have
-# to move together: change only this and the jobs still bill next month, just on
-# the wrong day; change only the setting and they fire on a day that bills the
-# month already in progress.
+# The 25th and 28th are also STATEMENT_RUN_DAY and RESIDENTIAL_RUN_DAY in
+# Django settings, which is what the jobs use to work out WHICH month a tenant
+# is on. Each pair has to move together: change only a cron line and the jobs
+# fire on a day that bills the month already in progress; change only the
+# setting and nothing is invoiced on the new day.
 #
-# Each run is a catch-up for the other — monthly-arrears bills every month a
-# tenant is short of, not just one — so a failed 25th is repaired on the 1st,
-# before that morning's statements go out.
+# monthly-arrears bills every month a tenant is short of, not just one, so a
+# failed run is repaired by the next, before that morning's statements go out.
 #
 # NOTE: scheduled workflows only run from the repository's DEFAULT branch, so
 # this must be merged to that branch (main) to start firing. Times are UTC;
@@ -45,10 +48,12 @@ on:
     - cron: "0 6 * * *"    # arrears-reminders      09:00 EAT
     - cron: "0 22 * * *"   # recalculate-statuses   01:00 EAT (next day)
     - cron: "0 15 * * *"   # daily-reconciliation   18:00 EAT
-    - cron: "30 3 1 * *"   # monthly-arrears        1st, 06:30 EAT (residential: this month)
-    - cron: "0 4 1 * *"    # monthly-statements     1st, 07:00 EAT (residential: this month)
     - cron: "30 3 25 * *"  # monthly-arrears       25th, 06:30 EAT (commercial: next month)
     - cron: "0 4 25 * *"   # monthly-statements    25th, 07:00 EAT (commercial: next month)
+    - cron: "30 3 28 * *"  # monthly-arrears       28th, 06:30 EAT (residential: next month)
+    - cron: "0 4 28 * *"   # monthly-statements    28th, 07:00 EAT (residential: next month)
+    - cron: "30 3 1 * *"   # monthly-arrears        1st, 06:30 EAT (catch-up for both)
+    - cron: "0 4 1 * *"    # monthly-statements     1st, 07:00 EAT (catch-up for both)
   workflow_dispatch:
     inputs:
       job:
@@ -83,6 +88,8 @@ jobs:
             "0 4 1 * *")   slug="monthly-statements" ;;
             "30 3 25 * *") slug="monthly-arrears" ;;
             "0 4 25 * *")  slug="monthly-statements" ;;
+            "30 3 28 * *") slug="monthly-arrears" ;;
+            "0 4 28 * *")  slug="monthly-statements" ;;
             *)            slug="${{ github.event.inputs.job }}" ;;
           esac
           if [ -z "$slug" ]; then echo "Could not resolve a job slug"; exit 1; fi

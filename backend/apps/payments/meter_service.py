@@ -17,7 +17,6 @@ anywhere and a tenant is billed for water nobody metered.
 """
 from __future__ import annotations
 
-import calendar
 import datetime as _dt
 from decimal import Decimal
 
@@ -28,14 +27,42 @@ from django.db.models import Q
 WATER_LABEL = "Water Usage"
 
 
-def _posting_date_for(period_year: int, period_month: int) -> _dt.date:
-    """Charges post on the last day of the month they meter."""
+def _posting_date_for(tenant, period_year: int, period_month: int) -> _dt.date:
+    """Metered usage posts on the day it is invoiced — the tenant's run day.
+
+    September's water is read up to 28 September for a house (25 September for
+    a shop) and goes out that day on the invoice for October's rent, so that is
+    the date it carries. It used to post on the last day of the month, which
+    printed a 30 September line on a statement drawn on the 28th and filed the
+    water under the following month's brought-forward figure.
+    """
+    from .billing_calendar import invoice_date, usage_invoice_period
+
     try:
-        return _dt.date(
-            period_year, period_month, calendar.monthrange(period_year, period_month)[1]
-        )
+        _dt.date(period_year, period_month, 1)
     except ValueError as exc:
         raise ValidationError(f"Invalid period {period_month}/{period_year}.") from exc
+    return invoice_date(tenant, usage_invoice_period(period_year, period_month))
+
+
+def is_metered_usage(charge) -> bool:
+    """Whether ``charge`` is metered usage, billed on the NEXT month's invoice.
+
+    Usage for a month is only known once that month has been read, so it rides
+    on the invoice sent at the end of it, beside the following month's rent. A
+    one-off charge — "Other costs" posted from a landlord sheet, a deposit
+    correction — belongs to the invoice for its own month and is not moved.
+    """
+    return charge.closing_reading is not None or charge.label == WATER_LABEL
+
+
+def invoiced_with(charge) -> _dt.date:
+    """The first day of the rent period whose invoice carries ``charge``."""
+    from .billing_calendar import period_start, usage_invoice_period
+
+    if is_metered_usage(charge):
+        return period_start(usage_invoice_period(charge.period_year, charge.period_month))
+    return charge.posting_date
 
 
 def meter_history(tenant, *, label: str = WATER_LABEL):
@@ -58,6 +85,22 @@ def meter_history(tenant, *, label: str = WATER_LABEL):
     unit_id = getattr(tenant, "unit_id", None)
     qs = qs.filter(tenant__unit_id=unit_id) if unit_id else qs.filter(tenant=tenant)
     return qs.order_by("period_year", "period_month", "id")
+
+
+def missing_usage_reading(tenant, period: tuple[int, int], *, label: str = WATER_LABEL) -> bool:
+    """Whether this unit's meter is read but has no charge for ``period``.
+
+    Only a meter with history before ``period`` counts: a unit that has never
+    been read — an unmetered shop, a new building — is not owed a reading, and
+    flagging it every month would bury the ones that are.
+    """
+    year, month = period
+    history = meter_history(tenant, label=label)
+    if history.filter(period_year=year, period_month=month).exists():
+        return False
+    return history.filter(
+        Q(period_year__lt=year) | Q(period_year=year, period_month__lt=month)
+    ).exists()
 
 
 def previous_reading_for(
@@ -195,7 +238,7 @@ def bill_meter_reading(
     from .models import UtilityCharge
 
     period = (period_year, period_month)
-    posting_date = _posting_date_for(period_year, period_month)
+    posting_date = _posting_date_for(tenant, period_year, period_month)
     closing = Decimal(str(closing_reading))
 
     carried = previous_reading_for(tenant, label=label, before_period=period)

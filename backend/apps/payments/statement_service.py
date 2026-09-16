@@ -37,6 +37,7 @@ from apps.expenses.coa import (
     SERVICE_CHARGE_UTILITIES,
 )
 
+from .meter_service import invoiced_with
 from .monthly_ledger import OPENING_MARKER
 
 ZERO = Decimal("0.00")
@@ -181,29 +182,29 @@ _ORDER_UTILITY = 5
 _ORDER_WAIVER = 6
 
 
-def _raised_on(tenant, year: int, month: int, *, in_advance: bool) -> _dt.date:
+def _raised_on(tenant, year: int, month: int) -> _dt.date:
     """The date the statement shows a month's rent as having been raised.
 
     The books hold a charge against a *period*, not a day, so the statement has
-    to decide what date to print beside it. It prints the day the charge fell
-    due on the tenant:
+    to decide what date to print beside it. It prints the day the invoice for
+    that month went out:
 
-      * commercial rent is billed for the month ahead, so it is raised at the
-        close of the month before — September's on 31 August;
-      * residential rent is raised on the 1st of its own month;
+      * rent is invoiced a month ahead, on the tenant's run day — October's on
+        28 September for a house and on 25 September for a shop;
       * neither is ever shown as raised before the tenant moved in. Fortcom's
-        August rent is dated 10 August, the day their lease began, not 31 July.
+        August rent is dated 10 August, the day their lease began, not 25 July.
 
     The period a charge belongs to is untouched by this — only the date printed
     beside it. Arrears, the summary box and the roll-forward all still key off
-    the period, which is why a September charge shown on 31 August does not
-    fall into August's brought-forward figure.
+    the period, which is why an October charge shown on 28 September does not
+    fall into September's brought-forward figure.
     """
+    from .billing_calendar import invoice_date
+
     try:
-        first = _dt.date(year, month, 1)
+        raised = invoice_date(tenant, (year, month))
     except ValueError:
         return _dt.date(year, max(1, min(12, month)), 1)
-    raised = first - _dt.timedelta(days=1) if in_advance else first
     move_in = getattr(tenant, "move_in_date", None)
     if isinstance(move_in, _dt.datetime):
         move_in = move_in.date()
@@ -233,7 +234,6 @@ def _ordinal(n: int) -> str:
 def _build_ledger(
     tenant,
     *,
-    is_business: bool,
     as_of: _dt.date | None,
     period_start: _dt.date | None = None,
 ):
@@ -252,11 +252,14 @@ def _build_ledger(
     #   ``period`` the month the charge belongs to — what the summary box, the
     #              brought-forward figure and the arrears roll key off.
     #
-    # They only diverge for rent: commercial rent for September is shown as
-    # raised on 31 August but belongs to September, and a first month is shown
-    # on the move-in date. Keeping them apart is what lets the ledger read like
-    # the landlord's sheet without September's rent falling into August's
-    # arrears.
+    # They diverge for rent, which is invoiced a month ahead — October's rent
+    # is shown as raised on 28 September but belongs to October, and a first
+    # month is shown on the move-in date — and for metered water, which is
+    # invoiced with the FOLLOWING month's rent: September's water sits on the
+    # October invoice, so ``period`` is October for it. Keeping them apart is
+    # what lets the ledger read like the landlord's sheet without October's
+    # rent falling into September's arrears, or September's water into the
+    # October invoice's brought-forward figure.
     #
     # (shown, sort_order, description, invoice_amount, payment_amount, period)
     events: list[tuple[_dt.date, int, str, Decimal, Decimal, _dt.date]] = []
@@ -267,13 +270,11 @@ def _build_ledger(
         except ValueError:
             continue
         # ``as_of`` cuts on the period, not on the date shown: a statement drawn
-        # on 1 September must carry September's rent even though the charge is
-        # dated 31 August.
+        # on 1 October must carry October's rent, which is dated 28 September,
+        # and one cut at 30 September must not.
         if as_of and period > as_of:
             continue
-        posting = _raised_on(
-            tenant, arr.period_year, arr.period_month, in_advance=is_business
-        )
+        posting = _raised_on(tenant, arr.period_year, arr.period_month)
         base = _money(arr.expected_rent)
         period_label = _ledger_period(arr.period_month, arr.period_year)
 
@@ -323,6 +324,7 @@ def _build_ledger(
     for util in UtilityCharge.objects.filter(tenant=tenant).order_by("posting_date", "id"):
         if as_of and util.posting_date > as_of:
             continue
+        invoiced = invoiced_with(util)
         amount = _money(util.amount)
         if amount < 0:
             # A negative "charge" is money the landlord is giving back — DON2B's
@@ -333,12 +335,12 @@ def _build_ledger(
             # balance, the total due and the brought-forward figure all stay put.
             events.append((
                 util.posting_date, _ORDER_UTILITY, f"Credit - {util.description()}",
-                ZERO, -amount, util.posting_date,
+                ZERO, -amount, invoiced,
             ))
         else:
             events.append((
                 util.posting_date, _ORDER_UTILITY, util.description(),
-                amount, ZERO, util.posting_date,
+                amount, ZERO, invoiced,
             ))
 
     # Every credit the tenant sent, shown the way they sent it.
@@ -494,7 +496,7 @@ def build_statement(
         _dt.date(current.period_year, current.period_month, 1) if current is not None else None
     )
     rows, balance, arrears_bf = _build_ledger(
-        tenant, is_business=is_business, as_of=as_of, period_start=period_start
+        tenant, as_of=as_of, period_start=period_start
     )
 
     if current is not None:
@@ -568,28 +570,28 @@ def build_statement(
     #  in full, against an unpaid balance of nil on the same page.
     arrears_bf = _money(arrears_bf)
 
-    #  Other charges = the water and other costs raised in the period being
-    #  billed. It used to sum every utility charge the tenant ever had, but the
-    #  ledger already folds earlier months into Arrears Brought Forward, so from
-    #  a tenant's second water bill the breakdown counted last month's water
-    #  twice. The cut is the one `_build_ledger` makes for brought-forward — on
-    #  the posting date, against the current period's start — so the two figures
-    #  partition the charges between them. With no rent period on file there is
-    #  nothing brought forward, and every charge belongs here.
+    #  Other charges = the water and other costs on the invoice being stated.
+    #  It used to sum every utility charge the tenant ever had, but the ledger
+    #  already folds earlier invoices into Arrears Brought Forward, so from a
+    #  tenant's second water bill the breakdown counted last month's water
+    #  twice. The cut is the one `_build_ledger` makes for brought-forward —
+    #  on the invoice a charge rides on, against the current period's start —
+    #  so the two figures partition the charges between them. Metered water
+    #  rides on the NEXT month's invoice: the October statement's Other Charges
+    #  is September's water. With no rent period on file there is nothing
+    #  brought forward, and every charge belongs here.
     #
     #  Credits are split out rather than netted in: a landlord credit is not
     #  negative water, and "Other Charges -2,096" is what the tenant used to see.
     util_q = UtilityCharge.objects.filter(tenant=tenant)
     if as_of:
         util_q = util_q.filter(posting_date__lte=as_of)
-    if period_start:
-        util_q = util_q.filter(posting_date__gte=period_start)
-    other_charges = _money(
-        util_q.filter(amount__gt=0).aggregate(t=Sum("amount"))["t"] or ZERO
-    )
-    other_credits = -_money(
-        util_q.filter(amount__lt=0).aggregate(t=Sum("amount"))["t"] or ZERO
-    )
+    on_this_invoice = [
+        _money(u.amount) for u in util_q
+        if not period_start or invoiced_with(u) >= period_start
+    ]
+    other_charges = _money(sum((a for a in on_this_invoice if a > 0), ZERO))
+    other_credits = _money(ZERO - sum((a for a in on_this_invoice if a < 0), ZERO))
 
     #  Rent income code depends on the unit's tax classification.
     rent_code = RENT_COMMERCIAL if is_business else RENT_RESIDENTIAL
