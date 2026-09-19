@@ -377,7 +377,7 @@ def _statement_summary_items(statement: dict) -> list[tuple[str, str, str]]:
     Shared by the SMS and the email so the two channels cannot drift apart.
     Every line is a component of the unpaid balance and they add up to it:
 
-        Arrears B/F + Month Rent + VAT + Other Charges - Credits - Paid
+        Arrears B/F + Month Rent + VAT + Other Charges + Refunds - Credits - Paid
 
     so the only total a tenant sees is the one they owe. The old "Rent +
     Arrears" subtotal is gone — it read like the amount to pay and was not.
@@ -392,8 +392,15 @@ def _statement_summary_items(statement: dict) -> list[tuple[str, str, str]]:
         items.append(("VAT on Rent", "16% VAT on Rent", statement["vat_on_rent"]))
     if statement.get("other_charges_value"):
         items.append(("Other Charges", "Other Charges (water etc.)", statement["other_charges"]))
-    if statement.get("other_credits_value"):
-        items.append(("Less Credits", "Less: Credits", statement["other_credits"]))
+    # Landlord water credits and credits on account are one line to a tenant.
+    # Older statement payloads carry only the water figure.
+    if statement.get("credits_total_value", statement.get("other_credits_value")):
+        items.append((
+            "Less Credits", "Less: Credits",
+            statement.get("credits_total", statement.get("other_credits")),
+        ))
+    if statement.get("refunds_paid_value"):
+        items.append(("Refunds Paid", "Add: Refunds Paid", statement["refunds_paid"]))
     if statement.get("payments_received_value"):
         items.append(("Less Paid", "Less: Payments Received", statement["payments_received"]))
     return items
@@ -541,6 +548,12 @@ def statement_email_html(
         summary_rows.append(_row("16% VAT on Rent", statement["vat_on_rent"]))
     # Mirrors the PDF: without this line the summary silently netted the
     # tenant's payment into "Arrears / Others" and drove it negative.
+    if statement.get("account_credits_value"):
+        summary_rows.append(
+            _row("Less: Credits", f"({statement['account_credits']})")
+        )
+    if statement.get("refunds_paid_value"):
+        summary_rows.append(_row("Add: Refunds Paid", statement["refunds_paid"]))
     if statement.get("payments_received_value"):
         summary_rows.append(
             _row("Less: Payments Received", f"({statement['payments_received']})")

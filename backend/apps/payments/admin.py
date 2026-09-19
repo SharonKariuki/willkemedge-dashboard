@@ -24,6 +24,8 @@ from .models import (
     CoopIpnEvent,
     CoopIpnStatus,
     Payment,
+    Refund,
+    TenantCredit,
     TenantNotification,
     UtilityCharge,
 )
@@ -379,3 +381,35 @@ class TenantNotificationAdmin(admin.ModelAdmin):
         "tenant__first_name", "tenant__last_name", "subject", "body",
     )
     readonly_fields = ("created_at", "sent_at")
+
+
+class _ReadOnlyAdmin(admin.ModelAdmin):
+    """View only. Credits and refunds change through the dashboard's services,
+    which post the ledger entry and the audit row; an admin edit would do
+    neither."""
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(TenantCredit)
+class TenantCreditAdmin(_ReadOnlyAdmin):
+    list_display = (
+        "number", "tenant", "reason", "credit_date", "amount",
+        "amount_applied", "amount_refunded", "on_hold", "status",
+    )
+    list_filter = ("status", "credit_type", "reason", "on_hold")
+    search_fields = ("number", "tenant__first_name", "tenant__last_name", "description", "reference")
+
+
+@admin.register(Refund)
+class RefundAdmin(_ReadOnlyAdmin):
+    list_display = ("number", "tenant", "amount", "method", "reference", "sent_on", "status")
+    list_filter = ("status", "method")
+    search_fields = ("number", "reference", "tenant__first_name", "tenant__last_name")

@@ -99,6 +99,7 @@ def has_unsettled_earlier_months(unit: Unit) -> bool:
     """
     from django.utils import timezone
 
+    from apps.payments.credits import manual_credit_available
     from apps.payments.models import Arrears
     from apps.payments.services import available_credit
     from apps.tenants.models import Tenant, TenantStatus
@@ -136,7 +137,7 @@ def has_unsettled_earlier_months(unit: Unit) -> bool:
     # is one.
     tenants = Tenant.objects.in_bulk(open_by_tenant)
     return any(
-        owed > available_credit(tenants[tenant_id])
+        owed > available_credit(tenants[tenant_id]) + manual_credit_available(tenants[tenant_id])
         for tenant_id, owed in open_by_tenant.items()
     )
 

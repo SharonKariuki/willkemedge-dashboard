@@ -36,9 +36,11 @@ from django.utils.dateparse import parse_date
 
 from apps.buildings.models import UnitClassification
 from apps.expenses.coa import (
+    OPERATING_BANK,
     RENT_COMMERCIAL,
     RENT_RECEIVABLE,
     RENT_RESIDENTIAL,
+    RETAINED_EARNINGS,
     SERVICE_CHARGE_UTILITIES,
     VAT_PAYABLE,
 )
@@ -628,6 +630,211 @@ def post_deposit_refund(payment) -> JournalEntry:
         source_id=payment.pk,
         kind="normal",
         lines=lines,
+    )
+
+
+# ── Tenant credits, credit applications and refunds ─────────────────────────
+#
+# The tenant side of every credit is 1040: a credit on account is money the
+# business owes the tenant back or will set against their next charge, and the
+# locked chart holds tenant balances there (a credit balance in 1040 is shown as
+# a liability at year end). What is debited depends on WHY the credit exists:
+#
+#   billing correction / rent concession  DR income (4110/4120/4150) + 2600 VAT
+#   tenant paid a cost that was ours      DR the expense category's account
+#   credit owed from before the books     DR 3300 Retained Earnings
+#
+# Rent is recognised on a cash basis (see post_arrear), so when a credit settles
+# a month's rent that rent is recognised then — DR 1040 / CR income (+ VAT) —
+# exactly as it would be if the tenant had paid it in cash. A credit note
+# applied to the charge it corrects therefore nets to nothing, which is right:
+# income that was never recognised is not reduced twice. An opening-balance row
+# was accrued at cutover (DR 1040 / CR equity), so settling it posts nothing.
+#
+# A refund pays the credit out: DR 1040 / CR 1020. Refunding overpaid rent — the
+# surplus the arrears subledger carries, which was booked straight to income
+# when it arrived — reverses that income instead, VAT included for a
+# commercial letting, exactly mirroring how the receipt was posted.
+
+
+def _tenant_building(tenant):
+    return getattr(tenant.unit, "building", None) if tenant.unit_id else None
+
+
+def _rent_income_code(tenant) -> str:
+    if _classification_of(tenant) == UnitClassification.BUSINESS:
+        return RENT_COMMERCIAL
+    return RENT_RESIDENTIAL
+
+
+def _credit_debit_lines(credit) -> list:
+    """The debit legs of a credit, chosen by its reason."""
+    from apps.payments.models import CreditReason
+
+    label = f"Credit {credit.number} — {credit.tenant}"
+    if credit.reason in (CreditReason.BILLING_CORRECTION, CreditReason.RENT_CONCESSION):
+        if credit.utility_charge_id:
+            return [(SERVICE_CHARGE_UTILITIES, credit.net_amount, Decimal("0"), label)]
+        lines = [(_rent_income_code(credit.tenant), credit.net_amount, Decimal("0"), label)]
+        if credit.vat_amount:
+            lines.append((VAT_PAYABLE, credit.vat_amount, Decimal("0"), "16% VAT credited"))
+        return lines
+    if credit.reason == CreditReason.TENANT_PAID_COST:
+        category = credit.expense_category
+        if category is None or not category.account_id:
+            raise ValueError(f"Credit {credit.number} has no expense account to post to.")
+        return [(category.account.code, credit.amount, Decimal("0"), f"{category.name} — {label}"[:255])]
+    if credit.reason == CreditReason.OPENING_CREDIT:
+        return [(RETAINED_EARNINGS, credit.amount, Decimal("0"), f"Opening credit — {label}"[:255])]
+    raise ValueError(f"No posting rule for credit reason {credit.reason!r}.")
+
+
+def _credit_lines(credit) -> list:
+    return [
+        *_credit_debit_lines(credit),
+        (RENT_RECEIVABLE, Decimal("0"), credit.amount, f"Credit on account — {credit.tenant}"),
+    ]
+
+
+def _mirror(lines: list, prefix: str = "REVERSAL — ") -> list:
+    return [(code, credit, debit, f"{prefix}{desc}"[:255]) for code, debit, credit, desc in lines]
+
+
+def post_tenant_credit(credit) -> JournalEntry:
+    """Post an issued TenantCredit: DR <by reason> / CR 1040."""
+    return _build_entry(
+        date=credit.credit_date,
+        memo=f"Credit {credit.number}: {credit.tenant} — {credit.get_reason_display()}"[:255],
+        reference=credit.number,
+        building=_tenant_building(credit.tenant),
+        source_type="tenant_credit",
+        source_id=credit.pk,
+        kind="normal",
+        lines=_credit_lines(credit),
+    )
+
+
+def reverse_tenant_credit(credit, *, on) -> JournalEntry:
+    """Mirror-image of a voided credit, dated the day it was voided."""
+    return _build_entry(
+        date=on,
+        memo=f"VOID credit {credit.number}: {credit.tenant}"[:255],
+        reference=credit.number,
+        building=_tenant_building(credit.tenant),
+        source_type="tenant_credit",
+        source_id=credit.pk,
+        kind="reversal",
+        lines=_mirror(_credit_lines(credit)),
+    )
+
+
+def _application_lines(application):
+    """The legs recognising rent a credit settles, or None when nothing posts."""
+    from apps.payments.monthly_ledger import OPENING_MARKER
+
+    arrear = application.arrears
+    if OPENING_MARKER in (arrear.waive_notes or ""):
+        # Accrued at cutover already; settling it moves nothing out of 1040.
+        return None
+    amount = Decimal(application.amount)
+    obligation = (arrear.expected_rent or Decimal("0")) + (arrear.expected_vat or Decimal("0"))
+    vat = Decimal("0")
+    if arrear.expected_vat and obligation > 0:
+        # The VAT share of this charge, read off the row the way the statement
+        # reads it: not every commercial letting is rated.
+        vat = (amount * arrear.expected_vat / obligation).quantize(Decimal("0.01"))
+    tenant = application.credit.tenant
+    period = f"{arrear.period_month}/{arrear.period_year}"
+    return [
+        (RENT_RECEIVABLE, amount, Decimal("0"), f"Credit {application.credit.number} applied — {tenant}"),
+        (_rent_income_code(tenant), Decimal("0"), amount - vat, f"Rent {period} settled by credit"),
+        (VAT_PAYABLE, Decimal("0"), vat, f"16% VAT on rent {period} settled by credit"),
+    ]
+
+
+def post_credit_application(application) -> JournalEntry | None:
+    """Recognise the rent a credit settles (cash basis). None for an opening row."""
+    lines = _application_lines(application)
+    if lines is None:
+        return None
+    return _build_entry(
+        date=application.applied_on,
+        memo=f"Credit {application.credit.number} applied to rent "
+             f"{application.arrears.period_month}/{application.arrears.period_year}"[:255],
+        reference=application.credit.number,
+        building=_tenant_building(application.credit.tenant),
+        source_type="credit_application",
+        source_id=application.pk,
+        kind="normal",
+        lines=lines,
+    )
+
+
+def reverse_credit_application(application, *, on) -> JournalEntry | None:
+    lines = _application_lines(application)
+    if lines is None:
+        return None
+    return _build_entry(
+        date=on,
+        memo=f"REVERSAL: credit {application.credit.number} taken off rent "
+             f"{application.arrears.period_month}/{application.arrears.period_year}"[:255],
+        reference=application.credit.number,
+        building=_tenant_building(application.credit.tenant),
+        source_type="credit_application",
+        source_id=application.pk,
+        kind="reversal",
+        lines=_mirror(lines),
+    )
+
+
+def _refund_lines(refund) -> list:
+    from_credits = sum(
+        (line.amount for line in refund.lines.all() if line.credit_id), Decimal("0")
+    )
+    from_overpayment = sum(
+        (line.amount for line in refund.lines.all() if not line.credit_id), Decimal("0")
+    )
+    lines = []
+    if from_credits:
+        lines.append((RENT_RECEIVABLE, from_credits, Decimal("0"), f"Credit refunded — {refund.tenant}"))
+    if from_overpayment:
+        if refund.unit_classification == UnitClassification.BUSINESS:
+            net, vat = _split_vat_inclusive(from_overpayment)
+            lines += [
+                (RENT_COMMERCIAL, net, Decimal("0"), "Overpaid rent refunded"),
+                (VAT_PAYABLE, vat, Decimal("0"), "16% VAT on overpaid rent refunded"),
+            ]
+        else:
+            lines.append((RENT_RESIDENTIAL, from_overpayment, Decimal("0"), "Overpaid rent refunded"))
+    lines.append((OPERATING_BANK, Decimal("0"), refund.amount, f"Refund {refund.number} paid"))
+    return lines
+
+
+def post_refund(refund) -> JournalEntry:
+    """Post money sent back to a tenant: DR 1040 (or the income it reverses) / CR 1020."""
+    return _build_entry(
+        date=refund.sent_on,
+        memo=f"Refund {refund.number}: {refund.tenant} — {refund.get_method_display()}"[:255],
+        reference=refund.reference or refund.number,
+        building=_tenant_building(refund.tenant),
+        source_type="tenant_refund",
+        source_id=refund.pk,
+        kind="normal",
+        lines=_refund_lines(refund),
+    )
+
+
+def reverse_refund(refund, *, on) -> JournalEntry:
+    """Mirror-image of a refund that never reached the tenant, dated the day voided."""
+    return _build_entry(
+        date=on,
+        memo=f"VOID refund {refund.number}: {refund.tenant}"[:255],
+        reference=refund.reference or refund.number,
+        building=_tenant_building(refund.tenant),
+        source_type="tenant_refund",
+        source_id=refund.pk,
+        kind="reversal",
+        lines=_mirror(_refund_lines(refund)),
     )
 
 

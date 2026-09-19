@@ -18,7 +18,8 @@ older arrears period.
 
 Roll-forward, per month:
 
-    balance = arrears_b/f + rent + VAT + other charges - payments - waivers
+    balance = arrears_b/f + rent + VAT + other charges + refunds
+              - payments - waivers - credits
 
 and that balance becomes the next month's arrears b/f. A prepayment leaves the
 balance negative, which is exactly the credit the tenant carries into the next
@@ -120,7 +121,29 @@ def build_monthly_ledger(
         k = _key(pay.payment_date.year, pay.payment_date.month)
         paid[k] = paid.get(k, ZERO) + _money(pay.amount)
 
-    keys = set(charges) | set(other) | set(paid)
+    # Numbered credits (Add Credit) reduce the balance in the month they are
+    # dated; refunds put back what was paid out, in the month the money left.
+    # Applying a credit to a charge moves nothing here — the credit already
+    # counted when it was issued.
+    from .credits import issued_credits, sent_refunds
+
+    credited: dict[int, Decimal] = {}
+    credit_rows = issued_credits([tenant.pk]).only("amount", "credit_date")
+    if as_of:
+        credit_rows = credit_rows.filter(credit_date__lte=as_of)
+    for credit in credit_rows:
+        k = _key(credit.credit_date.year, credit.credit_date.month)
+        credited[k] = credited.get(k, ZERO) + _money(credit.amount)
+
+    refunded: dict[int, Decimal] = {}
+    refund_rows = sent_refunds([tenant.pk]).only("amount", "sent_on")
+    if as_of:
+        refund_rows = refund_rows.filter(sent_on__lte=as_of)
+    for refund in refund_rows:
+        k = _key(refund.sent_on.year, refund.sent_on.month)
+        refunded[k] = refunded.get(k, ZERO) + _money(refund.amount)
+
+    keys = set(charges) | set(other) | set(paid) | set(credited) | set(refunded)
     if not keys:
         return []
 
@@ -139,6 +162,8 @@ def build_monthly_ledger(
         waived = _money(arr.waived_amount) if arr else ZERO
         other_charges = other.get(k, ZERO)
         received = paid.get(k, ZERO)
+        credits = credited.get(k, ZERO)
+        refunds = refunded.get(k, ZERO)
 
         # An opening row carries a balance brought forward from before the books
         # began, not a month's rent. It is stored as a charge because that is
@@ -152,8 +177,8 @@ def build_monthly_ledger(
             brought_forward += rent
             rent = ZERO
 
-        total_due = brought_forward + rent + vat + other_charges
-        balance = total_due - received - waived
+        total_due = brought_forward + rent + vat + other_charges + refunds
+        balance = total_due - received - waived - credits
         rows.append({
             "period": f"{month}/{year}",
             "period_month": month,
@@ -164,6 +189,8 @@ def build_monthly_ledger(
             "vat": str(vat),
             "other_charges": str(other_charges),
             "waived": str(waived),
+            "credits": str(credits),
+            "refunds": str(refunds),
             "total_due": str(total_due),
             "paid": str(received),
             "balance": str(balance),
@@ -237,9 +264,19 @@ def current_balances(tenants, *, today: _dt.date | None = None) -> dict[int, Dec
         F("amount"),
     )
 
+    from .credits import issued_credits, sent_refunds
+
+    credited = _by_tenant(
+        issued_credits(ids).filter(credit_date__lt=first_of_next_month), F("amount")
+    )
+    refunded = _by_tenant(
+        sent_refunds(ids).filter(sent_on__lt=first_of_next_month), F("amount")
+    )
+
     return {
         tid: _money(
             charged.get(tid, ZERO) + other.get(tid, ZERO) - received.get(tid, ZERO)
+            - credited.get(tid, ZERO) + refunded.get(tid, ZERO)
         )
         for tid in ids
     }

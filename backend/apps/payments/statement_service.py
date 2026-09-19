@@ -16,6 +16,8 @@ Ledger rows are derived from stored records only:
   * Arrears        -> "Month Rent - <Mon>-<Year>"  (+ "16% VAT on Rent" for BUSINESS)
   * UtilityCharge  -> "<Label> <Mon. 'YY>" (+ multi-line readings if recorded)
   * Payment        -> "Payment Received"
+  * TenantCredit   -> "Credit Note CN-… - <explanation>" / "Credit CR-… - …"
+  * Refund         -> "Refund Paid RF-… - <method> <reference>"
 
 Public API
 ----------
@@ -180,6 +182,9 @@ _ORDER_RENT = 3
 _ORDER_VAT = 4
 _ORDER_UTILITY = 5
 _ORDER_WAIVER = 6
+_ORDER_CREDIT = 7
+_ORDER_CREDIT_VAT = 8
+_ORDER_REFUND = 9
 
 
 def _raised_on(tenant, year: int, month: int) -> _dt.date:
@@ -243,7 +248,8 @@ def _build_ledger(
     balance the moment before ``period_start`` — everything the account carries
     into the month the statement is about.
     """
-    from .models import Arrears, Payment, PaymentType, UtilityCharge
+    from .credits import issued_credits, sent_refunds
+    from .models import Arrears, CreditType, Payment, PaymentType, UtilityCharge
 
     # Two dates, and they are not the same thing:
     #
@@ -387,6 +393,40 @@ def _build_ledger(
                 posting, _ORDER_DEPOSIT, _deposit_label(tenant, deposit),
                 deposit, ZERO, posting,
             ))
+
+    # Credits on account (Add Credit) and the refunds paid out of them. A
+    # credit sits in the payments column, like money received; a credit note
+    # that gives VAT back shows that VAT on its own line, the way rent and its
+    # VAT are shown. A refund is money going back to the tenant, so it sits in
+    # the charges column and brings a credit balance back towards nil.
+    # Applying a credit to a later invoice adds no row: the credit already
+    # counted in full when it was issued. Voided credits and refunds stay off,
+    # as voided payments do.
+    for credit in issued_credits([tenant.pk]).order_by("credit_date", "id"):
+        if as_of and credit.credit_date > as_of:
+            continue
+        label = "Credit Note" if credit.credit_type == CreditType.CREDIT_NOTE else "Credit"
+        events.append((
+            credit.credit_date, _ORDER_CREDIT,
+            f"{label} {credit.number} - {credit.description}",
+            ZERO, _money(credit.net_amount), credit.credit_date,
+        ))
+        if credit.vat_amount:
+            events.append((
+                credit.credit_date, _ORDER_CREDIT_VAT, "16% VAT credited",
+                ZERO, _money(credit.vat_amount), credit.credit_date,
+            ))
+
+    for refund in sent_refunds([tenant.pk]).order_by("sent_on", "id"):
+        if as_of and refund.sent_on > as_of:
+            continue
+        how = refund.get_method_display()
+        if refund.reference:
+            how = f"{how} {refund.reference}"
+        events.append((
+            refund.sent_on, _ORDER_REFUND, f"Refund Paid {refund.number} - {how}",
+            _money(refund.amount), ZERO, refund.sent_on,
+        ))
 
     events.sort(key=lambda e: (e[0], e[1]))
 
@@ -538,10 +578,33 @@ def build_statement(
         payments_q = payments_q.filter(payment_date__lte=as_of)
     payments_received = _money(payments_q.aggregate(t=Sum("amount"))["t"])
 
+    # Credits added (Add Credit) and refunds paid out in the period being
+    # stated. Each keeps its own summary line for the same reason payments do:
+    # netted silently into "Arrears / Others", a credit would make that line
+    # read as arrears the tenant never had. The cut on the date matches the one
+    # the ledger makes for brought-forward, so earlier ones are already inside
+    # Arrears B/F and nothing is counted twice.
+    from .credits import issued_credits, sent_refunds
+
+    credits_q = issued_credits([tenant.pk])
+    refunds_q = sent_refunds([tenant.pk])
+    if period_start:
+        credits_q = credits_q.filter(credit_date__gte=period_start)
+        refunds_q = refunds_q.filter(sent_on__gte=period_start)
+    if as_of:
+        credits_q = credits_q.filter(credit_date__lte=as_of)
+        refunds_q = refunds_q.filter(sent_on__lte=as_of)
+    account_credits = _money(credits_q.aggregate(t=Sum("amount"))["t"])
+    refunds_paid = _money(refunds_q.aggregate(t=Sum("amount"))["t"])
+
     # Derived so the column always foots to `total_due`, which is the ledger's
-    # own closing balance. With the payment shown separately this resolves to
-    # the arrears genuinely brought forward from earlier periods.
-    arrears_others = total_due - current_base - vat_on_rent + payments_received
+    # own closing balance. With payments, credits and refunds shown separately
+    # this resolves to the arrears genuinely brought forward from earlier
+    # periods.
+    arrears_others = (
+        total_due - current_base - vat_on_rent + payments_received
+        + account_credits - refunds_paid
+    )
 
     # --- Receipt breakdown (Feature 7) ---------------------------------------
     # Five named figures for the SMS/email receipt, each sourced from real
@@ -650,6 +713,20 @@ def build_statement(
         # tenant who has not yet paid this month — the summary then reads
         # exactly as it always did.
         "payments_received_value": payments_received,
+        # Credits and refunds in the period, each on its own line and hidden
+        # when nil like payments are.
+        "account_credits": _fmt_money(account_credits),
+        "account_credits_value": account_credits,
+        "refunds_paid": _fmt_money(refunds_paid),
+        "refunds_paid_value": refunds_paid,
+        # What a tenant-facing summary calls "Less: Credits" — landlord water
+        # credits and credits on account together.
+        "credits_total": _fmt_money(other_credits + account_credits),
+        "credits_total_value": other_credits + account_credits,
+        # A tenant in credit reads "Credit on Account", not a negative balance.
+        "in_credit": total_due < 0,
+        "credit_on_account": _fmt_money(-total_due) if total_due < 0 else _fmt_money(ZERO),
+        "credit_on_account_whole": _fmt_money_whole(-total_due) if total_due < 0 else "0",
         "total_due": _fmt_money(total_due),
         "total_due_whole": _fmt_money_whole(total_due),
         "total_due_value": total_due,
@@ -684,6 +761,14 @@ def build_statement(
             *(
                 [("Less: Credits", f"({_fmt_money(other_credits)})", SERVICE_CHARGE_UTILITIES, "Service Charge / Utilities")]
                 if other_credits else []
+            ),
+            *(
+                [("Less: Credit on Account", f"({_fmt_money(account_credits)})", RENT_RECEIVABLE, "Accounts Receivable (Rent Arrears)")]
+                if account_credits else []
+            ),
+            *(
+                [("Add: Refunds Paid", _fmt_money(refunds_paid), RENT_RECEIVABLE, "Accounts Receivable (Rent Arrears)")]
+                if refunds_paid else []
             ),
             ("Rent + Arrears", _fmt_money(current_base + arrears_bf), RENT_RECEIVABLE, "Accounts Receivable (Rent Arrears)"),
             ("Unpaid Balance", _fmt_money(total_due), RENT_RECEIVABLE, "Accounts Receivable (Rent Arrears)"),
