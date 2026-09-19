@@ -109,8 +109,13 @@
             <td width="40%" class="unit-cell">{{ unit_descriptor }}</td>
         </tr>
         <tr class="balance-row">
+            {% if in_credit %}
+            <td class="balance-label">CREDIT ON ACCOUNT</td>
+            <td class="balance-amt">Ksh{{ credit_on_account_whole }}</td>
+            {% else %}
             <td class="balance-label">TOTAL BALANCE DUE</td>
             <td class="balance-amt">Ksh{{ total_due_whole }}</td>
+            {% endif %}
         </tr>
     </table>
 
@@ -128,10 +133,27 @@
                         <td>Current Month Rent</td>
                         <td class="amt">{{ current_month_charged }}</td>
                     </tr>
-                    {# VAT is inside the Current Month Rent figure, as the
+                    {% comment %}
+                       VAT is inside the Current Month Rent figure, as the
                        landlord's statement states it. Payments keep their own
                        line: without it the box stops footing to the total the
-                       moment a tenant pays anything. #}
+                       moment a tenant pays anything. Credits and refunds of
+                       the period keep their own lines for the same reason.
+                       A block comment, because Django's one-line comment tag
+                       does not span lines: a multi-line one prints on the PDF.
+                    {% endcomment %}
+                    {% if account_credits_value %}
+                    <tr>
+                        <td>Less: Credits</td>
+                        <td class="amt">({{ account_credits }})</td>
+                    </tr>
+                    {% endif %}
+                    {% if refunds_paid_value %}
+                    <tr>
+                        <td>Add: Refunds Paid</td>
+                        <td class="amt">{{ refunds_paid }}</td>
+                    </tr>
+                    {% endif %}
                     {% if payments_received_value %}
                     <tr>
                         <td>Less: Payments Received</td>
@@ -139,12 +161,19 @@
                     </tr>
                     {% endif %}
                     <tr class="grand">
+                        {% if in_credit %}
+                        <td>Credit on Account:</td>
+                        <td class="amt">Ksh{{ credit_on_account }}</td>
+                        {% else %}
                         <td>Total KES:</td>
                         <td class="amt">Ksh{{ total_due }}</td>
+                        {% endif %}
                     </tr>
                 </table>
-                {# Refundable and held apart from rent, so it sits below the
-                   total rather than inside it — the box still foots. #}
+                {% comment %}
+                   Refundable and held apart from rent, so it sits below the
+                   total rather than inside it — the box still foots.
+                {% endcomment %}
                 {% if security_deposit_value or deposit_is_agreed %}
                 <table class="summary-tbl deposit-tbl">
                     <tr>

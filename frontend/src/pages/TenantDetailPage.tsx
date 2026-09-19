@@ -7,7 +7,7 @@
  * and a rent reminder (SMS / Email).
  */
 import { zodResolver } from "@hookform/resolvers/zod";
-import { AlertTriangle, ArrowLeft, BellRing, Download, LogOut, Mail, Pencil, Phone } from "lucide-react";
+import { AlertTriangle, ArrowLeft, BellRing, Download, History, LogOut, Mail, Pencil, Phone, Plus, Send } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import toast from "react-hot-toast";
@@ -18,7 +18,11 @@ import {
   Badge, Button, Card, DatePicker, ErrorState, Skeleton,
   Table, TBody, TD, TH, THead, TR,
 } from "@/components/ui";
+import { AddCreditModal, RefundCreditModal } from "@/features/credits/CreditModals";
+import { CreditsPanel } from "@/features/credits/CreditsPanel";
 import { Field, KycPanel, RemindModal, inputCls } from "@/features/tenants/shared";
+import { useAuth } from "@/hooks/useAuth";
+import { useCreditPosition } from "@/hooks/useCredits";
 import {
   useEmailStatement, usePaymentHistory, useMoveOutNotice, useMoveOutTenant, useTenant,
   useUpdateTenant,
@@ -94,6 +98,8 @@ export default function TenantDetailPage() {
   // unit's classification so a unit reclassified mid-tenancy still shows the
   // VAT it was actually charged.
   const showVat = (history?.monthly_ledger ?? []).some((m) => Number(m.vat) > 0);
+  const showCredits = (history?.monthly_ledger ?? []).some((m) => Number(m.credits ?? 0) > 0);
+  const showRefunds = (history?.monthly_ledger ?? []).some((m) => Number(m.refunds ?? 0) > 0);
   // The arrears card shows the balance owed as at now — what the landlord
   // actually chases — rather than a sum across every period.
   //
@@ -138,6 +144,16 @@ export default function TenantDetailPage() {
 
   const [mode, setMode] = useState<Mode>("view");
   const [reminding, setReminding] = useState(false);
+  // Credits and refunds forgive or pay out money: owner-only, the same
+  // privilege as waiving arrears or voiding a payment.
+  const { user } = useAuth();
+  const canManageCredit = Boolean(user?.can_forgive_money);
+  const { data: creditPosition } = useCreditPosition(id ?? null);
+  const [addingCredit, setAddingCredit] = useState(false);
+  const [refundingCredit, setRefundingCredit] = useState(false);
+  const refundable = Number(creditPosition?.refundable ?? 0);
+  const creditsHeld = Number(creditPosition?.credits_held ?? 0);
+  const refundsToSend = Number(creditPosition?.refunds_to_send ?? 0);
   const [downloading, setDownloading] = useState(false);
   const emailStatement = useEmailStatement();
 
@@ -255,14 +271,23 @@ export default function TenantDetailPage() {
               >
                 <Mail className="h-4 w-4" /> Email Statement
               </Button>
+              {canManageCredit && (
+                <Button variant="outline" onClick={() => setAddingCredit(true)}><Plus className="h-4 w-4" /> Add Credit</Button>
+              )}
               <Button variant="outline" onClick={() => setMode("notice")}><AlertTriangle className="h-4 w-4" /> Notice</Button>
               <Button variant="danger" onClick={() => setMode("moveout")}><LogOut className="h-4 w-4" /> Move Out</Button>
             </>
           )}
           {!isActive && mode === "view" && (
-            <Button variant="outline" onClick={handleStatement} loading={downloading}>
-              <Download className="h-4 w-4" /> Statement PDF
-            </Button>
+            <>
+              {/* A tenant who has left can still be owed money back. */}
+              {canManageCredit && (
+                <Button variant="outline" onClick={() => setAddingCredit(true)}><Plus className="h-4 w-4" /> Add Credit</Button>
+              )}
+              <Button variant="outline" onClick={handleStatement} loading={downloading}>
+                <Download className="h-4 w-4" /> Statement PDF
+              </Button>
+            </>
           )}
           {mode !== "view" && (
             <Button variant="ghost" onClick={() => setMode("view")}>Cancel</Button>
@@ -432,12 +457,33 @@ export default function TenantDetailPage() {
             {depositAgreed ? `${KES(tenant.expected_deposit)} agreed` : depositRule}
           </p>
         </Card>
+        {/* Balance: what the tenant owes, or the Credit on Account they hold.
+            A credit is the other side of the same figure, so it lives here
+            rather than on a card of its own. */}
         <Card padding="md">
-          <p className="text-xs uppercase tracking-wider text-content-muted">Arrears</p>
-          <p className={cn("mt-2 font-semibold tabular-nums", owedNow > 0 ? "text-orange-600" : "text-sage-600")}>
-            {formatBalanceKES(owedNow)}
+          <p className="text-xs uppercase tracking-wider text-content-muted">
+            {owedNow < 0 ? "Credit on Account" : "Balance"}
           </p>
-          {thisMonth && <p className="mt-1 text-xs text-content-muted">{thisMonth.label}</p>}
+          <p className={cn("mt-2 font-semibold tabular-nums", owedNow > 0 ? "text-orange-600" : "text-sage-600")}>
+            {owedNow < 0 ? KES(-owedNow) : owedNow > 0 ? `Owes ${KES(owedNow)}` : formatBalanceKES(owedNow)}
+          </p>
+          <p className="mt-1 text-xs text-content-muted">
+            {owedNow < 0 ? "Applies to next invoice" : thisMonth?.label}
+            {creditsHeld > 0 && ` · ${KES(creditsHeld)} held`}
+            {refundsToSend > 0 && ` · ${KES(refundsToSend)} refund to send`}
+          </p>
+          {canManageCredit && (
+            <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs">
+              {refundable > 0 && (
+                <button type="button" onClick={() => setRefundingCredit(true)} className="inline-flex items-center gap-1 text-teal-700 hover:underline">
+                  <Send className="h-3 w-3" /> Refund Credit
+                </button>
+              )}
+              <a href="#credit-history" className="inline-flex items-center gap-1 text-teal-700 hover:underline">
+                <History className="h-3 w-3" /> Credit History
+              </a>
+            </div>
+          )}
         </Card>
       </div>
 
@@ -490,6 +536,9 @@ export default function TenantDetailPage() {
         )}
       </Card>
 
+      {/* Credits & refunds — Credit History, Refund Credit, Void. */}
+      <CreditsPanel tenantId={tenant.id} tenantName={tenant.full_name} canManage={canManageCredit} />
+
       {/* Monthly rent roll — one row per month, extends itself as billing posts.
           VAT gets its own column for commercial units, matching the statement;
           residential is exempt, so the column is hidden rather than showing a
@@ -498,7 +547,7 @@ export default function TenantDetailPage() {
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-hairline px-5 py-4">
           <h2 className="font-semibold text-content">Monthly rent roll</h2>
           <p className="text-xs text-content-muted">
-            Arrears b/f + rent + other charges − payments. A new row appears each month.
+            Arrears b/f + rent + other charges + refunds − payments − credits. A new row appears each month.
           </p>
         </div>
         {history?.monthly_ledger?.length ? (
@@ -510,8 +559,10 @@ export default function TenantDetailPage() {
                 <TH className="text-right">Rent</TH>
                 {showVat && <TH className="text-right">16% VAT</TH>}
                 <TH className="text-right">Other charges</TH>
+                {showRefunds && <TH className="text-right">Refunds</TH>}
                 <TH className="text-right">Total due</TH>
                 <TH className="text-right">Payment made</TH>
+                {showCredits && <TH className="text-right">Credits</TH>}
                 <TH className="text-right">Balance</TH>
               </TR>
             </THead>
@@ -531,8 +582,18 @@ export default function TenantDetailPage() {
                     <TD className="text-right tabular-nums text-content-muted">
                       {Number(m.other_charges) ? KES(m.other_charges) : "—"}
                     </TD>
+                    {showRefunds && (
+                      <TD className="text-right tabular-nums text-content-muted">
+                        {Number(m.refunds ?? 0) ? KES(m.refunds) : "—"}
+                      </TD>
+                    )}
                     <TD className="text-right tabular-nums">{KES(m.total_due)}</TD>
                     <TD className="text-right tabular-nums text-sage-600">{KES(m.paid)}</TD>
+                    {showCredits && (
+                      <TD className="text-right tabular-nums text-sage-600">
+                        {Number(m.credits ?? 0) ? KES(m.credits) : "—"}
+                      </TD>
+                    )}
                     <TD className={cn(
                       "text-right font-medium tabular-nums",
                       balance > 0 ? "text-orange-600" : "text-sage-600",
@@ -556,6 +617,12 @@ export default function TenantDetailPage() {
       <KycPanel tenant={tenant} />
 
       {reminding && <RemindModal tenant={tenant} onClose={() => setReminding(false)} />}
+      {addingCredit && (
+        <AddCreditModal tenantId={tenant.id} tenantName={tenant.full_name} onClose={() => setAddingCredit(false)} />
+      )}
+      {refundingCredit && (
+        <RefundCreditModal tenantId={tenant.id} tenantName={tenant.full_name} onClose={() => setRefundingCredit(false)} />
+      )}
     </div>
   );
 }

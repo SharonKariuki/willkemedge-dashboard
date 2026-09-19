@@ -526,6 +526,9 @@ def generate_monthly_arrears() -> int:
     actually happened.
     """
 
+    from django.db import transaction
+
+    from .credits import apply_account_credits
     from .models import Arrears
     from .services import apply_available_credit, expected_vat_for
 
@@ -560,9 +563,23 @@ def generate_monthly_arrears() -> int:
                 is_cleared=False,
             )
             created += 1
-            # Oldest period first, so banked credit pays down the earliest debt.
+            # Oldest period first, so banked credit pays down the earliest debt:
+            # overpaid rent first, then the tenant's numbered credits (Add
+            # Credit) that are not on hold.
             before = arrears.credit_applied
             apply_available_credit(arrears)
+            try:
+                # A credit that cannot post must not stop the month being
+                # raised for everyone else; it is logged and stays available
+                # for the next run or for the owner to apply.
+                with transaction.atomic():
+                    apply_account_credits(arrears)
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "generate_monthly_arrears: could not apply account credit to arrears #%s",
+                    arrears.pk,
+                )
+            arrears.refresh_from_db()
             if arrears.credit_applied != before:
                 credited += 1
 
