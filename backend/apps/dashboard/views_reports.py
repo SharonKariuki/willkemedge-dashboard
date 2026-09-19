@@ -161,7 +161,7 @@ def _charged_and_paid(tenants):
 
     Rent and VAT are kept apart so a commercial row's obligation checks out on
     screen the way the payment-history endpoint shows it. ``other`` folds in
-    waivers (negative) and utility charges (positive) — line items the report
+    waivers and credits (negative), utility charges and refunds (positive) — line items the report
     doesn't break out further, but that still belong in what was charged.
     Shown beside the balance so rent + vat + other − paid is the balance,
     with no unexplained figure.
@@ -194,6 +194,14 @@ def _charged_and_paid(tenants):
         .annotate(total=Sum("amount"))
     ):
         totals[row["tenant_id"]][3] += row["total"] or Decimal("0")
+
+    # Credits given reduce what was charged; refunds paid back out add to it.
+    from apps.payments.credits import issued_credits, sent_refunds
+
+    for row in issued_credits(ids).values("tenant_id").annotate(total=Sum("amount")):
+        totals[row["tenant_id"]][2] -= row["total"] or Decimal("0")
+    for row in sent_refunds(ids).values("tenant_id").annotate(total=Sum("amount")):
+        totals[row["tenant_id"]][2] += row["total"] or Decimal("0")
 
     return {tid: tuple(values) for tid, values in totals.items()}
 

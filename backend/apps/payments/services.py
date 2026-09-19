@@ -480,10 +480,17 @@ def available_credit(tenant) -> Decimal:
     """Overpayment a tenant has banked but not yet had applied to a period.
 
     Credit = everything paid/waived beyond each period's obligation, less the
-    credit already carried into other periods. Previously this figure had
-    nowhere to live: `balance` was floored at zero, so a tenant who prepaid
-    three months was billed in full — and dunned — the following month.
+    credit already carried into other periods, less overpaid rent that has been
+    refunded (or set aside for a refund still to be sent). Previously this
+    figure had nowhere to live: `balance` was floored at zero, so a tenant who
+    prepaid three months was billed in full — and dunned — the following month.
+
+    `credit_applied` also carries what the tenant's numbered credits
+    (``TenantCredit``) have settled. That is not overpaid rent being drawn down,
+    so it is taken back out before counting what has been consumed.
     """
+    from .models import REFUND_ACTIVE_STATUSES, CreditApplication, RefundLine
+
     surplus = ZERO
     consumed = ZERO
     for row in Arrears.objects.filter(tenant=tenant).only(
@@ -491,7 +498,13 @@ def available_credit(tenant) -> Decimal:
     ):
         surplus += max(row.covered - row.expected_total, ZERO)
         consumed += row.credit_applied or ZERO
-    return max(surplus - consumed, ZERO)
+    from_credits = CreditApplication.objects.filter(
+        credit__tenant=tenant, reversed_at__isnull=True
+    ).aggregate(t=models.Sum("amount"))["t"] or ZERO
+    refunded = RefundLine.objects.filter(
+        refund__tenant=tenant, credit__isnull=True, refund__status__in=REFUND_ACTIVE_STATUSES
+    ).aggregate(t=models.Sum("amount"))["t"] or ZERO
+    return max(surplus - (consumed - from_credits) - refunded, ZERO)
 
 
 def apply_available_credit(arrears: Arrears) -> Arrears:

@@ -33,6 +33,10 @@ export interface MonthlyLedgerRow {
   vat: string;
   other_charges: string;
   waived: string;
+  /** Credits added (Add Credit) in the month — reduce the balance. */
+  credits?: string;
+  /** Refunds paid out in the month — add back to the balance. */
+  refunds?: string;
   total_due: string;
   paid: string;
   balance: string;
