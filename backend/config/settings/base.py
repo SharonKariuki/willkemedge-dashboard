@@ -248,15 +248,17 @@ AT_TOPUP_ACCOUNT = config("AT_TOPUP_ACCOUNT", default="wilkemedge")
 # date is within this many days.
 RENT_REMINDER_LEAD_DAYS = config("RENT_REMINDER_LEAD_DAYS", default=3, cast=int)
 
-# Day of the month the billing cycle rolls forward on. From this day the system
-# raises and states the FOLLOWING month: the 25th of August bills and emails
-# September, which is what tenants asked for — the statement arrives before the
-# month it covers, not after it has started. See apps/payments/billing_calendar.py.
+# Days of the month the invoice for the FOLLOWING month is generated and sent.
+# Commercial lettings on STATEMENT_RUN_DAY (the 25th), residential on
+# RESIDENTIAL_RUN_DAY (the 28th): 25 and 28 September invoice October's rent
+# with September's water, due 5 October. See apps/payments/billing_calendar.py.
+# Both are clamped to 1..28 so they fall in every month.
 #
-# The external scheduler must fire monthly-arrears and monthly-statements on the
-# same day (.github/workflows/scheduled-jobs.yml); changing this alone only moves
-# what the jobs compute, not when they run.
+# The external scheduler must fire monthly-arrears and monthly-statements on
+# the same days (.github/workflows/scheduled-jobs.yml); changing a setting alone
+# only moves what the jobs compute, not when they run.
 STATEMENT_RUN_DAY = config("STATEMENT_RUN_DAY", default=25, cast=int)
+RESIDENTIAL_RUN_DAY = config("RESIDENTIAL_RUN_DAY", default=28, cast=int)
 
 # Email — SMTP (Gmail by default; swap host/port for any other SMTP provider)
 EMAIL_BACKEND = config(

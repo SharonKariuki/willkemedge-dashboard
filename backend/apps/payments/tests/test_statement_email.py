@@ -180,6 +180,7 @@ class TestMonthlyStatementRun:
         send.assert_not_called()
         assert counts == {"sent": 0, "failed": 0, "skipped": 0, "no_email": 2,
                           "sms_sent": 2, "sms_failed": 0, "sms_skipped": 0, "no_phone": 0,
+                          "missing_water": [],
                           "as_at": "2026-09-02", "periods": {}}
         # No email rows for the missing addresses. The SMS still went, which is
         # the only copy these tenants get.
@@ -204,6 +205,7 @@ class TestMonthlyStatementRun:
         assert first["sent"] == 1
         assert second == {"sent": 0, "failed": 0, "skipped": 1, "no_email": 0,
                           "sms_sent": 0, "sms_failed": 0, "sms_skipped": 1, "no_phone": 0,
+                          "missing_water": [],
                           "as_at": "2026-09-02", "periods": {"2026-09": 1}}
         assert send.call_count == 1
 

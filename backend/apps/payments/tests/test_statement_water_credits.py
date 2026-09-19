@@ -4,8 +4,10 @@ Water and other charges on the tenant statement, and the balance-only messages.
 Covers:
   - a negative utility row is printed as a credit in the payments column, not
     as water billed at a negative price, and the balance does not move
-  - "Other Charges" is the period being billed: last month's water is already
-    inside Arrears Brought Forward and must not be counted a second time
+  - "Other Charges" is the invoice being stated: metered water rides on the
+    NEXT month's invoice, so August's statement carries July's water, and
+    June's is already inside Arrears Brought Forward and must not be counted a
+    second time
   - "Other Charges" is never negative; a credit is reported on its own line
   - the statement SMS and email carry a summary whose lines add up to the
     unpaid balance, with no second total that reads like the amount to pay
@@ -110,14 +112,15 @@ class TestCreditsAreNotNegativeWater:
 
 class TestOtherChargesIsTheBilledPeriod:
     def test_last_months_water_is_not_counted_twice(self, tenant):
-        _water(tenant, 7, "1200")
-        _water(tenant, 8, "1500")
+        _water(tenant, 6, "1200")
+        _water(tenant, 7, "1500")
 
         st = build_statement(tenant, statement_date=AS_OF, as_of=AS_OF)
 
-        # July's water is inside Arrears B/F with July's rent ...
+        # June's water rode on July's invoice, so it is inside Arrears B/F
+        # with July's rent ...
         assert st["arrears_bf"] == "21,200.00"
-        # ... so Other Charges is August's alone.
+        # ... and Other Charges is July's water, which August's invoice carries.
         assert st["other_charges"] == "1,500.00"
         # And the parts add back up to the balance.
         assert _d(st["arrears_bf"]) + _d(st["month_rent"]) + _d(st["other_charges"]) == _d(
@@ -168,8 +171,8 @@ class TestMessagesCarryASummary:
 
     def test_the_summary_lines_add_up_to_the_unpaid_balance(self, tenant):
         """The one thing a summary must never do is not add up."""
-        _water(tenant, 7, "1200")
-        _water(tenant, 8, "1500")
+        _water(tenant, 6, "1200")
+        _water(tenant, 7, "1500")
         _water(tenant, 8, "-300", label="Water Usage - statement adjustment")
         Payment.objects.create(
             tenant=tenant, amount=Decimal("5000"), payment_date="2026-08-10",

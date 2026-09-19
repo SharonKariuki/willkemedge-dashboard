@@ -483,9 +483,9 @@ class TenantViewSet(viewsets.ModelViewSet):
         from apps.payments.statement_service import build_statement
 
         tenant = self.get_object()
-        # The month THIS tenant's cycle is on, so the copy the office downloads
-        # is the same statement they were emailed — on the 1st for a house, on
-        # the 25th before for the arcade — rather than the previous month's.
+        # The month THIS tenant's invoice day has reached, so the copy the
+        # office downloads is the same statement they were sent — from the
+        # 28th for a house, the 25th for the arcade — rather than last month's.
         data = build_statement(tenant, period=tenant_billing_period(tenant))
 
         pdf = render_to_pdf("payments/statement_pdf.html", data)

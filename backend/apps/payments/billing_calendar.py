@@ -1,19 +1,24 @@
 """Which month the books are billing for a given letting on a given day.
 
-Rent falls due on the 5th of the month it covers, for everybody. What differs
-is when the charge is *raised*, and there are two cycles:
+Every letting is invoiced a month AHEAD, and rent falls due on the 5th of the
+month it covers. The two kinds of letting differ only in the day the invoice
+is generated and sent:
 
-  * **Residential** — raised on the 1st, for the month that has just started.
-    A tenant in a house or a bedsitter is billed for September on 1 September
-    and pays by 5 September. This is the landlord's standing instruction and
-    the cycle the great majority of the roster is on.
-  * **Commercial** — raised on ``STATEMENT_RUN_DAY`` (the 25th), for the month
-    *ahead*. The arcade's VAT invoice has to be in the tenant's hands before
-    the month it covers begins, so 25 August raises and states September.
+  * **Residential** — on ``RESIDENTIAL_RUN_DAY`` (the 28th). October's rent is
+    invoiced on 28 September, together with September's water.
+  * **Commercial** — on ``STATEMENT_RUN_DAY`` (the 25th). October's rent is
+    invoiced on 25 September, together with September's water. The arcade's
+    VAT invoice has to be in the tenant's hands before the month it covers.
+
+So one invoice carries two different months, and they must not be confused:
+
+  * the **rent period** — the month after the one the invoice is sent in;
+  * the **water period** — the month the invoice is sent in, metered up to
+    that day. :func:`usage_invoice_period` maps one to the other.
 
 ``UnitClassification.BUSINESS`` is the axis, the same one the VAT rate, the
 deposit rule and the statement layout already turn on — so a future commercial
-letting lands on the advance cycle without anyone remembering to add it here.
+letting lands on the right day without anyone remembering to add it here.
 
 Everything that has to agree on "which month are we billing for this tenant?"
 reads :func:`tenant_billing_period`: the arrears run that raises the charge,
@@ -21,24 +26,20 @@ the statement run that emails it, and the manual re-send the office makes from
 the dashboard. Working it out separately in each place is how the statement and
 the ledger end up disagreeing about what a tenant owes.
 
-Two things follow from the commercial cycle billing a month before it starts,
-and both are load-bearing elsewhere:
+Two things follow from billing a month before it starts, and both are
+load-bearing elsewhere:
 
-  * A September ``Arrears`` row exists from 25 August, but September rent is
-    not *overdue* in August. Everything that reports debt already filters to
-    periods at or before the current month (``monthly_ledger.upto_current_period``,
+  * An October ``Arrears`` row exists from 25 or 28 September, but October rent
+    is not *overdue* in September. Everything that reports debt already filters
+    to periods at or before the current month (``monthly_ledger.upto_current_period``,
     ``aging``, ``buildings.services``); anything new that sums ``Arrears`` must
-    do the same or it will report the arcade a month in arrears for the last
-    week of every month.
+    do the same or it will report the whole roster a month in arrears for the
+    last days of every month.
   * The external scheduler (``.github/workflows/scheduled-jobs.yml``) has to
-    fire ``monthly-arrears`` and ``monthly-statements`` on BOTH days this
-    module names — the 1st for residential and the 25th for commercial. Drop
-    one day and that half of the roster is never billed; move a day without
-    moving ``STATEMENT_RUN_DAY`` and the run states a month it has not raised.
-
-The residential cycle needs no run day of its own: ``billing_period`` returns
-the current calendar month on every day before the 25th, so the 1st-of-month
-run raises exactly the month that has just begun.
+    fire ``monthly-arrears`` and ``monthly-statements`` on BOTH run days — the
+    25th and the 28th. Drop one and that half of the roster is never invoiced
+    on time; move a day without moving its setting and the run states a month
+    it has not raised. The 1st is kept as a catch-up for both.
 """
 from __future__ import annotations
 
@@ -48,29 +49,42 @@ import datetime as _dt
 from django.utils import timezone
 
 # The 25th: late enough that the closing month is essentially settled, early
-# enough to give a commercial tenant a week before rent falls due on the 5th.
-DEFAULT_STATEMENT_RUN_DAY = 25
+# enough to give a commercial tenant over a week before rent falls due.
+DEFAULT_COMMERCIAL_RUN_DAY = 25
 
-#: The day rent falls due, in the month it covers. Residential rent is raised
-#: on the 1st and commercial on the 25th before, but both are payable by this
-#: day of the month being billed — which is why it is one constant and not a
-#: property of either cycle. ``Tenant.due_day`` defaults to it.
+# The 28th: the latest day that exists in every month, February included, so
+# a residential tenant's water is metered as far into the month as possible.
+DEFAULT_RESIDENTIAL_RUN_DAY = 28
+
+#: The day rent falls due, in the month it covers. Both kinds of letting are
+#: invoiced in the month before, on different days, but both are payable by
+#: this day of the month being billed — which is why it is one constant and not
+#: a property of either. ``Tenant.due_day`` defaults to it.
 RENT_DUE_DAY = 5
 
 
-def statement_run_day() -> int:
-    """The day of the month the COMMERCIAL cycle rolls forward on.
+def _run_day_setting(name: str, default: int) -> int:
+    """A run day from settings, clamped to 1..28 so it lands in every month.
 
-    Clamped to 1..28 so it lands in every month, February included — a run day
-    of 31 would silently never fire in half the year.
+    A run day of 31 would silently never fire in half the year.
     """
     from django.conf import settings
 
     try:
-        day = int(getattr(settings, "STATEMENT_RUN_DAY", DEFAULT_STATEMENT_RUN_DAY))
+        day = int(getattr(settings, name, default))
     except (TypeError, ValueError):
-        return DEFAULT_STATEMENT_RUN_DAY
+        return default
     return max(1, min(day, 28))
+
+
+def commercial_run_day() -> int:
+    """The day of the month commercial lettings are invoiced for the next."""
+    return _run_day_setting("STATEMENT_RUN_DAY", DEFAULT_COMMERCIAL_RUN_DAY)
+
+
+def residential_run_day() -> int:
+    """The day of the month residential lettings are invoiced for the next."""
+    return _run_day_setting("RESIDENTIAL_RUN_DAY", DEFAULT_RESIDENTIAL_RUN_DAY)
 
 
 def next_period(year: int, month: int) -> tuple[int, int]:
@@ -78,12 +92,16 @@ def next_period(year: int, month: int) -> tuple[int, int]:
     return (year + 1, 1) if month == 12 else (year, month + 1)
 
 
-def bills_in_advance(tenant) -> bool:
-    """Whether this letting is invoiced before the month it covers.
+def previous_period(year: int, month: int) -> tuple[int, int]:
+    """The ``(year, month)`` before this one."""
+    return (year - 1, 12) if month == 1 else (year, month - 1)
 
-    True for a commercial letting, which is invoiced on the 25th for the month
-    ahead. A tenancy with no unit has no classification to read and falls to
-    the residential cycle, which is the portfolio default.
+
+def is_commercial(tenant) -> bool:
+    """Whether this letting is on the commercial (25th) invoice day.
+
+    A tenancy with no unit has no classification to read and falls to the
+    residential day, which is the portfolio default.
     """
     from apps.buildings.models import UnitClassification
 
@@ -91,19 +109,24 @@ def bills_in_advance(tenant) -> bool:
     return unit is not None and unit.classification == UnitClassification.BUSINESS
 
 
-def billing_period(today: _dt.date | None = None, *, advance: bool = True) -> tuple[int, int]:
+def run_day_for(tenant) -> int:
+    """The day of the month this letting is invoiced on."""
+    return commercial_run_day() if is_commercial(tenant) else residential_run_day()
+
+
+def billing_period(today: _dt.date | None = None, *, run_day: int | None = None) -> tuple[int, int]:
     """The ``(year, month)`` the books are billing on ``today``.
 
-    With ``advance`` (the commercial cycle) it is next month from the run day
-    onwards and this month before it, so a run on 25 August 2026 returns
-    ``(2026, 9)``. Without it (the residential cycle) it is always the current
-    calendar month, so the 1st-of-month run raises the month just begun.
+    Next month from ``run_day`` onwards, this month before it: with the
+    commercial run day (the default) 25 August 2026 returns ``(2026, 9)`` and
+    24 August returns ``(2026, 8)``.
 
-    Prefer :func:`tenant_billing_period`, which picks ``advance`` from the
-    letting rather than making each caller remember which cycle it is on.
+    Prefer :func:`tenant_billing_period`, which picks the run day from the
+    letting rather than making each caller remember which day it is on.
     """
     today = today or timezone.localdate()
-    if advance and today.day >= statement_run_day():
+    day = commercial_run_day() if run_day is None else run_day
+    if today.day >= day:
         return next_period(today.year, today.month)
     return (today.year, today.month)
 
@@ -111,11 +134,29 @@ def billing_period(today: _dt.date | None = None, *, advance: bool = True) -> tu
 def tenant_billing_period(tenant, today: _dt.date | None = None) -> tuple[int, int]:
     """The ``(year, month)`` this tenant is being billed for on ``today``.
 
-    The one function to ask. On 25 August 2026 an arcade tenant is on September
-    and a residential tenant is still on August — the month they were billed
-    for on the 1st and have already been sent a statement for.
+    The one function to ask. On 26 September 2026 an arcade tenant is on
+    October and a residential tenant is still on September, until the 28th.
     """
-    return billing_period(today, advance=bills_in_advance(tenant))
+    return billing_period(today, run_day=run_day_for(tenant))
+
+
+def invoice_date(tenant, period: tuple[int, int]) -> _dt.date:
+    """The day ``period``'s rent is invoiced on — its run day, a month early.
+
+    October 2026 is invoiced on 28 September for a house and on 25 September
+    for a shop. Takes no account of move-in; callers that print it do.
+    """
+    year, month = previous_period(*period)
+    return _dt.date(year, month, run_day_for(tenant))
+
+
+def usage_invoice_period(year: int, month: int) -> tuple[int, int]:
+    """The rent period whose invoice carries metered usage for ``(year, month)``.
+
+    September's water is read up to the September run day and billed on the
+    invoice sent that day — the one for October's rent.
+    """
+    return next_period(year, month)
 
 
 def period_start(period: tuple[int, int]) -> _dt.date:
