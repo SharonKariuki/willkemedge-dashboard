@@ -11,14 +11,13 @@ import { AlertTriangle, ArrowLeft, BellRing, Download, History, LogOut, Mail, Pe
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import toast from "react-hot-toast";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { z } from "zod";
 
 import {
   Badge, Button, Card, DatePicker, ErrorState, Skeleton,
   Table, TBody, TD, TH, THead, TR,
 } from "@/components/ui";
-import { AddCreditModal, RefundCreditModal } from "@/features/credits/CreditModals";
 import { CreditsPanel } from "@/features/credits/CreditsPanel";
 import { Field, KycPanel, RemindModal, inputCls } from "@/features/tenants/shared";
 import { useAuth } from "@/hooks/useAuth";
@@ -149,8 +148,6 @@ export default function TenantDetailPage() {
   const { user } = useAuth();
   const canManageCredit = Boolean(user?.can_forgive_money);
   const { data: creditPosition } = useCreditPosition(id ?? null);
-  const [addingCredit, setAddingCredit] = useState(false);
-  const [refundingCredit, setRefundingCredit] = useState(false);
   const refundable = Number(creditPosition?.refundable ?? 0);
   const creditsHeld = Number(creditPosition?.credits_held ?? 0);
   const refundsToSend = Number(creditPosition?.refunds_to_send ?? 0);
@@ -272,7 +269,9 @@ export default function TenantDetailPage() {
                 <Mail className="h-4 w-4" /> Email Statement
               </Button>
               {canManageCredit && (
-                <Button variant="outline" onClick={() => setAddingCredit(true)}><Plus className="h-4 w-4" /> Add Credit</Button>
+                <Button variant="outline" onClick={() => navigate(`/tenants/${id}/credits/new`)}>
+                  <Plus className="h-4 w-4" /> Add Credit
+                </Button>
               )}
               <Button variant="outline" onClick={() => setMode("notice")}><AlertTriangle className="h-4 w-4" /> Notice</Button>
               <Button variant="danger" onClick={() => setMode("moveout")}><LogOut className="h-4 w-4" /> Move Out</Button>
@@ -282,7 +281,9 @@ export default function TenantDetailPage() {
             <>
               {/* A tenant who has left can still be owed money back. */}
               {canManageCredit && (
-                <Button variant="outline" onClick={() => setAddingCredit(true)}><Plus className="h-4 w-4" /> Add Credit</Button>
+                <Button variant="outline" onClick={() => navigate(`/tenants/${id}/credits/new`)}>
+                  <Plus className="h-4 w-4" /> Add Credit
+                </Button>
               )}
               <Button variant="outline" onClick={handleStatement} loading={downloading}>
                 <Download className="h-4 w-4" /> Statement PDF
@@ -475,9 +476,9 @@ export default function TenantDetailPage() {
           {canManageCredit && (
             <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs">
               {refundable > 0 && (
-                <button type="button" onClick={() => setRefundingCredit(true)} className="inline-flex items-center gap-1 text-teal-700 hover:underline">
+                <Link to={`/tenants/${id}/credits/refund`} className="inline-flex items-center gap-1 text-teal-700 hover:underline">
                   <Send className="h-3 w-3" /> Refund Credit
-                </button>
+                </Link>
               )}
               <a href="#credit-history" className="inline-flex items-center gap-1 text-teal-700 hover:underline">
                 <History className="h-3 w-3" /> Credit History
@@ -617,12 +618,6 @@ export default function TenantDetailPage() {
       <KycPanel tenant={tenant} />
 
       {reminding && <RemindModal tenant={tenant} onClose={() => setReminding(false)} />}
-      {addingCredit && (
-        <AddCreditModal tenantId={tenant.id} tenantName={tenant.full_name} onClose={() => setAddingCredit(false)} />
-      )}
-      {refundingCredit && (
-        <RefundCreditModal tenantId={tenant.id} tenantName={tenant.full_name} onClose={() => setRefundingCredit(false)} />
-      )}
     </div>
   );
 }
