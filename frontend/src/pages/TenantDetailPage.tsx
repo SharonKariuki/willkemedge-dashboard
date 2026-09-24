@@ -11,7 +11,7 @@ import { AlertTriangle, ArrowLeft, BellRing, Download, History, LogIn, LogOut, M
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import toast from "react-hot-toast";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { z } from "zod";
 
 import {
@@ -33,6 +33,9 @@ import { toDayFirst, todayIso } from "@/lib/dates";
 import { downloadPdf } from "@/lib/downloadPdf";
 import { isNonNegativeAmountOrBlank, isPositiveAmount } from "@/lib/formValidators";
 import { formatBalanceKES, formatKES } from "@/lib/money";
+import {
+  DEFAULT_RENT_ROLL_FILTER, RENT_ROLL_PRESETS, filterRentRoll, parseRentRollFilter, rowMonthValue,
+} from "@/lib/rentRollFilter";
 
 const KES = formatKES;
 
@@ -93,6 +96,18 @@ export default function TenantDetailPage() {
   const navigate = useNavigate();
   const { data: tenant, isLoading, isError, refetch } = useTenant(id ?? null);
   const { data: history } = usePaymentHistory(id ?? null);
+  // Which months of the rent roll to show. Kept in the URL so a reload, the
+  // back button or a shared link opens on the same view; the default (last
+  // three months) is left out so a plain /tenants/:id link stays plain.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const rollFilter = parseRentRollFilter(searchParams.get("roll"));
+  const setRollFilter = (value: string) => {
+    setSearchParams((params) => {
+      if (value === DEFAULT_RENT_ROLL_FILTER) params.delete("roll");
+      else params.set("roll", value);
+      return params;
+    }, { replace: true });
+  };
   // Commercial units carry 16% VAT and the statement bills it as its own
   // column; residential is exempt. Drive it off the ledger rather than the
   // unit's classification so a unit reclassified mid-tenancy still shows the
@@ -118,6 +133,8 @@ export default function TenantDetailPage() {
     ?? [...ledger].reverse().find((m) => monthKey(m.period_year, m.period_month) <= nowKey)
     ?? null;
   const owedNow = Number(thisMonth?.balance ?? 0);
+  // Filtering only hides rows: balances and the card above read the full roll.
+  const rollRows = filterRentRoll(ledger, rollFilter);
   // Derived by the backend from one rule (apps/tenants/deposits.py) so the
   // page, the integrity check and the API cannot drift on what a deposit
   // should be. Older API responses omit them; fall back rather than render NaN.
@@ -585,12 +602,31 @@ export default function TenantDetailPage() {
           row of dashes. */}
       <Card padding="none">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-hairline px-5 py-4">
-          <h2 className="font-semibold text-content">Monthly rent roll</h2>
-          <p className="text-xs text-content-muted">
-            Arrears b/f + rent + other charges + refunds − payments − credits. A new row appears each month.
-          </p>
+          <div>
+            <h2 className="font-semibold text-content">Monthly rent roll</h2>
+            <p className="text-xs text-content-muted">
+              Arrears b/f + rent + other charges + refunds − payments − credits. A new row appears each month.
+            </p>
+          </div>
+          {ledger.length > 0 && (
+            <select
+              aria-label="Rent roll period"
+              value={rollFilter}
+              onChange={(e) => setRollFilter(e.target.value)}
+              className="rounded-md border border-border bg-surface py-1.5 pl-3 pr-8 text-sm text-content focus:border-teal-600 focus:outline-none focus:ring-2 focus:ring-ring/25"
+            >
+              {RENT_ROLL_PRESETS.map((p) => (
+                <option key={p.value} value={p.value}>{p.label}</option>
+              ))}
+              <optgroup label="Month">
+                {[...ledger].reverse().map((m) => (
+                  <option key={m.period} value={rowMonthValue(m)}>{m.label}</option>
+                ))}
+              </optgroup>
+            </select>
+          )}
         </div>
-        {history?.monthly_ledger?.length ? (
+        {rollRows.length ? (
           <Table minWidth={940}>
             <THead>
               <TR>
@@ -607,7 +643,7 @@ export default function TenantDetailPage() {
               </TR>
             </THead>
             <TBody>
-              {history.monthly_ledger.map((m) => {
+              {rollRows.map((m) => {
                 const balance = Number(m.balance);
                 return (
                   <TR key={m.period}>
@@ -645,6 +681,13 @@ export default function TenantDetailPage() {
               })}
             </TBody>
           </Table>
+        ) : ledger.length ? (
+          <p className="px-5 py-6 text-sm text-content-muted">
+            No rent-roll rows in this period.{" "}
+            <button type="button" className="font-medium text-teal-700 hover:underline" onClick={() => setRollFilter("all")}>
+              Show all months
+            </button>
+          </p>
         ) : (
           <p className="px-5 py-6 text-sm text-content-muted">
             Nothing billed yet — the first row appears once rent is charged for a month.
