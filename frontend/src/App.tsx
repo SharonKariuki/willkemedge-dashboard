@@ -17,6 +17,8 @@ import PaymentsPage from "@/pages/PaymentsPage";
 import ReconciliationPage from "@/pages/ReconciliationPage";
 import ReportsPage from "@/pages/ReportsPage";
 import SettingsPage from "@/pages/SettingsPage";
+import AddCreditPage from "@/pages/AddCreditPage";
+import RefundCreditPage from "@/pages/RefundCreditPage";
 import TenantDetailPage from "@/pages/TenantDetailPage";
 import TenantsPage from "@/pages/TenantsPage";
 import UnitsPage from "@/pages/UnitsPage";
@@ -43,6 +45,8 @@ export default function App() {
         <Route path="/units" element={<UnitsPage />} />
         <Route path="/tenants" element={<TenantsPage />} />
         <Route path="/tenants/:id" element={<TenantDetailPage />} />
+        <Route path="/tenants/:id/credits/new" element={<AddCreditPage />} />
+        <Route path="/tenants/:id/credits/refund" element={<RefundCreditPage />} />
         <Route path="/payments" element={<PaymentsPage />} />
         <Route path="/reconciliation" element={<ReconciliationPage />} />
         <Route path="/expenses" element={<ExpensesPage />} />

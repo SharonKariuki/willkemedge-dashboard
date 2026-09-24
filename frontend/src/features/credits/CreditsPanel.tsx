@@ -8,6 +8,7 @@
 import { ChevronDown, ChevronRight, FileText, Pause, Play, Plus, Send, Undo2 } from "lucide-react";
 import { Fragment, useState } from "react";
 import toast from "react-hot-toast";
+import { useNavigate } from "react-router-dom";
 
 import { Badge, Button, Card, Table, TBody, TD, TH, THead, TR } from "@/components/ui";
 import {
@@ -23,13 +24,7 @@ import { cn } from "@/lib/cn";
 import { toDayFirst } from "@/lib/dates";
 import { formatKES } from "@/lib/money";
 
-import {
-  AddCreditModal,
-  CloseRefundModal,
-  MarkRefundSentModal,
-  RefundCreditModal,
-  VoidCreditModal,
-} from "./CreditModals";
+import { CloseRefundModal, MarkRefundSentModal, VoidCreditModal } from "./CreditModals";
 
 const KES = formatKES;
 
@@ -107,10 +102,9 @@ export function CreditsPanel({
   const { data: credits = [] } = useTenantCredits(tenantId);
   const { data: refunds = [] } = useTenantRefunds(tenantId);
   const holdCredit = useHoldCredit();
+  const navigate = useNavigate();
 
   const [open, setOpen] = useState<number | null>(null);
-  const [adding, setAdding] = useState(false);
-  const [refunding, setRefunding] = useState<TenantCredit | null>(null);
   const [voiding, setVoiding] = useState<TenantCredit | null>(null);
   const [sending, setSending] = useState<Refund | null>(null);
   const [closing, setClosing] = useState<{ refund: Refund; action: "cancel" | "void" } | null>(null);
@@ -136,7 +130,7 @@ export function CreditsPanel({
           <p className="text-xs text-content-muted">Credit History — every credit added, applied, refunded or voided.</p>
         </div>
         {canManage && (
-          <Button variant="outline" size="sm" onClick={() => setAdding(true)}>
+          <Button variant="outline" size="sm" onClick={() => navigate(`/tenants/${tenantId}/credits/new`)}>
             <Plus className="h-4 w-4" /> Add Credit
           </Button>
         )}
@@ -192,7 +186,10 @@ export function CreditsPanel({
                                   ? <><Play className="h-3.5 w-3.5" /> Apply to Next Invoice</>
                                   : <><Pause className="h-3.5 w-3.5" /> Hold</>}
                               </Button>
-                              <Button variant="ghost" size="sm" onClick={() => setRefunding(credit)}>
+                              <Button
+                                variant="ghost" size="sm"
+                                onClick={() => navigate(`/tenants/${tenantId}/credits/refund?credit=${credit.id}`)}
+                              >
                                 <Send className="h-3.5 w-3.5" /> Refund
                               </Button>
                             </>
@@ -267,10 +264,6 @@ export function CreditsPanel({
         </div>
       )}
 
-      {adding && <AddCreditModal tenantId={tenantId} tenantName={tenantName} onClose={() => setAdding(false)} />}
-      {refunding && (
-        <RefundCreditModal tenantId={tenantId} tenantName={tenantName} credit={refunding} onClose={() => setRefunding(null)} />
-      )}
       {voiding && <VoidCreditModal credit={voiding} tenantName={tenantName} onClose={() => setVoiding(null)} />}
       {sending && <MarkRefundSentModal refund={sending} onClose={() => setSending(null)} />}
       {closing && <CloseRefundModal refund={closing.refund} action={closing.action} onClose={() => setClosing(null)} />}
