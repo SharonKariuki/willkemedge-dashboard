@@ -104,18 +104,19 @@ export default function RefundCreditPage() {
   }
 
   return (
-    <div>
-      <Link to={backTo} className="mb-2 inline-flex items-center gap-1 text-sm text-content-muted hover:text-content">
-        <ArrowLeft className="h-4 w-4" /> Back to {tenant.full_name}
-      </Link>
-      <PageHeader
-        eyebrow={`${tenant.building_name} · Unit ${tenant.unit_label}`}
-        title={credit ? `Refund Credit — ${credit.number}` : "Refund Credit"}
-        description="Record money going back to the tenant. The books follow it on the day it leaves."
-      />
+    <div className="space-y-6">
+      <div>
+        <Link to={backTo} className="mb-2 inline-flex items-center gap-1 text-sm text-content-muted hover:text-content">
+          <ArrowLeft className="h-4 w-4" /> Back to {tenant.full_name}
+        </Link>
+        <PageHeader
+          className="mb-0"
+          eyebrow={`${tenant.building_name} · Unit ${tenant.unit_label}`}
+          title={credit ? `Refund Credit — ${credit.number}` : "Refund Credit"}
+        />
+      </div>
 
-      <div className="grid gap-6 lg:grid-cols-3">
-        <Card padding="md" className="lg:col-span-2">
+      <Card variant="glass" padding="md" className="animate-fade-up">
           {limit <= 0 ? (
             <>
               <Note tone="warn">
@@ -171,6 +172,32 @@ export default function RefundCreditPage() {
                 <input value={notes} onChange={(e) => setNotes(e.target.value)} className={inputCls} maxLength={255} />
               </Field>
 
+              <dl className="grid gap-x-8 gap-y-2 rounded-md bg-surface-sunk px-4 py-3 text-sm tabular-nums sm:grid-cols-4">
+                <div className="flex justify-between gap-4 sm:block">
+                  <dt className="text-ink-500">Can be refunded</dt>
+                  <dd className="font-semibold text-ink-900">{KES(limit)}</dd>
+                </div>
+                <div className="flex justify-between gap-4 sm:block">
+                  <dt className="text-ink-500">Drawn from</dt>
+                  <dd className="text-ink-700">{credit ? credit.number : "Credit on Account"}</dd>
+                </div>
+                <div className="flex justify-between gap-4 sm:block">
+                  <dt className="text-ink-500">Refunding</dt>
+                  <dd className="text-ink-700">{KES(value)}</dd>
+                </div>
+                <div className="flex justify-between gap-4 sm:block">
+                  <dt className="text-ink-500">Balance after</dt>
+                  <dd className="font-semibold text-ink-900">
+                    {balanceAfter < 0 ? `${KES(-balanceAfter)} cr` : formatBalanceKES(balanceAfter)}
+                  </dd>
+                </div>
+              </dl>
+              <Note>
+                {alreadySent
+                  ? "Recorded as sent: the accounts move today and the tenant's statement shows the refund."
+                  : "Set aside: nothing reaches the accounts until you mark it as sent, and the amount can't be used on an invoice meanwhile."}
+              </Note>
+
               {error && <Note tone="warn">{error}</Note>}
 
               <div className="flex justify-end gap-2 border-t border-hairline pt-4">
@@ -183,35 +210,6 @@ export default function RefundCreditPage() {
           )}
         </Card>
 
-        <Card padding="md" className="h-fit">
-          <p className="text-xs uppercase tracking-wider text-content-muted">Summary</p>
-          <dl className="mt-3 space-y-2 text-sm tabular-nums">
-            <div className="flex justify-between gap-4">
-              <dt className="text-ink-500">Can be refunded</dt>
-              <dd className="font-semibold text-ink-900">{KES(limit)}</dd>
-            </div>
-            <div className="flex justify-between gap-4">
-              <dt className="text-ink-500">Drawn from</dt>
-              <dd className="text-right text-ink-700">{credit ? credit.number : "Credit on Account"}</dd>
-            </div>
-            <div className="flex justify-between gap-4">
-              <dt className="text-ink-500">Refunding</dt>
-              <dd className="text-ink-700">{KES(value)}</dd>
-            </div>
-            <div className="flex justify-between gap-4 border-t border-hairline pt-2">
-              <dt className="text-ink-500">Balance after</dt>
-              <dd className="font-semibold text-ink-900">
-                {balanceAfter < 0 ? `${KES(-balanceAfter)} cr` : formatBalanceKES(balanceAfter)}
-              </dd>
-            </div>
-          </dl>
-          <Note>
-            {alreadySent
-              ? "Recorded as sent: the accounts move today and the tenant's statement shows the refund."
-              : "Set aside: nothing reaches the accounts until you mark it as sent, and the amount can't be used on an invoice meanwhile."}
-          </Note>
-        </Card>
-      </div>
     </div>
   );
 }

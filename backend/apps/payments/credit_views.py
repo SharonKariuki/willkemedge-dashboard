@@ -164,7 +164,6 @@ class TenantCreditViewSet(viewsets.ReadOnlyModelViewSet):
                 "needs_charge": CREDIT_TYPE_FOR_REASON[value] == CreditType.CREDIT_NOTE,
                 "rent_only": value == CreditReason.RENT_CONCESSION,
                 "needs_category": value == CreditReason.TENANT_PAID_COST,
-                "evidence_required": value in credits.EVIDENCE_REQUIRED,
             }
             for value, label in CreditReason.choices
         ]

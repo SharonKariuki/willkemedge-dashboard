@@ -53,7 +53,6 @@ export default function AddCreditPage() {
 
   const [step, setStep] = useState<"form" | "review">("form");
   const [evidence, setEvidence] = useState<File | null>(null);
-  const [evidenceError, setEvidenceError] = useState("");
 
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -77,7 +76,6 @@ export default function AddCreditPage() {
   const backTo = `/tenants/${id}`;
 
   function review(data: FormValues) {
-    setEvidenceError("");
     if (option?.needs_charge && !charge) {
       form.setError("chargeId", { message: "Choose the charge this credit corrects." });
       return;
@@ -90,10 +88,6 @@ export default function AddCreditPage() {
     }
     if (option?.needs_category && !data.categoryId) {
       form.setError("categoryId", { message: "Choose what kind of cost the tenant paid for." });
-      return;
-    }
-    if (option?.evidence_required && !evidence) {
-      setEvidenceError("Attach the supporting document for this kind of credit.");
       return;
     }
     setStep("review");
@@ -142,22 +136,19 @@ export default function AddCreditPage() {
   }
 
   return (
-    <div>
-      <Link to={backTo} className="mb-2 inline-flex items-center gap-1 text-sm text-content-muted hover:text-content">
-        <ArrowLeft className="h-4 w-4" /> Back to {tenant.full_name}
-      </Link>
-      <PageHeader
-        eyebrow={`${tenant.building_name} · Unit ${tenant.unit_label}`}
-        title="Add Credit"
-        description={
-          step === "form"
-            ? "A credit is a numbered record on the tenant's account. It can be used against their next invoice, or refunded."
-            : "Check the figures. A credit cannot be edited once issued — only voided, with a reason."
-        }
-      />
+    <div className="space-y-6">
+      <div>
+        <Link to={backTo} className="mb-2 inline-flex items-center gap-1 text-sm text-content-muted hover:text-content">
+          <ArrowLeft className="h-4 w-4" /> Back to {tenant.full_name}
+        </Link>
+        <PageHeader
+          className="mb-0"
+          eyebrow={`${tenant.building_name} · Unit ${tenant.unit_label}`}
+          title="Add Credit"
+        />
+      </div>
 
-      <div className="grid gap-6 lg:grid-cols-3">
-        <Card padding="md" className="lg:col-span-2">
+      <Card variant="glass" padding="md" className="animate-fade-up">
           {step === "form" ? (
             <form onSubmit={form.handleSubmit(review)} className="space-y-4">
               <Field label="Why is the tenant getting this credit? *" error={form.formState.errors.reason?.message}>
@@ -264,15 +255,11 @@ export default function AddCreditPage() {
                 <Field label="Reference" hint="Complaint no., meter-reading ref…">
                   <input {...form.register("reference")} className={inputCls} />
                 </Field>
-                <Field
-                  label={option?.evidence_required ? "Supporting document *" : "Supporting document"}
-                  hint="PDF or photo, up to 5 MB."
-                  error={evidenceError}
-                >
+                <Field label="Supporting document" hint="Optional. PDF or photo, up to 5 MB.">
                   <input
                     type="file"
                     accept=".pdf,.jpg,.jpeg,.png,.webp"
-                    onChange={(e) => { setEvidence(e.target.files?.[0] ?? null); setEvidenceError(""); }}
+                    onChange={(e) => setEvidence(e.target.files?.[0] ?? null)}
                     className="w-full text-sm text-ink-700"
                   />
                 </Field>
@@ -295,6 +282,33 @@ export default function AddCreditPage() {
                   <span><span className="font-medium">Hold Credit</span> — keep it aside, e.g. while deciding whether to refund it.</span>
                 </label>
               </fieldset>
+
+              {/* The running effect on the tenant, in the same container as
+                  the fields that drive it. */}
+              <dl className="grid gap-x-8 gap-y-2 rounded-md bg-surface-sunk px-4 py-3 text-sm tabular-nums sm:grid-cols-3">
+                <div className="flex justify-between gap-4 sm:block">
+                  <dt className="text-ink-500">Credit</dt>
+                  <dd className="font-semibold text-ink-900">
+                    {KES(total)}
+                    {vat > 0 && <span className="ml-1 text-xs font-normal text-ink-500">incl. VAT {KES(vat)}</span>}
+                  </dd>
+                </div>
+                <div className="flex justify-between gap-4 sm:block">
+                  <dt className="text-ink-500">Balance now</dt>
+                  <dd className="text-ink-700">{formatBalanceKES(balanceNow)}</dd>
+                </div>
+                <div className="flex justify-between gap-4 sm:block">
+                  <dt className="text-ink-500">After this credit</dt>
+                  <dd className="font-semibold text-ink-900">
+                    {balanceAfter < 0 ? `${KES(-balanceAfter)} cr` : formatBalanceKES(balanceAfter)}
+                  </dd>
+                </div>
+              </dl>
+              {Number(position.credit_on_account) > 0 && (
+                <Note>
+                  {tenant.full_name.split(" ")[0]} already holds {KES(position.credit_on_account)} on account.
+                </Note>
+              )}
 
               <div className="flex justify-end gap-2 border-t border-hairline pt-4">
                 <Button type="button" variant="ghost" onClick={() => navigate(backTo)}>Cancel</Button>
@@ -339,38 +353,6 @@ export default function AddCreditPage() {
           )}
         </Card>
 
-        {/* Kept beside the form so the effect on the tenant is never out of sight. */}
-        <Card padding="md" className="h-fit">
-          <p className="text-xs uppercase tracking-wider text-content-muted">Summary</p>
-          <dl className="mt-3 space-y-2 text-sm tabular-nums">
-            <div className="flex justify-between gap-4">
-              <dt className="text-ink-500">Credit</dt>
-              <dd className="font-semibold text-ink-900">{KES(total)}</dd>
-            </div>
-            {vat > 0 && (
-              <div className="flex justify-between gap-4 text-xs">
-                <dt className="text-ink-500">of which VAT</dt>
-                <dd className="text-ink-700">{KES(vat)}</dd>
-              </div>
-            )}
-            <div className="flex justify-between gap-4">
-              <dt className="text-ink-500">Balance now</dt>
-              <dd className="text-ink-700">{formatBalanceKES(balanceNow)}</dd>
-            </div>
-            <div className="flex justify-between gap-4 border-t border-hairline pt-2">
-              <dt className="text-ink-500">After this credit</dt>
-              <dd className="font-semibold text-ink-900">
-                {balanceAfter < 0 ? `${KES(-balanceAfter)} cr` : formatBalanceKES(balanceAfter)}
-              </dd>
-            </div>
-          </dl>
-          {Number(position.credit_on_account) > 0 && (
-            <Note>
-              {tenant.full_name.split(" ")[0]} already holds {KES(position.credit_on_account)} on account.
-            </Note>
-          )}
-        </Card>
-      </div>
     </div>
   );
 }

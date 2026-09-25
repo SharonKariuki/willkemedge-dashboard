@@ -107,6 +107,7 @@ class DashboardSummaryView(APIView):
         # income report use, so "income" means one thing across the dashboard
         # rather than gross here and net there.
         from apps.dashboard.views_reports import INCOME_PAYMENT_FILTER, _net_income_sum
+        from apps.payments.reporting import income_adjustment
 
         income_trend = []
         for i in range(11, -1, -1):
@@ -116,6 +117,8 @@ class DashboardSummaryView(APIView):
             month_total = Payment.objects.filter(
                 INCOME_PAYMENT_FILTER, period_month=m, period_year=y
             ).aggregate(total=_net_income_sum())["total"] or 0
+            # Credits given back and rent settled by credit, on the same basis.
+            month_total += income_adjustment(m, y)
             income_trend.append({
                 "month": f"{y}-{m:02d}",
                 "amount": float(month_total),
