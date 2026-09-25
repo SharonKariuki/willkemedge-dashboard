@@ -14,6 +14,12 @@ from apps.expenses.models import Account, AccountType, Expense
 from apps.payments.aging import BUCKETS, aging_buckets
 from apps.payments.models import Arrears, Payment, PaymentType
 from apps.payments.monthly_ledger import current_balances
+from apps.payments.reporting import (
+    expense_addition_rows,
+    expense_addition_total,
+    expense_additions,
+    income_adjustment,
+)
 from apps.payments.tax_service import TAX_RATE_BUSINESS
 from apps.tenants.models import Tenant
 
@@ -95,6 +101,9 @@ class AnnualIncomeSummaryView(APIView):
             total = Payment.objects.filter(
                 INCOME_PAYMENT_FILTER, period_month=m, period_year=year
             ).aggregate(total=_net_income_sum())["total"] or Decimal("0")
+            # Credit notes give income back and a credit settling rent earns it;
+            # neither is a Payment row. See apps.payments.reporting.
+            total += income_adjustment(m, year)
             monthly.append({"month": m, "total": float(total)})
             grand_total += total
         return Response({"year": year, "grand_total": float(grand_total), "monthly": monthly})
@@ -335,7 +344,12 @@ class ProfitLossReportView(APIView):
             grand_expenses = Decimal("0")
             for m in range(1, 13):
                 income = payments_qs.filter(INCOME_PAYMENT_FILTER, period_month=m, period_year=year).aggregate(total=_net_income_sum())["total"] or Decimal("0")
+                income += income_adjustment(m, year, building_id=building_id)
                 exp_total = expenses_qs_all.filter(period_month=m, period_year=year).aggregate(total=Sum("amount"))["total"] or Decimal("0")
+                # A cost the tenant paid on our behalf is an expense of ours; it
+                # sits in the ledger against the category's account with no
+                # Expense row behind it.
+                exp_total += expense_addition_total(m, year, building_id=building_id)
                 rows.append({"month": m, "income": float(income), "expenses": float(exp_total), "net": float(income - exp_total)})
                 grand_income += income
                 grand_expenses += exp_total
@@ -349,8 +363,15 @@ class ProfitLossReportView(APIView):
         month = int(request.query_params.get("month", now.month))
         year = int(request.query_params.get("year", now.year))
         income = payments_qs.filter(INCOME_PAYMENT_FILTER, period_month=month, period_year=year).aggregate(total=_net_income_sum())["total"] or Decimal("0")
+        income += income_adjustment(month, year, building_id=building_id)
         expenses_qs = expenses_qs_all.filter(period_month=month, period_year=year).values("category__name").annotate(total=Sum("amount")).order_by("-total")
-        expense_rows = [{"category": row["category__name"], "amount": float(row["total"])} for row in expenses_qs]
+        by_category = {row["category__name"]: float(row["total"]) for row in expenses_qs}
+        for category, amount in expense_additions(month, year, building_id=building_id).items():
+            by_category[category] = by_category.get(category, 0.0) + float(amount)
+        expense_rows = [
+            {"category": category, "amount": amount}
+            for category, amount in sorted(by_category.items(), key=lambda kv: -kv[1])
+        ]
         total_expenses = sum(r["amount"] for r in expense_rows)
         return Response({
             "mode": "monthly", "period": f"{month}/{year}",
@@ -810,12 +831,28 @@ class ExpenseBreakdownReportView(APIView):
             payments_qs = payments_qs.filter(tenant__unit__building_id=building_id)
 
         expenses_qs = expenses_base.values("category__name").annotate(total=Sum("amount"), count=Count("id")).order_by("-total")
-        rows = [{"category": row["category__name"], "total": float(row["total"]), "count": row["count"]} for row in expenses_qs]
+        merged: dict[str, dict] = {}
+        for row in expenses_qs:
+            merged[row["category__name"]] = {
+                "category": row["category__name"],
+                "total": float(row["total"]),
+                "count": row["count"],
+            }
+        # Costs the tenant paid for us: a real expense of the category, recorded
+        # as a credit on their account rather than an Expense row.
+        for row in expense_addition_rows(month, year, building_id=building_id):
+            entry = merged.setdefault(
+                row["category"], {"category": row["category"], "total": 0.0, "count": 0}
+            )
+            entry["total"] += float(row["total"])
+            entry["count"] += row["count"]
+        rows = sorted(merged.values(), key=lambda r: -r["total"])
         grand_total = sum(r["total"] for r in rows)
         for r in rows:
             r["percentage"] = round(r["total"] / grand_total * 100, 1) if grand_total else 0.0
 
         income = payments_qs.filter(INCOME_PAYMENT_FILTER).aggregate(total=Sum("amount"))["total"] or Decimal("0")
+        income += income_adjustment(month, year, building_id=building_id)
         return Response({
             "period": f"{month}/{year}",
             "building": int(building_id) if building_id else None,

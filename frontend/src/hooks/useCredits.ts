@@ -25,7 +25,6 @@ export interface CreditReasonOption {
   needs_charge: boolean;
   rent_only: boolean;
   needs_category: boolean;
-  evidence_required: boolean;
 }
 
 export interface CreditableCharge {

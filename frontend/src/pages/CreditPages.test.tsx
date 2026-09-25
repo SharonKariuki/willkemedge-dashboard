@@ -27,8 +27,8 @@ const position: CreditPosition = {
   refunds_to_send: "0.00",
   refundable: "2000.00",
   reasons: [
-    { value: "billing_correction", label: "We charged too much", document: "credit_note", needs_charge: true, rent_only: false, needs_category: false, evidence_required: false },
-    { value: "tenant_paid_cost", label: "Tenant paid for a repair or cost that was ours", document: "account_credit", needs_charge: false, rent_only: false, needs_category: true, evidence_required: true },
+    { value: "billing_correction", label: "We charged too much", document: "credit_note", needs_charge: true, rent_only: false, needs_category: false },
+    { value: "tenant_paid_cost", label: "Tenant paid for a repair or cost that was ours", document: "account_credit", needs_charge: false, rent_only: false, needs_category: true },
   ],
   rent_charges: [
     { id: 11, label: "Rent September 2026", charged: "10000.00", vat: "1600.00", creditable: "10000.00", vat_rate: "0.1600" },
@@ -89,8 +89,8 @@ describe("AddCreditPage", () => {
     expect(screen.getByText("KES 2,320")).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Review credit" }));
-    // 3,000 owed less a 2,320 credit — on the review and in the summary beside it.
-    expect(screen.getAllByText("KES 680")).toHaveLength(2);
+    // 3,000 owed less a 2,320 credit.
+    expect(screen.getByText("KES 680")).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Issue Credit" }));
     expect(addCredit).toHaveBeenCalledTimes(1);
@@ -101,7 +101,7 @@ describe("AddCreditPage", () => {
     expect(navigate).toHaveBeenCalledWith("/tenants/7#credit-history");
   });
 
-  it("will not review a tenant-paid cost without its receipt", async () => {
+  it("reviews a tenant-paid cost without a receipt — the document is optional", async () => {
     renderPage("/tenants/7/credits/new", <AddCreditPage />);
     await userEvent.selectOptions(screen.getByLabelText(/Why is the tenant/), "tenant_paid_cost");
     await userEvent.selectOptions(screen.getByLabelText(/What kind of cost/), "4");
@@ -109,8 +109,7 @@ describe("AddCreditPage", () => {
     await userEvent.type(screen.getByLabelText(/Explanation for the tenant/), "Plumber");
     await userEvent.click(screen.getByRole("button", { name: "Review credit" }));
 
-    expect(screen.getByText(/Attach the supporting document/)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Issue Credit" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Issue Credit" })).toBeInTheDocument();
   });
 });
 
