@@ -64,8 +64,10 @@ CENTS = Decimal("0.01")
 SERIES_FOR_TYPE = {CreditType.CREDIT_NOTE: "CN", CreditType.ACCOUNT_CREDIT: "CR"}
 REFUND_SERIES = "RF"
 
-#: Reasons that must come with evidence (a receipt, the cutover record).
-EVIDENCE_REQUIRED = {CreditReason.TENANT_PAID_COST, CreditReason.OPENING_CREDIT}
+#: Supporting evidence — a receipt, the cutover record — is welcome on any
+#: credit and demanded on none: the owner is the only user, and a rule that
+#: blocks a credit until a photo is to hand only invites a worse workaround.
+#: What was attached (or that nothing was) is on the record either way.
 
 #: A reference is how an outgoing payment is traced on the bank statement;
 #: cash handed over has none.
@@ -235,7 +237,7 @@ def vat_on_credit(arrears: Arrears | None, net: Decimal) -> Decimal:
     return _money(net * arrears.expected_vat / arrears.expected_rent)
 
 
-def _validate_links(tenant, reason, *, arrears, utility_charge, expense_category, evidence):
+def _validate_links(tenant, reason, *, arrears, utility_charge, expense_category):
     from .monthly_ledger import OPENING_MARKER
 
     if CREDIT_TYPE_FOR_REASON[reason] == CreditType.CREDIT_NOTE:
@@ -266,8 +268,6 @@ def _validate_links(tenant, reason, *, arrears, utility_charge, expense_category
                 raise CreditError("Choose what kind of cost the tenant paid for.")
         elif expense_category is not None:
             raise CreditError("An expense category only applies to a cost the tenant paid for.")
-    if reason in EVIDENCE_REQUIRED and not evidence:
-        raise CreditError("Attach the supporting document for this kind of credit.")
 
 
 @transaction.atomic
@@ -312,7 +312,7 @@ def issue_credit(
 
     _validate_links(
         tenant, reason, arrears=arrears, utility_charge=utility_charge,
-        expense_category=expense_category, evidence=evidence,
+        expense_category=expense_category,
     )
 
     vat = ZERO

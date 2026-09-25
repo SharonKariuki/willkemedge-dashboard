@@ -24,7 +24,7 @@ from apps.accounts.models import FinancialAuditLog
 from apps.buildings.models import Building, Unit, UnitClassification, UnitStatus
 from apps.expenses.models import Account, ExpenseCategory
 from apps.ledger.models import JournalEntry, JournalLine
-from apps.payments import credits
+from apps.payments import credits, reporting
 from apps.payments.aging import aging_buckets
 from apps.payments.credits import CreditError
 from apps.payments.models import (
@@ -330,13 +330,17 @@ class TestManualCreditPaidOut:
         assert _net("3300") == D("3000.00")
         assert _net("4110") == D("0.00")
 
-    def test_evidence_is_required_for_a_tenant_paid_cost(self, house, owner, plumbing):
-        with pytest.raises(CreditError, match="Attach"):
-            credits.issue_credit(
-                tenant=house, reason=CreditReason.TENANT_PAID_COST, net_amount="5000",
-                credit_date=TODAY, description="x", expense_category=plumbing,
-                actor=owner, today=TODAY,
-            )
+    def test_supporting_document_is_optional(self, house, owner, plumbing):
+        # The owner is the only user; a rule that blocks a credit until a photo
+        # is to hand only invites a worse workaround. What was attached — or
+        # that nothing was — stays on the record either way.
+        credit = credits.issue_credit(
+            tenant=house, reason=CreditReason.TENANT_PAID_COST, net_amount="5000",
+            credit_date=TODAY, description="Plumber paid by tenant",
+            expense_category=plumbing, actor=owner, today=TODAY,
+        )
+        assert credit.evidence_name == ""
+        assert _net("5210") == D("5000.00")
 
 
 # ── E. partly applied, the rest refunded, then voided ────────────────────────
@@ -584,6 +588,158 @@ class TestStatementAndReports:
         assert aging_buckets([house], today=TODAY)[house.pk]["total"] == D("6000.00")
 
 
+# ── the reports read credits the way the chart of accounts does ─────────────
+
+@pytest.mark.django_db
+class TestReports:
+    """Income, expenses and the P&L have to move with the credits.
+
+    The Accounting page reads the ledger, so it follows a credit the moment it
+    posts. The Reports page is built from Payment/Expense rows, so it is told
+    about credits through `apps.payments.reporting`.
+    """
+
+    def _client(self, user):
+        client = APIClient()
+        client.force_authenticate(user=user)
+        return client
+
+    def test_a_credit_note_takes_income_back_out(self, house, owner):
+        september = _raise(house, 9, rent="15000")
+        _pay(house, "15000", 9)
+        credits.issue_credit(
+            tenant=house, reason=CreditReason.BILLING_CORRECTION, net_amount="5000",
+            credit_date=TODAY, description="Overbilled", arrears=september,
+            actor=owner, today=TODAY,
+        )
+        assert reporting.credit_notes_net(9, 2026) == D("5000.00")
+        assert reporting.income_adjustment(9, 2026) == D("-5000.00")
+
+    def test_rent_settled_by_credit_is_income_even_though_no_cash_came(self, house, owner):
+        _raise(house, 9)
+        credits.issue_credit(
+            tenant=house, reason=CreditReason.OPENING_CREDIT, net_amount="4000",
+            credit_date=TODAY, description="Owed at cutover", actor=owner, today=TODAY,
+        )
+        # Applied to September rent on issue: earned now, with no Payment row.
+        assert reporting.credit_applied_net(9, 2026) == D("4000.00")
+        assert reporting.income_adjustment(9, 2026) == D("4000.00")
+
+    def test_a_commercial_credit_application_leaves_the_vat_out_of_income(self, shop, owner):
+        _raise(shop, 9, vat=D("1600"))
+        credits.issue_credit(
+            tenant=shop, reason=CreditReason.OPENING_CREDIT, net_amount="5800",
+            credit_date=TODAY, description="Owed at cutover", actor=owner, today=TODAY,
+        )
+        # 5,800 settles rent of 5,000 plus 800 VAT owed to KRA.
+        assert reporting.credit_applied_net(9, 2026) == D("5000.00")
+
+    def test_refunding_overpaid_rent_reverses_the_income(self, house, owner):
+        _raise(house, 9)
+        _pay(house, "15000", 9)
+        credits.create_refund(
+            tenant=house, amount="5000", method=PaymentSource.MPESA, reference="QX1",
+            sent_on=TODAY, actor=owner, today=TODAY,
+        )
+        assert reporting.refunded_income_net(9, 2026) == D("5000.00")
+        assert reporting.income_adjustment(9, 2026) == D("-5000.00")
+
+    def test_refunding_a_credit_is_not_an_income_event(self, house, owner):
+        credits.issue_credit(
+            tenant=house, reason=CreditReason.OPENING_CREDIT, net_amount="5000",
+            credit_date=TODAY, description="Owed at cutover", actor=owner, today=TODAY,
+        )
+        credits.create_refund(
+            tenant=house, amount="5000", method=PaymentSource.CASH,
+            sent_on=TODAY, actor=owner, today=TODAY,
+        )
+        assert reporting.refunded_income_net(9, 2026) == D("0.00")
+
+    def test_a_cost_the_tenant_paid_is_an_expense_of_ours(self, house, owner, plumbing):
+        credits.issue_credit(
+            tenant=house, reason=CreditReason.TENANT_PAID_COST, net_amount="5000",
+            credit_date=TODAY, description="Plumber", expense_category=plumbing,
+            actor=owner, today=TODAY,
+        )
+        assert reporting.expense_additions(9, 2026) == {"Plumbing & Electrical": D("5000.00")}
+        assert reporting.expense_addition_total(9, 2026) == D("5000.00")
+        # ...and it is not mistaken for an income movement.
+        assert reporting.income_adjustment(9, 2026) == D("0.00")
+
+    def test_an_opening_credit_is_equity_so_it_moves_neither(self, house, owner):
+        credits.issue_credit(
+            tenant=house, reason=CreditReason.OPENING_CREDIT, net_amount="3000",
+            credit_date=TODAY, description="Owed at cutover", hold=True,
+            actor=owner, today=TODAY,
+        )
+        assert reporting.income_adjustment(9, 2026) == D("0.00")
+        assert reporting.expense_addition_total(9, 2026) == D("0.00")
+
+    def test_a_voided_credit_leaves_the_reports(self, house, owner):
+        september = _raise(house, 9, rent="15000")
+        _pay(house, "15000", 9)
+        credit = credits.issue_credit(
+            tenant=house, reason=CreditReason.BILLING_CORRECTION, net_amount="5000",
+            credit_date=TODAY, description="Overbilled", arrears=september,
+            actor=owner, today=TODAY,
+        )
+        credits.void_credit(credit, reason="Entered in error", actor=owner, today=TODAY)
+        assert reporting.income_adjustment(9, 2026) == D("0.00")
+
+    def test_profit_and_loss_reports_the_credit(self, house, owner, plumbing):
+        september = _raise(house, 9, rent="15000")
+        _pay(house, "15000", 9)
+        credits.issue_credit(
+            tenant=house, reason=CreditReason.BILLING_CORRECTION, net_amount="5000",
+            credit_date=TODAY, description="Overbilled", arrears=september,
+            actor=owner, today=TODAY,
+        )
+        credits.issue_credit(
+            tenant=house, reason=CreditReason.TENANT_PAID_COST, net_amount="2000",
+            credit_date=TODAY, description="Plumber", expense_category=plumbing,
+            actor=owner, today=TODAY,
+        )
+        body = self._client(owner).get("/api/reports/profit-loss/?month=9&year=2026").json()
+        assert body["income"] == 10000.0                     # 15,000 cash less the 5,000 credit
+        assert {"category": "Plumbing & Electrical", "amount": 2000.0} in body["expense_breakdown"]
+        assert body["net_profit"] == 8000.0
+
+    def test_expense_breakdown_lists_the_cost_the_tenant_paid(self, house, owner, plumbing):
+        credits.issue_credit(
+            tenant=house, reason=CreditReason.TENANT_PAID_COST, net_amount="2500",
+            credit_date=TODAY, description="Plumber", expense_category=plumbing,
+            actor=owner, today=TODAY,
+        )
+        body = self._client(owner).get("/api/reports/expense-breakdown/?month=9&year=2026").json()
+        row = next(r for r in body["categories"] if r["category"] == "Plumbing & Electrical")
+        assert row["total"] == 2500.0 and row["count"] == 1
+        assert body["total_expenses"] == 2500.0
+
+    def test_annual_income_summary_follows_the_credit(self, house, owner):
+        september = _raise(house, 9, rent="15000")
+        _pay(house, "15000", 9)
+        credits.issue_credit(
+            tenant=house, reason=CreditReason.BILLING_CORRECTION, net_amount="5000",
+            credit_date=TODAY, description="Overbilled", arrears=september,
+            actor=owner, today=TODAY,
+        )
+        body = self._client(owner).get("/api/reports/annual-income/?year=2026").json()
+        september_row = next(r for r in body["monthly"] if r["month"] == 9)
+        assert september_row["total"] == 10000.0
+
+    def test_the_ledger_and_the_report_tell_the_same_story(self, house, owner):
+        september = _raise(house, 9, rent="15000")
+        _pay(house, "15000", 9)
+        credits.issue_credit(
+            tenant=house, reason=CreditReason.BILLING_CORRECTION, net_amount="5000",
+            credit_date=TODAY, description="Overbilled", arrears=september,
+            actor=owner, today=TODAY,
+        )
+        report = self._client(owner).get("/api/reports/profit-loss/?month=9&year=2026").json()
+        # 4110 carries the cash less the credit note; the report must agree.
+        assert D(str(report["income"])) == -_net("4110")
+
+
 # ── the API the tenant page uses ─────────────────────────────────────────────
 
 @pytest.mark.django_db
@@ -608,7 +764,7 @@ class TestApi:
 
         position = client.get(f"/api/tenant-credits/position/?tenant={house.pk}").json()
         assert D(position["refundable"]) == D("5000.00")
-        assert any(r["value"] == "tenant_paid_cost" and r["evidence_required"] for r in position["reasons"])
+        assert any(r["value"] == "tenant_paid_cost" and r["needs_category"] for r in position["reasons"])
 
         resp = client.post("/api/refunds/", {
             "tenant": house.pk, "amount": "5000", "method": "mpesa", "reference": "QXAPI",
@@ -622,11 +778,11 @@ class TestApi:
 
     def test_business_rule_errors_come_back_as_plain_messages(self, house, owner):
         resp = self._client(owner).post("/api/tenant-credits/", {
-            "tenant": house.pk, "reason": "opening_credit", "amount": "5000",
-            "credit_date": TODAY.isoformat(), "description": "No evidence attached",
+            "tenant": house.pk, "reason": "billing_correction", "amount": "5000",
+            "credit_date": TODAY.isoformat(), "description": "No charge chosen",
         }, format="multipart")
         assert resp.status_code == 400
-        assert "Attach" in resp.json()["detail"]
+        assert "one charge" in resp.json()["detail"]
 
     def test_void_needs_a_reason(self, house, owner):
         credit = credits.issue_credit(
