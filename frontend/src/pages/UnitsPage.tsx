@@ -240,6 +240,9 @@ export default function UnitsPage() {
                   </p>
                   <p className="mt-0.5 truncate text-[11px] text-ink-400" title={unit.building_name}>
                     {shortBuilding(unit.building_name)}
+                    {unit.combined_into_label
+                      ? ` · part of ${unit.combined_into_label}`
+                      : (unit.combined_units ?? []).length > 0 ? ` · space ${unit.space_label}` : ""}
                   </p>
                 </div>
                 <StatusBadge status={unit.status as UnitStatus} />

@@ -147,6 +147,10 @@ class TenantDetailSerializer(serializers.ModelSerializer):
     # Every tenancy this person has held, this one included, so a returning
     # tenant's page links to where they were before and where they went next.
     tenancies = serializers.SerializerMethodField()
+    # The units this tenancy occupies: just its own, or every unit in the
+    # combined commercial space it heads (apps.buildings.spaces).
+    space_units = serializers.SerializerMethodField()
+    space_label = serializers.CharField(source="unit.space_label", read_only=True)
 
     class Meta:
         model = Tenant
@@ -154,6 +158,7 @@ class TenantDetailSerializer(serializers.ModelSerializer):
             "id", "full_name", "first_name", "last_name", "id_number", "kra_pin",
             "phone", "email", "emergency_contact", "emergency_phone", "care_of",
             "unit", "unit_label", "building_name", "building_id", "unit_classification",
+            "space_units", "space_label",
             "monthly_rent", "deposit_paid", "due_day", "is_billable",
             "deposit_months", "expected_deposit", "deposit_shortfall",
             "agreed_deposit", "deposit_is_agreed",
@@ -171,6 +176,12 @@ class TenantDetailSerializer(serializers.ModelSerializer):
         read_only_fields = [
             "status", "move_out_date", "move_out_notes", "created_at", "updated_at",
             "kyc_status", "kyc_verified_at", "kyc_verified_by", "kyc_notes",
+        ]
+
+    def get_space_units(self, obj):
+        return [
+            {"id": u.id, "label": u.label, "monthly_rent": u.monthly_rent}
+            for u in obj.unit.space_units
         ]
 
     def get_tenancies(self, obj):
@@ -280,6 +291,11 @@ class TenantCreateSerializer(serializers.ModelSerializer):
 
     def validate_unit(self, unit):
         from apps.buildings.models import UnitStatus
+        if unit.combined_into_id:
+            raise serializers.ValidationError(
+                f"{unit.label} is part of the combined space {unit.space_label}. "
+                f"Let {unit.combined_into.label}, or take {unit.label} out of the space first."
+            )
         if unit.status not in (UnitStatus.VACANT,):
             raise serializers.ValidationError("This unit is not vacant.")
         if Tenant.objects.filter(unit=unit, status__in=["active", "notice_given"]).exists():

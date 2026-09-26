@@ -1,13 +1,16 @@
 """Building, Unit and MaintenanceRequest API views."""
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
-from django.db.models import Count, Q, Sum
+from django.db.models import Count, Prefetch, Q, Sum
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from apps.accounts.permissions import CanRecordMoney
 from apps.expenses.models import Expense, ExpenseCategory
 
+from . import spaces
 from .models import (
     OCCUPIED_UNIT_STATUSES,
     Building,
@@ -19,6 +22,7 @@ from .serializers import (
     BuildingDetailSerializer,
     BuildingSerializer,
     MaintenanceRequestSerializer,
+    ReconfigureSpaceSerializer,
     UnitSerializer,
     UnitStatusSummarySerializer,
 )
@@ -28,12 +32,20 @@ class BuildingViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        return Building.objects.annotate(
+        qs = Building.objects.annotate(
             unit_count=Count("units"),
             occupied_count=Count(
                 "units", filter=Q(units__status__in=OCCUPIED_UNIT_STATUSES)
             ),
         ).order_by("name")
+        if self.action == "retrieve":
+            # The detail payload serialises every unit with its combined space.
+            qs = qs.prefetch_related(Prefetch(
+                "units",
+                queryset=Unit.objects.select_related("combined_into")
+                .prefetch_related("combined_units", "combined_into__combined_units"),
+            ))
+        return qs
 
     def get_serializer_class(self):
         if self.action in ("retrieve", "bulk_create_units"):
@@ -111,8 +123,6 @@ class UnitViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        from django.db.models import Prefetch
-
         from apps.tenants.models import Tenant, TenantStatus
 
         active_tenants = Tenant.objects.filter(
@@ -120,9 +130,12 @@ class UnitViewSet(viewsets.ModelViewSet):
         ).order_by("-move_in_date")
 
         qs = (
-            Unit.objects.select_related("building")
+            Unit.objects.select_related("building", "combined_into")
             .prefetch_related(
-                Prefetch("tenants", queryset=active_tenants, to_attr="active_tenants")
+                Prefetch("tenants", queryset=active_tenants, to_attr="active_tenants"),
+                Prefetch("combined_into__tenants", queryset=active_tenants, to_attr="active_tenants"),
+                "combined_units",
+                "combined_into__combined_units",
             )
             .order_by("building__name", "floor", "label")
         )
@@ -155,6 +168,32 @@ class UnitViewSet(viewsets.ModelViewSet):
             "under_maintenance": counts.get(UnitStatus.UNDER_MAINTENANCE, 0),
         }
         return Response(UnitStatusSummarySerializer(data).data)
+
+    @action(
+        detail=True, methods=["post"], url_path="reconfigure-space",
+        permission_classes=[CanRecordMoney],
+    )
+    def reconfigure_space(self, request, pk=None):
+        """POST /api/units/{head}/reconfigure-space/ — combine commercial units.
+
+        Body: ``add`` / ``remove`` (unit ids) and optionally ``monthly_rent``,
+        the agreed base rent for the space afterwards. Record-money roles only:
+        the change moves what the tenant is billed.
+        """
+        head = self.get_object()
+        ser = ReconfigureSpaceSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        try:
+            spaces.reconfigure_space(
+                head,
+                add=ser.validated_data["add"],
+                remove=ser.validated_data["remove"],
+                monthly_rent=ser.validated_data.get("monthly_rent"),
+                actor=request.user,
+            )
+        except DjangoValidationError as exc:
+            return Response({"detail": " ".join(exc.messages)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(UnitSerializer(self.get_queryset().get(pk=head.pk)).data)
 
     @action(detail=True, methods=["patch"], url_path="set-status")
     def set_status(self, request, pk=None):
