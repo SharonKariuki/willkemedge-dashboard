@@ -12,6 +12,11 @@ class UnitSerializer(serializers.ModelSerializer):
     # card straight to its tenant. Null for vacant units.
     current_tenant_id = serializers.SerializerMethodField()
     current_tenant_name = serializers.SerializerMethodField()
+    # Combined commercial space. Read-only here: the space is changed through
+    # POST /units/<head>/reconfigure-space/ so the rent moves with it.
+    combined_into_label = serializers.CharField(source="combined_into.label", read_only=True, default=None)
+    combined_units = serializers.SerializerMethodField()
+    space_label = serializers.CharField(read_only=True)
 
     class Meta:
         model = Unit
@@ -20,14 +25,27 @@ class UnitSerializer(serializers.ModelSerializer):
             "classification", "classification_display", "monthly_rent",
             "status", "status_display", "statement_descriptor", "notes",
             "current_tenant_id", "current_tenant_name",
+            "combined_into", "combined_into_label", "combined_units",
+            "space_label",
             "created_at", "updated_at",
         ]
-        read_only_fields = ["status", "created_at", "updated_at"]
+        read_only_fields = ["status", "combined_into", "created_at", "updated_at"]
+
+    def get_combined_units(self, obj):
+        return [
+            {"id": u.id, "label": u.label, "monthly_rent": u.monthly_rent}
+            for u in obj.space_units[1:]
+        ] if obj.combined_into_id is None else []
 
     def _active_tenant(self, obj):
         """The current occupant. Uses the view's prefetched `active_tenants`
         when present (list endpoint) to avoid an N+1; falls back to a query for
-        single-object contexts (e.g. set-status responses)."""
+        single-object contexts (e.g. set-status responses).
+
+        A unit that is part of a combined space has no tenancy of its own; its
+        occupant is the head's."""
+        if obj.combined_into_id:
+            obj = obj.combined_into
         prefetched = getattr(obj, "active_tenants", None)
         if prefetched is not None:
             return prefetched[0] if prefetched else None
@@ -108,6 +126,16 @@ class MaintenanceRequestSerializer(serializers.ModelSerializer):
             "completed_date", "notes", "created_at", "updated_at",
         ]
         read_only_fields = ["created_at", "updated_at"]
+
+
+class ReconfigureSpaceSerializer(serializers.Serializer):
+    add = serializers.PrimaryKeyRelatedField(queryset=Unit.objects.all(), many=True, required=False, default=list)
+    remove = serializers.PrimaryKeyRelatedField(queryset=Unit.objects.all(), many=True, required=False, default=list)
+    monthly_rent = serializers.DecimalField(
+        max_digits=10, decimal_places=2, min_value=0, required=False, allow_null=True,
+        help_text="Agreed base rent (excl. VAT) for the space after the change. "
+                  "Omit to move the rent by the standing rent of each unit added/removed.",
+    )
 
 
 class UnitStatusSummarySerializer(serializers.Serializer):
