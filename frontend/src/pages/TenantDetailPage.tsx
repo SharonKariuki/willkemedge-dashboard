@@ -20,6 +20,7 @@ import {
 } from "@/components/ui";
 import { CreditsPanel } from "@/features/credits/CreditsPanel";
 import { MoveInAgainForm } from "@/features/tenants/MoveInAgainForm";
+import { SpacePanel } from "@/features/tenants/SpacePanel";
 import { Field, KycPanel, RemindModal, inputCls } from "@/features/tenants/shared";
 import { useAuth } from "@/hooks/useAuth";
 import { useCreditPosition } from "@/hooks/useCredits";
@@ -265,7 +266,7 @@ export default function TenantDetailPage() {
           </button>
           <h1 className="font-display text-2xl font-bold text-content sm:text-3xl">{tenant.full_name}</h1>
           <p className="mt-1 text-sm text-content-muted">
-            {tenant.building_name} · Unit {tenant.unit_label}
+            {tenant.building_name} · {(tenant.space_units?.length ?? 1) > 1 ? `Units ${tenant.space_label}` : `Unit ${tenant.unit_label}`}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -592,6 +593,10 @@ export default function TenantDetailPage() {
           <p className="px-5 py-6 text-sm text-content-muted">No payments recorded yet.</p>
         )}
       </Card>
+
+      {/* Combined commercial space — the units this tenancy occupies. Changing
+          it moves the rent, so it takes the record-money privilege. */}
+      <SpacePanel tenant={tenant} canManage={Boolean(user?.can_record_money)} />
 
       {/* Credits & refunds — Credit History, Refund Credit, Void. */}
       <CreditsPanel tenantId={tenant.id} tenantName={tenant.full_name} canManage={canManageCredit} />

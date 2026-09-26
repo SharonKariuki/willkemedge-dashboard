@@ -467,13 +467,16 @@ def _unit_descriptor(tenant) -> str:
     """Right-hand cell on the statement.
 
     Honors `Unit.statement_descriptor` when set; otherwise falls back to a
-    sensible default ("Unit G05 — Building Name").
+    sensible default ("Unit G05 — Building Name", or "Units MCG05 + MCG06 — …"
+    for a combined space).
     """
     unit = tenant.unit
     explicit = getattr(unit, "statement_descriptor", "") or ""
     if explicit:
         return explicit
-    return f"Unit {unit.label} — {unit.building.name}"
+    space = unit.space_units
+    noun = "Units" if len(space) > 1 else "Unit"
+    return f"{noun} {unit.space_label} — {unit.building.name}"
 
 
 def build_statement(

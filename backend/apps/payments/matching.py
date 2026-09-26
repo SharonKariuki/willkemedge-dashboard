@@ -130,6 +130,10 @@ def match_tenant(bill_ref: str) -> Tenant | None:
     unit = _unit_for_label(house_number)
     if unit is None:
         return None
+    # Any unit in a combined space pays into the one tenancy on its head: a
+    # hospital across MCG05-MCG08 may quote whichever door it thinks of.
+    if unit.combined_into_id:
+        unit = unit.combined_into
     return Tenant.objects.filter(unit=unit, status=TenantStatus.ACTIVE).first()
 
 
