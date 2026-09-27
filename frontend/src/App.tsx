@@ -5,6 +5,7 @@ import ProtectedRoute from "@/components/ProtectedRoute";
 import AccountingPage from "@/pages/AccountingPage";
 import BuildingDetailPage from "@/pages/BuildingDetailPage";
 import BuildingsPage from "@/pages/BuildingsPage";
+import AddBuildingPage from "@/pages/AddBuildingPage";
 import DashboardPage from "@/pages/DashboardPage";
 import EditBuildingPage from "@/pages/EditBuildingPage";
 import ExpensesPage from "@/pages/ExpensesPage";
@@ -42,6 +43,7 @@ export default function App() {
       >
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/buildings" element={<BuildingsPage />} />
+        <Route path="/buildings/new" element={<AddBuildingPage />} />
         <Route path="/buildings/:id" element={<BuildingDetailPage />} />
         <Route path="/buildings/:id/edit" element={<EditBuildingPage />} />
         <Route path="/units" element={<UnitsPage />} />
