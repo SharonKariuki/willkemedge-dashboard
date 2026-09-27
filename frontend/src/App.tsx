@@ -6,6 +6,7 @@ import AccountingPage from "@/pages/AccountingPage";
 import BuildingDetailPage from "@/pages/BuildingDetailPage";
 import BuildingsPage from "@/pages/BuildingsPage";
 import DashboardPage from "@/pages/DashboardPage";
+import EditBuildingPage from "@/pages/EditBuildingPage";
 import ExpensesPage from "@/pages/ExpensesPage";
 import ManualIncomePage from "@/pages/ManualIncomePage";
 import LoginPage from "@/pages/LoginPage";
@@ -42,6 +43,7 @@ export default function App() {
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/buildings" element={<BuildingsPage />} />
         <Route path="/buildings/:id" element={<BuildingDetailPage />} />
+        <Route path="/buildings/:id/edit" element={<EditBuildingPage />} />
         <Route path="/units" element={<UnitsPage />} />
         <Route path="/tenants" element={<TenantsPage />} />
         <Route path="/tenants/:id" element={<TenantDetailPage />} />

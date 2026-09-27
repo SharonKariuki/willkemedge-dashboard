@@ -37,7 +37,6 @@ import {
   useBuildings,
   useCreateBuilding,
   useDeleteBuilding,
-  useUpdateBuilding,
 } from "@/hooks/useBuildings";
 import { getErrorMessage } from "@/lib/apiError";
 import { cn } from "@/lib/cn";
@@ -796,79 +795,6 @@ function MaintenanceModal({
   );
 }
 
-// ─── Edit Building ───────────────────────────────────────────────────────────
-const editSchema = z.object({
-  name: z.string().min(1, "Name is required"),
-  address: z.string().optional(),
-  total_floors: z.coerce.number().int().min(1, "At least 1 floor"),
-  notes: z.string().optional(),
-});
-type EditFormValues = z.infer<typeof editSchema>;
-
-function EditBuildingModal({ building, onClose }: { building: Building; onClose: () => void }) {
-  const updateBuilding = useUpdateBuilding(building.id);
-  const formId = useId();
-  const { register, handleSubmit, formState: { errors, isDirty } } = useForm<EditFormValues>({
-    resolver: zodResolver(editSchema),
-    defaultValues: {
-      name: building.name,
-      address: building.address,
-      total_floors: building.total_floors,
-      notes: building.notes,
-    },
-  });
-  const onSubmit = async (values: EditFormValues) => {
-    try {
-      await updateBuilding.mutateAsync(values);
-      toast.success(`${values.name} updated`);
-      onClose();
-    } catch (e) {
-      toast.error(getErrorMessage(e, "The building could not be updated."));
-    }
-  };
-  return (
-    <Modal
-      open
-      onClose={onClose}
-      size="md"
-      eyebrow="Edit building"
-      title={building.name}
-      closeOnBackdrop={!isDirty}
-      footer={
-        <>
-          <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button type="submit" form={formId} loading={updateBuilding.isPending}>
-            <Check className="h-4 w-4" /> Save changes
-          </Button>
-        </>
-      }
-    >
-      <form id={formId} onSubmit={handleSubmit(onSubmit)} className="grid gap-4 sm:grid-cols-2">
-        <div className="sm:col-span-2">
-          <Field label="Name *" error={errors.name?.message}>
-            <input {...register("name")} className={inputCls} />
-          </Field>
-        </div>
-        <Field label="Address">
-          <input {...register("address")} className={inputCls} />
-        </Field>
-        <Field label="Total floors *" error={errors.total_floors?.message}>
-          <input type="number" min={1} {...register("total_floors")} className={inputCls} />
-        </Field>
-        <div className="sm:col-span-2">
-          <Field label="Notes">
-            <textarea rows={3} {...register("notes")} className={inputCls} />
-          </Field>
-        </div>
-      </form>
-      <p className="mt-4 text-xs text-content-muted">
-        To change a unit&rsquo;s rent, close this and open{" "}
-        <span className="font-medium text-content">Edit unit rents &amp; repairs</span> on the card.
-      </p>
-    </Modal>
-  );
-}
-
 // ─── Delete Building ─────────────────────────────────────────────────────────
 function DeleteBuildingModal({ building, onClose }: { building: Building; onClose: () => void }) {
   const deleteBuilding = useDeleteBuilding();
@@ -919,7 +845,7 @@ function DeleteBuildingModal({ building, onClose }: { building: Building; onClos
 // ─── Building card ──────────────────────────────────────────────────────────
 function BuildingCard({ building }: { building: Building & { units?: Unit[] } }) {
   const [expanded, setExpanded] = useState(false);
-  const [dialog, setDialog] = useState<"edit" | "delete" | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [rentUnitModal, setRentUnitModal] = useState<Unit | null>(null);
   const [maintenanceUnit, setMaintenanceUnit] = useState<Unit | null>(null);
   const { data: detail, isFetching: loadingUnits } = useBuilding(expanded ? building.id : "");
@@ -1052,17 +978,16 @@ function BuildingCard({ building }: { building: Building & { units?: Unit[] } })
             View units <ArrowUpRight className="h-3.5 w-3.5" />
           </Link>
           <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() => setDialog("edit")}
+            <Link
+              to={`/buildings/${building.id}/edit`}
               aria-label={`Edit ${building.name}`}
               className="inline-flex h-8 items-center gap-1.5 rounded-md bg-success-soft px-3 text-xs font-semibold text-success transition-colors hover:bg-success hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-success"
             >
               <Pencil className="h-3.5 w-3.5" /> Edit
-            </button>
+            </Link>
             <button
               type="button"
-              onClick={() => setDialog("delete")}
+              onClick={() => setDeleting(true)}
               aria-label={`Delete ${building.name}`}
               className="inline-flex h-8 items-center gap-1.5 rounded-md bg-danger-soft px-3 text-xs font-semibold text-danger transition-colors hover:bg-danger hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger"
             >
@@ -1072,8 +997,7 @@ function BuildingCard({ building }: { building: Building & { units?: Unit[] } })
         </div>
       </Card>
 
-      {dialog === "edit" && <EditBuildingModal building={building} onClose={() => setDialog(null)} />}
-      {dialog === "delete" && <DeleteBuildingModal building={building} onClose={() => setDialog(null)} />}
+      {deleting && <DeleteBuildingModal building={building} onClose={() => setDeleting(false)} />}
       {rentUnitModal && <AdjustRentModal unit={rentUnitModal} onClose={() => setRentUnitModal(null)} />}
       {maintenanceUnit && <MaintenanceModal unit={maintenanceUnit} onClose={() => setMaintenanceUnit(null)} />}
     </>
