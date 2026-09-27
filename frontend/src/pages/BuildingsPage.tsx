@@ -601,8 +601,8 @@ function AdjustRentModal({
       open
       onClose={onClose}
       size="sm"
-      eyebrow="Unit"
-      title={`${unit.label}`}
+      eyebrow="Edit rent"
+      title={`Unit ${unit.label}`}
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
@@ -796,18 +796,19 @@ function MaintenanceModal({
   );
 }
 
-// ─── Edit Building Form ──────────────────────────────────────────────────────
+// ─── Edit Building ───────────────────────────────────────────────────────────
 const editSchema = z.object({
-  name: z.string().min(1),
+  name: z.string().min(1, "Name is required"),
   address: z.string().optional(),
-  total_floors: z.coerce.number().int().min(1),
+  total_floors: z.coerce.number().int().min(1, "At least 1 floor"),
   notes: z.string().optional(),
 });
 type EditFormValues = z.infer<typeof editSchema>;
 
-function EditBuildingForm({ building, onDone }: { building: Building; onDone: () => void }) {
+function EditBuildingModal({ building, onClose }: { building: Building; onClose: () => void }) {
   const updateBuilding = useUpdateBuilding(building.id);
-  const { register, handleSubmit, formState: { errors } } = useForm<EditFormValues>({
+  const formId = useId();
+  const { register, handleSubmit, formState: { errors, isDirty } } = useForm<EditFormValues>({
     resolver: zodResolver(editSchema),
     defaultValues: {
       name: building.name,
@@ -819,82 +820,110 @@ function EditBuildingForm({ building, onDone }: { building: Building; onDone: ()
   const onSubmit = async (values: EditFormValues) => {
     try {
       await updateBuilding.mutateAsync(values);
-      toast.success("Building updated");
-      onDone();
+      toast.success(`${values.name} updated`);
+      onClose();
     } catch (e) {
-      toast.error(getErrorMessage(e, "Failed to update building"));
+      toast.error(getErrorMessage(e, "The building could not be updated."));
     }
   };
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="space-y-3 border-t border-gray-200 pt-4">
-      <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="Name *" error={errors.name?.message}>
-          <input {...register("name")} className={inputCls} />
-        </Field>
+    <Modal
+      open
+      onClose={onClose}
+      size="md"
+      eyebrow="Edit building"
+      title={building.name}
+      closeOnBackdrop={!isDirty}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button type="submit" form={formId} loading={updateBuilding.isPending}>
+            <Check className="h-4 w-4" /> Save changes
+          </Button>
+        </>
+      }
+    >
+      <form id={formId} onSubmit={handleSubmit(onSubmit)} className="grid gap-4 sm:grid-cols-2">
+        <div className="sm:col-span-2">
+          <Field label="Name *" error={errors.name?.message}>
+            <input {...register("name")} className={inputCls} />
+          </Field>
+        </div>
         <Field label="Address">
           <input {...register("address")} className={inputCls} />
         </Field>
-        <Field label="Total floors *">
+        <Field label="Total floors *" error={errors.total_floors?.message}>
           <input type="number" min={1} {...register("total_floors")} className={inputCls} />
         </Field>
-        <Field label="Notes">
-          <input {...register("notes")} className={inputCls} />
-        </Field>
-      </div>
-      <div className="flex justify-end gap-2">
-        <button type="button" onClick={onDone} className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors">
-          Cancel
-        </button>
-        <button type="submit" disabled={updateBuilding.isPending} className="rounded-lg bg-gray-900 px-3 py-2 text-sm font-semibold text-white hover:bg-gray-800 disabled:opacity-60 transition-colors">
-          {updateBuilding.isPending ? "Saving…" : "Save changes"}
-        </button>
-      </div>
-    </form>
+        <div className="sm:col-span-2">
+          <Field label="Notes">
+            <textarea rows={3} {...register("notes")} className={inputCls} />
+          </Field>
+        </div>
+      </form>
+      <p className="mt-4 text-xs text-content-muted">
+        To change a unit&rsquo;s rent, close this and open{" "}
+        <span className="font-medium text-content">Edit unit rents &amp; repairs</span> on the card.
+      </p>
+    </Modal>
   );
 }
 
-function DeleteConfirm({ building, onCancel, onDeleted }: { building: Building; onCancel: () => void; onDeleted: () => void }) {
+// ─── Delete Building ─────────────────────────────────────────────────────────
+function DeleteBuildingModal({ building, onClose }: { building: Building; onClose: () => void }) {
   const deleteBuilding = useDeleteBuilding();
+  const units = building.unit_count ?? 0;
+  const occupied = building.occupied_count ?? 0;
   const handleDelete = async () => {
     try {
       await deleteBuilding.mutateAsync(building.id);
-      toast.success(`"${building.name}" deleted`);
-      onDeleted();
-    } catch {
-      toast.error("Failed to delete. Check for active tenants.");
+      toast.success(`${building.name} deleted`);
+      onClose();
+    } catch (e) {
+      toast.error(getErrorMessage(e, "The building could not be deleted. Move its tenants out first."));
     }
   };
   return (
-    <div className="space-y-3 rounded-lg bg-red-50 p-4 border border-red-200 mt-4">
-      <div className="flex items-start gap-2 text-red-700">
+    <Modal
+      open
+      onClose={onClose}
+      size="sm"
+      eyebrow="Delete building"
+      title={building.name}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>Keep building</Button>
+          <Button variant="danger" onClick={handleDelete} loading={deleteBuilding.isPending} disabled={occupied > 0}>
+            <Trash2 className="h-4 w-4" /> Delete permanently
+          </Button>
+        </>
+      }
+    >
+      <div className="flex items-start gap-3 rounded-md bg-danger-soft p-3 text-sm text-danger">
         <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-        <p className="text-sm">
-          Delete <strong>{building.name}</strong>? This removes all its units permanently.
-        </p>
+        {occupied > 0 ? (
+          <p>
+            {occupied} of its {units} units {occupied === 1 ? "is" : "are"} let. Move those tenants out
+            before deleting the building.
+          </p>
+        ) : (
+          <p>
+            This removes the building and its {units} unit{units !== 1 ? "s" : ""} for good. It cannot be undone.
+          </p>
+        )}
       </div>
-      <div className="flex justify-end gap-2">
-        <button onClick={onCancel} className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors">
-          Cancel
-        </button>
-        <button
-          onClick={handleDelete}
-          disabled={deleteBuilding.isPending}
-          className="rounded-lg bg-red-600 px-3 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-60 transition-colors"
-        >
-          {deleteBuilding.isPending ? "Deleting…" : "Yes, delete"}
-        </button>
-      </div>
-    </div>
+    </Modal>
   );
 }
 
 // ─── Building card ──────────────────────────────────────────────────────────
 function BuildingCard({ building }: { building: Building & { units?: Unit[] } }) {
   const [expanded, setExpanded] = useState(false);
-  const [mode, setMode] = useState<"view" | "edit" | "delete">("view");
+  const [dialog, setDialog] = useState<"edit" | "delete" | null>(null);
   const [rentUnitModal, setRentUnitModal] = useState<Unit | null>(null);
   const [maintenanceUnit, setMaintenanceUnit] = useState<Unit | null>(null);
   const { data: detail, isFetching: loadingUnits } = useBuilding(expanded ? building.id : "");
+  const unitsPanelId = useId();
 
   const occupied = building.occupied_count ?? 0;
   const total = building.unit_count ?? 0;
@@ -903,163 +932,150 @@ function BuildingCard({ building }: { building: Building & { units?: Unit[] } })
 
   return (
     <>
-      <Card variant="glass" padding="none" className="group overflow-hidden">
-        {/* Cover image */}
-        <div className="relative h-40 w-full overflow-hidden">
+      <Card variant="glass" padding="none" className="group flex flex-col overflow-hidden">
+        {/* Cover: the photo opens the property; nothing floats on it but the name. */}
+        <Link
+          to={`/buildings/${building.id}`}
+          className="relative block h-40 w-full overflow-hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+        >
           <img
             src={propertyImage(building.id ?? building.name, "md")}
-            alt={building.name}
+            alt=""
             loading="lazy"
-            className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
+            className="h-full w-full object-cover transition-transform duration-500 ease-out group-hover:scale-105"
           />
           <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" />
           <div className="absolute bottom-3 left-4 right-4 flex items-end justify-between gap-2">
             <div className="min-w-0">
               <p className="truncate font-display text-lg font-semibold text-white">{building.name}</p>
-              {building.address && (
-                <p className="truncate text-xs text-white/80">{building.address}</p>
-              )}
+              {building.address && <p className="truncate text-xs text-white/80">{building.address}</p>}
             </div>
             <Badge
-              tone={occupancyPct >= 80 ? "sage" : occupancyPct >= 50 ? "ochre" : "coral"}
+              tone={occupancyPct >= 80 ? "paid" : occupancyPct >= 50 ? "partial" : "unpaid"}
               withDot
               className="shrink-0 backdrop-blur"
             >
-              {occupancyPct}%
+              {occupancyPct}% let
             </Badge>
           </div>
-          <div className="absolute right-3 top-3 flex gap-1">
-            <button
-              onClick={() => setMode(mode === "edit" ? "view" : "edit")}
-              className="flex h-8 w-8 items-center justify-center rounded-md bg-white/90 text-gray-700 hover:bg-white shadow-sm"
-              aria-label="Edit building"
-            >
-              <Pencil className="h-3.5 w-3.5" />
-            </button>
-            <button
-              onClick={() => setMode(mode === "delete" ? "view" : "delete")}
-              className="flex h-8 w-8 items-center justify-center rounded-md bg-white/90 text-gray-700 hover:bg-white hover:text-red-600 shadow-sm"
-              aria-label="Delete building"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </button>
+        </Link>
+
+        {/* Figures */}
+        <div className="px-5 pt-4">
+          <dl className="grid grid-cols-3 gap-2">
+            <div>
+              <dt className="text-[10px] uppercase tracking-wider text-content-muted">Let</dt>
+              <dd className="font-display text-xl font-semibold tabular-nums text-success">{occupied}</dd>
+            </div>
+            <div>
+              <dt className="text-[10px] uppercase tracking-wider text-content-muted">Vacant</dt>
+              <dd className="font-display text-xl font-semibold tabular-nums text-content">{vacant}</dd>
+            </div>
+            <div>
+              <dt className="text-[10px] uppercase tracking-wider text-content-muted">Units</dt>
+              <dd className="font-display text-xl font-semibold tabular-nums text-content">{total}</dd>
+            </div>
+          </dl>
+          <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-surface-sunk" aria-hidden>
+            <div className="h-full bg-success" style={{ width: `${occupancyPct}%` }} />
           </div>
+          <p className="mt-2 text-[11px] text-content-muted">
+            {building.total_floors} floor{building.total_floors !== 1 ? "s" : ""}
+          </p>
         </div>
 
-        {/* Body */}
-        <div className="p-5">
-          <div className="grid grid-cols-3 gap-2 text-center">
-            <div className="rounded-md bg-gray-50 py-2 border border-gray-100">
-              <p className="font-display text-xl font-semibold text-gray-900 tabular-nums">{total}</p>
-              <p className="text-[10px] uppercase tracking-wider text-gray-500">Total</p>
-            </div>
-            <div className="rounded-md bg-green-50 py-2 border border-green-100">
-              <p className="font-display text-xl font-semibold text-green-700 tabular-nums">{occupied}</p>
-              <p className="text-[10px] uppercase tracking-wider text-gray-500">Occupied</p>
-            </div>
-            <div className="rounded-md bg-gray-50 py-2 border border-gray-100">
-              <p className="font-display text-xl font-semibold text-gray-400 tabular-nums">{vacant}</p>
-              <p className="text-[10px] uppercase tracking-wider text-gray-500">Vacant</p>
-            </div>
-          </div>
-
-          <div className="mt-4">
-            <div className="flex h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
-              <div
-                className="bg-gradient-to-r from-green-400 to-green-600 transition-all"
-                style={{ width: `${occupancyPct}%` }}
-              />
-            </div>
-            <div className="mt-2 flex justify-between text-[11px] text-gray-500">
-              <span>{building.total_floors} floor{building.total_floors !== 1 ? "s" : ""}</span>
-              <span>{occupancyPct}% Occupancy</span>
-            </div>
-          </div>
-
-          {mode === "edit" && (
-            <EditBuildingForm building={building} onDone={() => setMode("view")} />
-          )}
-          {mode === "delete" && (
-            <DeleteConfirm
-              building={building}
-              onCancel={() => setMode("view")}
-              onDeleted={() => setMode("view")}
-            />
-          )}
-
-          <Link
-            to={`/units?building=${building.id}`}
-            className="mt-4 flex items-center justify-center gap-1 rounded-md bg-gray-900 py-2 text-xs font-medium text-white transition-colors hover:bg-gray-800"
-          >
-            View units
-            <ArrowUpRight className="h-3.5 w-3.5" />
-          </Link>
-        </div>
-
+        {/* Unit rents and repairs, edited without leaving the page. */}
         {total > 0 && (
-          <>
+          <div className="mt-4 border-t border-hairline">
             <button
+              type="button"
               onClick={() => setExpanded((v) => !v)}
-              className="flex w-full items-center justify-between border-t border-gray-200 px-5 py-3 text-xs font-medium text-gray-600 hover:bg-gray-50 transition-colors"
+              aria-expanded={expanded}
+              aria-controls={unitsPanelId}
+              className="flex w-full items-center justify-between px-5 py-3 text-xs font-medium text-content-secondary transition-colors hover:bg-hover"
             >
-              <span>{expanded ? "Hide units" : `Show ${total} unit${total !== 1 ? "s" : ""}`}</span>
+              <span>Edit unit rents &amp; repairs</span>
               {expanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
             </button>
             {expanded && (
-              <div className="border-t border-gray-200 p-4">
+              <div id={unitsPanelId} className="max-h-80 overflow-y-auto border-t border-hairline px-5 py-1">
                 {loadingUnits ? (
-                  <div className="space-y-2">
-                    {Array.from({ length: 3 }).map((_, i) => (
-                      <Skeleton key={i} className="h-10" />
-                    ))}
+                  <div className="space-y-2 py-2">
+                    {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-10" />)}
                   </div>
                 ) : (
-                  <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                  <ul className="divide-y divide-hairline">
                     {(detail?.units ?? []).map((u) => (
-                      <div
-                        key={u.id}
-                        className="flex items-center justify-between rounded-md bg-gray-50 border border-gray-100 px-3 py-2 text-xs"
-                      >
+                      <li key={u.id} className="flex items-center justify-between gap-2 py-2 text-xs">
                         <div className="min-w-0">
-                          <p className="truncate font-medium text-gray-900">{u.label}</p>
-                          <p className="text-[11px] text-gray-500 tabular-nums">
-                            KES {Number(u.monthly_rent).toLocaleString()}/mo
+                          <p className="flex items-center gap-2 font-medium text-content">
+                            <span className="truncate">{u.label}</span>
+                            <StatusBadge status={u.status} />
+                          </p>
+                          <p className="text-[11px] tabular-nums text-content-muted">
+                            KES {Number(u.monthly_rent).toLocaleString()} a month
                           </p>
                         </div>
-                        <div className="flex items-center gap-1.5 ml-2">
-                          <StatusBadge status={u.status} />
+                        <div className="flex shrink-0 items-center gap-1">
                           <button
+                            type="button"
                             onClick={() => setRentUnitModal(u)}
-                            title="Adjust rent"
-                            className="rounded p-1 text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+                            aria-label={`Edit rent for ${u.label}`}
+                            className="inline-flex h-7 items-center gap-1 rounded-md px-2 font-medium text-success transition-colors hover:bg-success-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-success"
                           >
-                            <Pencil className="h-3 w-3" />
+                            <Pencil className="h-3 w-3" /> Rent
                           </button>
                           <button
+                            type="button"
                             onClick={() => setMaintenanceUnit(u)}
-                            title="Log maintenance"
-                            className="rounded p-1 text-gray-400 hover:text-orange-600 hover:bg-orange-50 transition-colors"
+                            aria-label={`Log a repair for ${u.label}`}
+                            className="inline-flex h-7 items-center gap-1 rounded-md px-2 font-medium text-content-secondary transition-colors hover:bg-hover hover:text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                           >
-                            <Wrench className="h-3 w-3" />
+                            <Wrench className="h-3 w-3" /> Repair
                           </button>
                         </div>
-                      </div>
+                      </li>
                     ))}
-                  </div>
+                  </ul>
                 )}
               </div>
             )}
-          </>
+          </div>
         )}
+
+        {/* Footer: go somewhere on the left, change the building on the right. */}
+        <div className="mt-auto flex items-center justify-between gap-2 border-t border-hairline px-5 py-3">
+          <Link
+            to={`/units?building=${building.id}`}
+            className="inline-flex items-center gap-1 rounded-md text-xs font-medium text-content-secondary transition-colors hover:text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            View units <ArrowUpRight className="h-3.5 w-3.5" />
+          </Link>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setDialog("edit")}
+              aria-label={`Edit ${building.name}`}
+              className="inline-flex h-8 items-center gap-1.5 rounded-md bg-success-soft px-3 text-xs font-semibold text-success transition-colors hover:bg-success hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-success"
+            >
+              <Pencil className="h-3.5 w-3.5" /> Edit
+            </button>
+            <button
+              type="button"
+              onClick={() => setDialog("delete")}
+              aria-label={`Delete ${building.name}`}
+              className="inline-flex h-8 items-center gap-1.5 rounded-md bg-danger-soft px-3 text-xs font-semibold text-danger transition-colors hover:bg-danger hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger"
+            >
+              <Trash2 className="h-3.5 w-3.5" /> Delete
+            </button>
+          </div>
+        </div>
       </Card>
 
-      {rentUnitModal && (
-        <AdjustRentModal unit={rentUnitModal} onClose={() => setRentUnitModal(null)} />
-      )}
-      {maintenanceUnit && (
-        <MaintenanceModal unit={maintenanceUnit} onClose={() => setMaintenanceUnit(null)} />
-      )}
-
+      {dialog === "edit" && <EditBuildingModal building={building} onClose={() => setDialog(null)} />}
+      {dialog === "delete" && <DeleteBuildingModal building={building} onClose={() => setDialog(null)} />}
+      {rentUnitModal && <AdjustRentModal unit={rentUnitModal} onClose={() => setRentUnitModal(null)} />}
+      {maintenanceUnit && <MaintenanceModal unit={maintenanceUnit} onClose={() => setMaintenanceUnit(null)} />}
     </>
   );
 }
@@ -1141,7 +1157,7 @@ export default function BuildingsPage() {
             />
           </Card>
         ) : (
-          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid items-start gap-5 sm:grid-cols-2 lg:grid-cols-3">
             {filtered.map((b) => (
               <BuildingCard key={b.id} building={b as Building & { units?: Unit[] }} />
             ))}
