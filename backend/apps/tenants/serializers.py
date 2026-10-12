@@ -9,6 +9,21 @@ from apps.payments.models import PaymentSource
 from .models import DocumentType, Tenant, TenantDocument
 
 
+class OptionalDateField(serializers.DateField):
+    """A date that may be left empty.
+
+    DRF only treats ``null`` or an absent key as "not given"; an empty string
+    is parsed as a date and rejected with "Date has wrong format". The
+    dashboard's date box sends ``""`` when it is blank, so an optional date
+    such as the deposit's "Date received" blocked the whole registration.
+    """
+
+    def to_internal_value(self, value):
+        if isinstance(value, str) and not value.strip():
+            return None
+        return super().to_internal_value(value)
+
+
 def _money(value) -> str:
     """Quantize a monetary value to 2 dp and return it as an exact string."""
     return str(Decimal(str(value or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
@@ -253,7 +268,7 @@ class TenantCreateSerializer(serializers.ModelSerializer):
         write_only=True,
         help_text="How the deposit was received. Ignored when the deposit is 0.",
     )
-    deposit_date = serializers.DateField(
+    deposit_date = OptionalDateField(
         required=False, allow_null=True, write_only=True,
         help_text="When the deposit was received. Defaults to the move-in date.",
     )
