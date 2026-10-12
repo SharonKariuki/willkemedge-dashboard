@@ -92,12 +92,11 @@ class ReportsTests(APITestCase):
         resp = self.client.get("/api/reports/annual-income/", {"year": YEAR})
         assert resp.status_code == 200
         body = resp.json()
-        # Net of VAT, matching the P&L: residential 10,000 + commercial
-        # 12,000/1.16 = 10,344.83. Summing gross here used to report the same
-        # year's income differently from /reports/profit-loss/.
-        assert round(body["grand_total"], 2) == 20344.83
+        # Accrual, net of VAT, matching the P&L: the April rent billed —
+        # residential 10,000 + commercial 20,000 — however much was collected.
+        assert round(body["grand_total"], 2) == 30000.0
         april = next(m for m in body["monthly"] if m["month"] == MONTH)
-        assert round(april["total"], 2) == 20344.83
+        assert round(april["total"], 2) == 30000.0
 
     # --- Arrears -------------------------------------------------------
 
@@ -118,20 +117,19 @@ class ReportsTests(APITestCase):
         resp = self.client.get("/api/reports/profit-loss/", {"month": MONTH, "year": YEAR})
         assert resp.status_code == 200
         body = resp.json()
-        # Income is net of VAT (F9): commercial 12,000 gross -> 10,344.83 net +
-        # residential 10,000 = 20,344.83 — now reconciles with the ledger P&L
-        # (test_accounting_pnl_rent_split) instead of the old gross 22,000.
-        assert round(body["income"], 2) == 20344.83
+        # Income is the rent billed net of VAT (10,000 + 20,000), read from the
+        # ledger — the same figure as the Accounting page.
+        assert round(body["income"], 2) == 30000.0
         assert body["total_expenses"] == 4500.0  # 3000 + 1500
-        assert round(body["net_profit"], 2) == 15844.83
+        assert round(body["net_profit"], 2) == 25500.0
 
     def test_profit_loss_annual_grand_net(self):
         resp = self.client.get("/api/reports/profit-loss/", {"mode": "annual", "year": YEAR})
         assert resp.status_code == 200
         body = resp.json()
-        assert round(body["grand_income"], 2) == 20344.83
+        assert round(body["grand_income"], 2) == 30000.0
         assert body["grand_expenses"] == 4500.0
-        assert round(body["grand_net"], 2) == 15844.83
+        assert round(body["grand_net"], 2) == 25500.0
 
     # --- Accounting P&L tab (rent split by classification) -------------
 
@@ -139,23 +137,21 @@ class ReportsTests(APITestCase):
         resp = self.client.get("/api/reports/accounting/", {"tab": "pnl", "month": MONTH, "year": YEAR})
         assert resp.status_code == 200
         body = resp.json()
-        # All payments are RENT type by default; split by unit classification.
-        # Commercial rent is received VAT-inclusive, so the 12,000 collected is
-        # 10,344.83 of income + 1,655.17 of VAT owed to KRA. VAT is a liability,
-        # not revenue, so it is correctly excluded from the P&L.
+        # Split by unit classification. Commercial rent was billed at 20,000 +
+        # 3,200 VAT; the VAT is a liability owed to KRA, not revenue.
         income = {a["code"]: a["amount"] for g in body["income"] for a in g["accounts"]}
         assert income["4110"] == 10000.0
-        assert income["4120"] == 10344.83
-        assert body["total_income"] == 20344.83
+        assert income["4120"] == 20000.0
+        assert body["total_income"] == 30000.0
         assert body["total_expenses"] == 4500.0
-        assert body["net_profit"] == 15844.83
+        assert body["net_profit"] == 25500.0
 
     # --- Trial balance -------------------------------------------------
 
     def test_trial_balance_numbers(self):
         # Trial balance is sourced from the double-entry general ledger
-        # (JournalLine), so it is cash-basis: only the 22000 actually collected
-        # and the 4500 of expenses paid are posted — no accrued arrears.
+        # (JournalLine), on an accrual basis: the April rent billed (33,200
+        # with VAT), the 22,000 collected against it and 4,500 of expenses.
         resp = self.client.get("/api/reports/trial-balance/", {"month": MONTH, "year": YEAR})
         assert resp.status_code == 200
         body = resp.json()
@@ -164,17 +160,16 @@ class ReportsTests(APITestCase):
         # Operating bank: DR 22000 collected, CR 4500 paid out for expenses.
         assert accounts["1020 Operating Bank Account"]["debit"] == 22000.0
         assert accounts["1020 Operating Bank Account"]["credit"] == 4500.0
-        # Rental income is split by unit classification. Commercial rent arrives
-        # VAT-inclusive, so the 12,000 receipt is 10,344.83 income + 1,655.17 VAT
-        # owed to KRA — the cash is unchanged, only its split.
+        # Rent billed, split by classification; the commercial VAT is owed to
+        # KRA. 1040 holds what is still owed: 33,200 billed − 22,000 received.
         assert accounts["4110 Residential Rental Income"]["credit"] == 10000.0
-        assert accounts["4120 Commercial Rental Income"]["credit"] == 10344.83
-        assert accounts["2600 VAT Payable"]["credit"] == 1655.17
+        assert accounts["4120 Commercial Rental Income"]["credit"] == 20000.0
+        assert accounts["2600 VAT Payable"]["credit"] == 3200.0
         # Expense legs debit their GL accounts.
         assert accounts["5200 Repairs & Maintenance"]["debit"] == 3000.0
         assert accounts["5300 Utilities (Common Areas)"]["debit"] == 1500.0
         # The defining invariant of double-entry bookkeeping.
-        assert body["total_debit"] == body["total_credit"] == 26500.0
+        assert body["total_debit"] == body["total_credit"] == 59700.0
         assert body["is_balanced"] is True
 
     # --- Expense breakdown ---------------------------------------------
@@ -185,9 +180,9 @@ class ReportsTests(APITestCase):
         body = resp.json()
         assert body["total_expenses"] == 4500.0
         cats = {c["category"]: c for c in body["categories"]}
-        # Repairs 3000 / 4500 = 66.7%
-        assert cats["Repairs"]["total"] == 3000.0
-        assert cats["Repairs"]["percentage"] == 66.7
+        # Listed by the account each category posts to. Repairs 3000 / 4500 = 66.7%
+        assert cats["Repairs & Maintenance"]["total"] == 3000.0
+        assert cats["Repairs & Maintenance"]["percentage"] == 66.7
 
     # --- Tenant payment history ----------------------------------------
 

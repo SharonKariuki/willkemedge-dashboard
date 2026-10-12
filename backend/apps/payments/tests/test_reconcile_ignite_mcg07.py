@@ -119,15 +119,15 @@ def test_august_and_october_are_removed_september_kept(mcg07):
 
 def test_deposit_moves_off_rental_income_and_vat(mcg07):
     tenant, payments = mcg07
-    payment_pks = [p.pk for p in payments]
 
     call_command("reconcile_ignite_mcg07", "--apply", stdout=StringIO())
 
-    # Every chunk of the receipt is reversed off rental income and VAT.
-    for pk in payment_pks:
-        reversal = _lines("payment", pk, "reversal")
-        assert reversal["4120"][0] == D("51724.14")
-        assert reversal["2600"][0] == D("8275.86")
+    # Every chunk of the receipt is reversed off the tenant's account (a receipt
+    # never touched income or VAT; those follow the charges, not the cash).
+    for payment in payments:
+        reversal = _lines("payment", payment.pk, "reversal")
+        assert reversal["1040"][0] == payment.amount
+        assert "4120" not in reversal and "2600" not in reversal
 
     deposit = Payment.objects.get(tenant=tenant, payment_type=PaymentType.DEPOSIT)
     lines = _lines("payment", deposit.pk, "normal")

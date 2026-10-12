@@ -78,7 +78,7 @@ def deposit_shortfall(tenant) -> Decimal:
 def opening_deposit_on_books(tenant, as_of=None) -> Decimal:
     """The deposit the cutover posted for this tenant straight to 2100.
 
-    ``post_opening_balances`` booked deposits already held at go-live as a bare
+    ``post_opening_deposit`` booked deposits already held at go-live as a bare
     journal entry, with no Payment behind it, so a sum over DEPOSIT payments
     alone reads those tenants as holding nothing.
     """

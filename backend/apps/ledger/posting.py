@@ -5,27 +5,27 @@ Every public function returns a saved JournalEntry with balanced JournalLines.
 The idempotency UniqueConstraint on (source_type, source_id, kind) ensures
 that re-running posting for the same Payment/Expense never creates duplicates.
 
-GL account codes used
-─────────────────────
-Assets (debit-normal):
-  1010  Petty Cash
-  1020  Operating Bank Account
-  1030  Tenant Security Deposit Bank Account
-  1040  Accounts Receivable (Rent Arrears)
+ACCOUNTING POLICY — ACCRUAL BASIS
+─────────────────────────────────
+Income is recognised when it is billed, not when the cash arrives (IFRS 15/16,
+and the VAT tax point for a let is the invoice). The tenant's account, 1040,
+therefore moves exactly as the tenant's statement does:
 
-Liabilities (credit-normal):
-  2100  Tenant Security Deposits Held
-  2600  VAT Payable — 16% on COMMERCIAL rent only (see _split_vat)
+  rent billed (Arrears row)      DR 1040            / CR 4110|4120 + CR 2600 VAT
+  rent waived                    DR 4110|4120 + 2600 / CR 1040
+  water / other charge billed    DR 1040            / CR 4150
+  credit note, concession, …     DR <by reason>     / CR 1040
+  any tenant receipt (not a      DR 1020            / CR 1040
+    deposit)
+  refund paid out                DR 1040            / CR 1020
+  opening position carried in    DR 1040            / CR 3300 Retained Earnings
 
-Income (credit-normal):
-  4110  Residential Rental Income
-  4120  Commercial Rental Income
-  4150  Service Charge / Utilities Reimbursed
-  4200  Late Payment Fees / Penalties
-  4250  Parking / Miscellaneous Income
+so the 1040 balance always equals the sum of the tenant balances on the rent
+roll (``apps.payments.monthly_ledger.current_balances``) — the debtors list an
+auditor ties the receivable to. A tenant in credit leaves a credit balance in
+1040; the balance sheet shows that as a liability (tenant prepayments).
 
-Expenses (debit-normal):
-  5xxx / 6xxx  — from expense.category.account
+Security deposits never touch income: DR 1030 / CR 2100.
 """
 import datetime
 from decimal import Decimal
@@ -46,9 +46,10 @@ from apps.expenses.coa import (
 )
 from apps.expenses.models import Account
 from apps.payments.models import PaymentType
-from apps.payments.tax_service import calculate_tax, split_tax_inclusive
 
 from .models import JournalEntry, JournalLine
+
+ZERO = Decimal("0")
 
 # ── helpers ────────────────────────────────────────────────────────────────
 
@@ -107,16 +108,25 @@ def _build_entry(
     date = _as_date(date)
     # Drop no-op lines (e.g. a zero VAT leg on a zero-rated commercial charge).
     lines = [
-        ln for ln in lines
-        if Decimal(str(ln[1])) != Decimal("0") or Decimal(str(ln[2])) != Decimal("0")
+        (code, Decimal(str(d)), Decimal(str(c)), desc[:255])
+        for code, d, c, desc in lines
+        if Decimal(str(d)) != ZERO or Decimal(str(c)) != ZERO
     ]
-    total_debit = sum(Decimal(str(d)) for _, d, _, _ in lines)
-    total_credit = sum(Decimal(str(c)) for _, _, c, _ in lines)
+    total_debit = sum(d for _, d, _, _ in lines)
+    total_credit = sum(c for _, _, c, _ in lines)
     if total_debit != total_credit:
         raise ValidationError(
             f"Entry for {source_type}#{source_id} does not balance: "
             f"DR={total_debit} CR={total_credit}"
         )
+
+    if not lines:
+        # The source carries no money (a rent-free month, a charge edited to
+        # zero): an entry with no legs says nothing, so none is kept.
+        JournalEntry.objects.filter(
+            source_type=source_type, source_id=source_id, kind=kind
+        ).delete()
+        return None
 
     with transaction.atomic():
         entry, created = JournalEntry.objects.update_or_create(
@@ -141,16 +151,23 @@ def _build_entry(
         entry.save(update_fields=["period_month", "period_year"])
 
         if not created:
+            current = sorted(
+                (ln.account.code, ln.debit, ln.credit, ln.description)
+                for ln in entry.lines.select_related("account")
+            )
+            if sorted(lines) == current:
+                # A re-save that changed nothing the books care about (an
+                # Arrears row is saved on every receipt it settles).
+                return entry
             # Re-posting an edited source: discard the stale legs and rebuild.
             entry.lines.all().delete()
 
         for code, debit, credit, description in lines:
-            account = _get_account(code)
             JournalLine.objects.create(
                 entry=entry,
-                account=account,
-                debit=Decimal(str(debit)),
-                credit=Decimal(str(credit)),
+                account=_get_account(code),
+                debit=debit,
+                credit=credit,
                 description=description,
             )
 
@@ -164,99 +181,43 @@ def _classification_of(tenant) -> str:
         return UnitClassification.RESIDENTIAL
 
 
-def _income_account_for_payment(payment) -> str:
-    """Return 4110 or 4120 based on unit classification."""
-    if _classification_of(payment.tenant) == UnitClassification.BUSINESS:
-        return RENT_COMMERCIAL
-    return RENT_RESIDENTIAL
+def _payment_lines(payment) -> tuple[list, str]:
+    """The legs of a tenant receipt and its memo.
 
-
-def _split_vat_inclusive(gross: Decimal) -> tuple[Decimal, Decimal]:
-    """Extract 16% VAT from a VAT-INCLUSIVE amount (cash actually received).
-
-    A commercial tenant pays rent + 16% VAT as one figure, so a receipt of
-    KES 27,840 is KES 24,000 income and KES 3,840 VAT owed to KRA.
-    Returns (net, vat); net + vat == gross exactly (VAT absorbs the rounding).
-
-    Delegates to tax_service so the ledger and the Transaction/receipt use one
-    identical split and cannot drift apart.
+    A deposit is money held for the tenant, never income. Every other receipt
+    settles the tenant's account — the rent, water or charge it pays was income
+    when it was billed — exactly as the tenant's statement treats it.
     """
-    r = split_tax_inclusive(gross, UnitClassification.BUSINESS)
-    return r.base_amount, r.tax_amount
+    amt = payment.amount
+    tenant = payment.tenant
+    if payment.payment_type == PaymentType.DEPOSIT:
+        return [
+            ("1030", amt, ZERO, f"Deposit received — {tenant}"),
+            ("2100", ZERO, amt, "Tenant Security Deposits Held"),
+        ], f"Security deposit: {tenant}"
+    return [
+        (OPERATING_BANK, amt, ZERO, f"Received from {tenant}"),
+        (RENT_RECEIVABLE, ZERO, amt, f"{payment.get_payment_type_display()} received — {tenant}"),
+    ], f"Receipt: {tenant} {payment.period_month}/{payment.period_year}"
 
 
-def _split_vat_exclusive(net: Decimal) -> tuple[Decimal, Decimal]:
-    """Add 16% VAT to a VAT-EXCLUSIVE base amount (rent as billed).
+def _payment_building(payment):
+    return getattr(payment.tenant.unit, "building", None) if payment.tenant_id else None
 
-    Unit.monthly_rent / Arrears.expected_rent hold the BASE rent for commercial
-    units (see import_matasia), so billing adds VAT on top.
-    Returns (net, vat).
-    """
-    return net, calculate_tax(net, UnitClassification.BUSINESS).tax_amount if net > 0 else Decimal("0")
-
-
-# ── Payment posting ─────────────────────────────────────────────────────────
 
 def post_payment(payment, *, replace: bool = False) -> JournalEntry:
     """
     Post a single Payment to the ledger.
 
-    RENT        → DR 1020 / CR 4110 or 4120 (by classification)
-    LATE_FEE    → DR 1020 / CR 4200
     DEPOSIT     → DR 1030 / CR 2100
-    OTHER       → DR 1020 / CR 4150 (or 4250 for parking notes)
+    anything else (rent, water, late fee, other) → DR 1020 / CR 1040
     """
-    amt = payment.amount
-    ptype = payment.payment_type
-    date = payment.payment_date
-    building = getattr(payment.tenant.unit, "building", None) if payment.tenant_id else None
-
-    if ptype == PaymentType.RENT:
-        income_code = _income_account_for_payment(payment)
-        if income_code == RENT_COMMERCIAL:
-            # Commercial rent is received VAT-inclusive: split the 16% out to
-            # 2600 VAT Payable so only the net is recognised as income.
-            net, vat = _split_vat_inclusive(amt)
-            lines = [
-                ("1020", amt, Decimal("0"), f"Rent collected — {payment.tenant}"),
-                (income_code, Decimal("0"), net, "Commercial Rental Income"),
-                (VAT_PAYABLE, Decimal("0"), vat, "16% VAT on commercial rent"),
-            ]
-        else:
-            lines = [
-                ("1020", amt, Decimal("0"), f"Rent collected — {payment.tenant}"),
-                (income_code, Decimal("0"), amt, "Residential Rental Income"),
-            ]
-        memo = f"Rent collected: {payment.tenant} {payment.period_month}/{payment.period_year}"
-
-    elif ptype == PaymentType.LATE_FEE:
-        lines = [
-            ("1020", amt, Decimal("0"), f"Late fee — {payment.tenant}"),
-            ("4200", Decimal("0"), amt, "Late Payment Fees / Penalties"),
-        ]
-        memo = f"Late fee: {payment.tenant} {payment.period_month}/{payment.period_year}"
-
-    elif ptype == PaymentType.DEPOSIT:
-        lines = [
-            ("1030", amt, Decimal("0"), f"Deposit received — {payment.tenant}"),
-            ("2100", Decimal("0"), amt, "Tenant Security Deposits Held"),
-        ]
-        memo = f"Security deposit: {payment.tenant}"
-
-    else:  # OTHER
-        notes = (getattr(payment, "notes", "") or "").lower()
-        income_code = "4250" if "parking" in notes else "4150"
-        lines = [
-            ("1020", amt, Decimal("0"), f"Other income — {payment.tenant}"),
-            (income_code, Decimal("0"), amt, "Other Income"),
-        ]
-        memo = f"Other income: {payment.tenant} {payment.period_month}/{payment.period_year}"
-
+    lines, memo = _payment_lines(payment)
     return _build_entry(
-        date=date,
+        date=payment.payment_date,
         memo=memo,
         reference=payment.reference,
-        building=building,
+        building=_payment_building(payment),
         source_type="payment",
         source_id=payment.pk,
         kind="normal",
@@ -270,52 +231,16 @@ def reverse_payment(payment) -> JournalEntry:
     Create a reversal entry (mirror-image) for a Payment.
     The original entry is kept for audit; this adds a separate REVERSAL entry.
     """
-    amt = payment.amount
-    ptype = payment.payment_type
-    date = payment.payment_date
-    building = getattr(payment.tenant.unit, "building", None) if payment.tenant_id else None
-
-    if ptype == PaymentType.RENT:
-        income_code = _income_account_for_payment(payment)
-        if income_code == RENT_COMMERCIAL:
-            net, vat = _split_vat_inclusive(amt)
-            lines = [
-                ("1020", Decimal("0"), amt, f"REVERSAL — rent — {payment.tenant}"),
-                (income_code, net, Decimal("0"), "REVERSAL — commercial rental income"),
-                (VAT_PAYABLE, vat, Decimal("0"), "REVERSAL — 16% VAT on commercial rent"),
-            ]
-        else:
-            lines = [
-                ("1020", Decimal("0"), amt, f"REVERSAL — rent — {payment.tenant}"),
-                (income_code, amt, Decimal("0"), "REVERSAL — rental income"),
-            ]
-    elif ptype == PaymentType.LATE_FEE:
-        lines = [
-            ("1020", Decimal("0"), amt, f"REVERSAL — late fee — {payment.tenant}"),
-            ("4200", amt, Decimal("0"), "REVERSAL — late fees"),
-        ]
-    elif ptype == PaymentType.DEPOSIT:
-        lines = [
-            ("1030", Decimal("0"), amt, f"REVERSAL — deposit — {payment.tenant}"),
-            ("2100", amt, Decimal("0"), "REVERSAL — deposits held"),
-        ]
-    else:
-        notes = (getattr(payment, "notes", "") or "").lower()
-        income_code = "4250" if "parking" in notes else "4150"
-        lines = [
-            ("1020", Decimal("0"), amt, f"REVERSAL — other income — {payment.tenant}"),
-            (income_code, amt, Decimal("0"), "REVERSAL — other income"),
-        ]
-
+    lines, _memo = _payment_lines(payment)
     return _build_entry(
-        date=date,
+        date=payment.payment_date,
         memo=f"REVERSAL: {payment}",
         reference=payment.reference,
-        building=building,
+        building=_payment_building(payment),
         source_type="payment",
         source_id=payment.pk,
         kind="reversal",
-        lines=lines,
+        lines=_mirror(lines),
     )
 
 
@@ -415,60 +340,98 @@ def reverse_expense(expense) -> JournalEntry:
     )
 
 
-# ── Arrears posting ─────────────────────────────────────────────────────────
+# ── Arrears posting (rent billed) ───────────────────────────────────────────
 #
-# ACCOUNTING POLICY — RENT IS RECOGNISED ON A CASH BASIS.
+# One Arrears row is one month's rent charge, and it posts like an invoice:
+# dated the first of the month it bills, gross to 1040, rent to income, VAT to
+# 2600. A waiver is a credit against the same charge, so it rides in the same
+# entry as its own legs (the VAT share given back with it). An edit re-posts the
+# entry; a deleted row is reversed.
 #
-# Rent income hits the general ledger only when cash is received (post_payment),
-# never when it is billed. `post_arrear` below is therefore intentionally NOT
-# wired to any signal — no Arrears row ever posts to the GL. The tenant
-# statement and arrears report still show what a tenant *owes* (an operational
-# figure sourced from the Arrears model); that is a deliberately separate view
-# from the financial books and is not expected to reconcile with the GL.
-#
-# To switch to an accrual basis instead, connect post_arrear on Arrears
-# post_save AND relieve the receivable on payment (DR 1020 / CR 1040) rather
-# than crediting income a second time — otherwise rent would be double counted.
-# The function and its unit tests are retained as the ready-made building block
-# for that switch; they validate the helper, not live behaviour.
+# A tenant's OPENING position — the balance carried in when the books began —
+# is not income of the period: it goes to 3300. That is a row marked with
+# ``OPENING_MARKER``, and any row for an EARLIER month: the go-live load stored
+# each tenant's balance as a June row, which the reconciled July "B/F" figure
+# then superseded, so those rows are pre-books history too.
 
 
-def post_arrear(arrear) -> JournalEntry:
-    """
-    Build the accrual entry for a rent-billed-but-unpaid Arrears record.
+def _is_opening(arrear) -> bool:
+    from django.db.models import Q
 
-    DR 1040 Accounts Receivable / CR 4110 or 4120 (+ CR 2600 VAT for commercial).
+    from apps.payments.models import Arrears
+    from apps.payments.monthly_ledger import OPENING_MARKER
 
-    NOT wired to any signal by design — see the cash-basis policy note above.
-    Calling it directly posts an accrual entry; nothing in the app does.
-    """
-    classification = _classification_of(arrear.tenant)
-    amt = arrear.balance
-    building = getattr(arrear.tenant.unit, "building", None)
+    if OPENING_MARKER in (arrear.waive_notes or ""):
+        return True
+    y, m = arrear.period_year, arrear.period_month
+    return Arrears.objects.filter(
+        Q(period_year__gt=y) | Q(period_year=y, period_month__gt=m),
+        tenant_id=arrear.tenant_id,
+        waive_notes__contains=OPENING_MARKER,
+    ).exists()
 
-    if classification == UnitClassification.BUSINESS:
-        # Billed commercial rent is held VAT-exclusive, so the tenant owes
-        # rent + 16%: raise the receivable at gross and credit VAT to 2600.
-        net, vat = _split_vat_exclusive(amt)
-        lines = [
-            (RENT_RECEIVABLE, net + vat, Decimal("0"), f"Rent billed — {arrear.tenant}"),
-            (RENT_COMMERCIAL, Decimal("0"), net, "Commercial Rental Income (billed)"),
-            (VAT_PAYABLE, Decimal("0"), vat, "16% VAT on commercial rent (billed)"),
-        ]
-    else:
-        lines = [
-            (RENT_RECEIVABLE, amt, Decimal("0"), f"Rent billed — {arrear.tenant}"),
-            (RENT_RESIDENTIAL, Decimal("0"), amt, "Rental Income (billed)"),
-        ]
 
+def _signed(code: str, amount: Decimal, description: str) -> tuple:
+    """A debit leg for a positive amount, a credit leg for a negative one."""
+    if amount >= 0:
+        return (code, amount, ZERO, description)
+    return (code, ZERO, -amount, description)
+
+
+def _arrear_lines(arrear) -> tuple[list, str]:
+    tenant = arrear.tenant
+    period = f"{arrear.period_month}/{arrear.period_year}"
+    rent = arrear.expected_rent or ZERO
+    vat = arrear.expected_vat or ZERO
+    waived = arrear.waived_amount or ZERO
+
+    if _is_opening(arrear):
+        net = rent + vat - waived
+        return [
+            _signed(RENT_RECEIVABLE, net, f"Opening balance — {tenant}"),
+            _signed(RETAINED_EARNINGS, -net, f"Opening balance carried in — {tenant}"),
+        ], f"Opening balance {period}: {tenant}"
+
+    income = _rent_income_code(tenant)
+    waived_vat = ZERO
+    if waived and vat and rent + vat > 0:
+        waived_vat = (waived * vat / (rent + vat)).quantize(Decimal("0.01"))
+    return [
+        (RENT_RECEIVABLE, rent + vat, ZERO, f"Rent {period} billed — {tenant}"),
+        (income, ZERO, rent, f"Rent {period}"),
+        (VAT_PAYABLE, ZERO, vat, f"16% VAT on rent {period}"),
+        (income, waived - waived_vat, ZERO, f"Rent {period} waived"),
+        (VAT_PAYABLE, waived_vat, ZERO, f"VAT on rent {period} waived"),
+        (RENT_RECEIVABLE, ZERO, waived, f"Rent {period} waived — {tenant}"),
+    ], f"Rent billed {period}: {tenant}"
+
+
+def post_arrear(arrear, *, replace: bool = False) -> JournalEntry | None:
+    """Post a month's rent charge: DR 1040 / CR 4110|4120 + 2600 (see above)."""
+    lines, memo = _arrear_lines(arrear)
     return _build_entry(
         date=_period_to_date(arrear.period_month, arrear.period_year),
-        memo=f"Rent billed: {arrear.tenant} {arrear.period_month}/{arrear.period_year}",
-        building=building,
+        memo=memo[:255],
+        building=_tenant_building(arrear.tenant),
         source_type="arrear",
         source_id=arrear.pk,
         kind="normal",
         lines=lines,
+        replace=replace,
+    )
+
+
+def reverse_arrear(arrear) -> JournalEntry | None:
+    """Mirror-image of a deleted rent charge, so the receivable and income follow."""
+    lines, memo = _arrear_lines(arrear)
+    return _build_entry(
+        date=_period_to_date(arrear.period_month, arrear.period_year),
+        memo=f"REVERSAL: {memo}"[:255],
+        building=_tenant_building(arrear.tenant),
+        source_type="arrear",
+        source_id=arrear.pk,
+        kind="reversal",
+        lines=_mirror(lines),
     )
 
 
@@ -633,28 +596,22 @@ def post_deposit_refund(payment) -> JournalEntry:
     )
 
 
-# ── Tenant credits, credit applications and refunds ─────────────────────────
+# ── Tenant credits and refunds ──────────────────────────────────────────────
 #
-# The tenant side of every credit is 1040: a credit on account is money the
-# business owes the tenant back or will set against their next charge, and the
-# locked chart holds tenant balances there (a credit balance in 1040 is shown as
-# a liability at year end). What is debited depends on WHY the credit exists:
+# The tenant side of every credit is 1040, the tenant's account. What is debited
+# depends on WHY the credit exists:
 #
 #   billing correction / rent concession  DR income (4110/4120/4150) + 2600 VAT
 #   tenant paid a cost that was ours      DR the expense category's account
 #   credit owed from before the books     DR 3300 Retained Earnings
 #
-# Rent is recognised on a cash basis (see post_arrear), so when a credit settles
-# a month's rent that rent is recognised then — DR 1040 / CR income (+ VAT) —
-# exactly as it would be if the tenant had paid it in cash. A credit note
-# applied to the charge it corrects therefore nets to nothing, which is right:
-# income that was never recognised is not reduced twice. An opening-balance row
-# was accrued at cutover (DR 1040 / CR equity), so settling it posts nothing.
+# Applying a credit to a month's rent moves nothing in the ledger: the rent was
+# recognised when it was billed and the credit already sits in 1040, so setting
+# one against the other is the tenant's statement, not a journal.
 #
-# A refund pays the credit out: DR 1040 / CR 1020. Refunding overpaid rent — the
-# surplus the arrears subledger carries, which was booked straight to income
-# when it arrived — reverses that income instead, VAT included for a
-# commercial letting, exactly mirroring how the receipt was posted.
+# A refund pays a credit balance out: DR 1040 / CR 1020. That holds whether the
+# credit came from a credit note or from overpaid rent — under accrual an
+# overpayment is a credit balance in 1040, never income.
 
 
 def _tenant_building(tenant):
@@ -700,7 +657,7 @@ def _mirror(lines: list, prefix: str = "REVERSAL — ") -> list:
     return [(code, credit, debit, f"{prefix}{desc}"[:255]) for code, debit, credit, desc in lines]
 
 
-def post_tenant_credit(credit) -> JournalEntry:
+def post_tenant_credit(credit, *, replace: bool = False) -> JournalEntry:
     """Post an issued TenantCredit: DR <by reason> / CR 1040."""
     return _build_entry(
         date=credit.credit_date,
@@ -711,6 +668,7 @@ def post_tenant_credit(credit) -> JournalEntry:
         source_id=credit.pk,
         kind="normal",
         lines=_credit_lines(credit),
+        replace=replace,
     )
 
 
@@ -728,90 +686,15 @@ def reverse_tenant_credit(credit, *, on) -> JournalEntry:
     )
 
 
-def _application_lines(application):
-    """The legs recognising rent a credit settles, or None when nothing posts."""
-    from apps.payments.monthly_ledger import OPENING_MARKER
-
-    arrear = application.arrears
-    if OPENING_MARKER in (arrear.waive_notes or ""):
-        # Accrued at cutover already; settling it moves nothing out of 1040.
-        return None
-    amount = Decimal(application.amount)
-    obligation = (arrear.expected_rent or Decimal("0")) + (arrear.expected_vat or Decimal("0"))
-    vat = Decimal("0")
-    if arrear.expected_vat and obligation > 0:
-        # The VAT share of this charge, read off the row the way the statement
-        # reads it: not every commercial letting is rated.
-        vat = (amount * arrear.expected_vat / obligation).quantize(Decimal("0.01"))
-    tenant = application.credit.tenant
-    period = f"{arrear.period_month}/{arrear.period_year}"
+def _refund_lines(refund) -> list:
     return [
-        (RENT_RECEIVABLE, amount, Decimal("0"), f"Credit {application.credit.number} applied — {tenant}"),
-        (_rent_income_code(tenant), Decimal("0"), amount - vat, f"Rent {period} settled by credit"),
-        (VAT_PAYABLE, Decimal("0"), vat, f"16% VAT on rent {period} settled by credit"),
+        (RENT_RECEIVABLE, refund.amount, ZERO, f"Refund {refund.number} — {refund.tenant}"),
+        (OPERATING_BANK, ZERO, refund.amount, f"Refund {refund.number} paid"),
     ]
 
 
-def post_credit_application(application) -> JournalEntry | None:
-    """Recognise the rent a credit settles (cash basis). None for an opening row."""
-    lines = _application_lines(application)
-    if lines is None:
-        return None
-    return _build_entry(
-        date=application.applied_on,
-        memo=f"Credit {application.credit.number} applied to rent "
-             f"{application.arrears.period_month}/{application.arrears.period_year}"[:255],
-        reference=application.credit.number,
-        building=_tenant_building(application.credit.tenant),
-        source_type="credit_application",
-        source_id=application.pk,
-        kind="normal",
-        lines=lines,
-    )
-
-
-def reverse_credit_application(application, *, on) -> JournalEntry | None:
-    lines = _application_lines(application)
-    if lines is None:
-        return None
-    return _build_entry(
-        date=on,
-        memo=f"REVERSAL: credit {application.credit.number} taken off rent "
-             f"{application.arrears.period_month}/{application.arrears.period_year}"[:255],
-        reference=application.credit.number,
-        building=_tenant_building(application.credit.tenant),
-        source_type="credit_application",
-        source_id=application.pk,
-        kind="reversal",
-        lines=_mirror(lines),
-    )
-
-
-def _refund_lines(refund) -> list:
-    from_credits = sum(
-        (line.amount for line in refund.lines.all() if line.credit_id), Decimal("0")
-    )
-    from_overpayment = sum(
-        (line.amount for line in refund.lines.all() if not line.credit_id), Decimal("0")
-    )
-    lines = []
-    if from_credits:
-        lines.append((RENT_RECEIVABLE, from_credits, Decimal("0"), f"Credit refunded — {refund.tenant}"))
-    if from_overpayment:
-        if refund.unit_classification == UnitClassification.BUSINESS:
-            net, vat = _split_vat_inclusive(from_overpayment)
-            lines += [
-                (RENT_COMMERCIAL, net, Decimal("0"), "Overpaid rent refunded"),
-                (VAT_PAYABLE, vat, Decimal("0"), "16% VAT on overpaid rent refunded"),
-            ]
-        else:
-            lines.append((RENT_RESIDENTIAL, from_overpayment, Decimal("0"), "Overpaid rent refunded"))
-    lines.append((OPERATING_BANK, Decimal("0"), refund.amount, f"Refund {refund.number} paid"))
-    return lines
-
-
-def post_refund(refund) -> JournalEntry:
-    """Post money sent back to a tenant: DR 1040 (or the income it reverses) / CR 1020."""
+def post_refund(refund, *, replace: bool = False) -> JournalEntry:
+    """Post money sent back to a tenant: DR 1040 / CR 1020."""
     return _build_entry(
         date=refund.sent_on,
         memo=f"Refund {refund.number}: {refund.tenant} — {refund.get_method_display()}"[:255],
@@ -821,6 +704,7 @@ def post_refund(refund) -> JournalEntry:
         source_id=refund.pk,
         kind="normal",
         lines=_refund_lines(refund),
+        replace=replace,
     )
 
 
@@ -840,67 +724,28 @@ def reverse_refund(refund, *, on) -> JournalEntry:
 
 # ── Opening balances (data migration) ────────────────────────────────────────
 
-def post_opening_balances(tenant, *, net_balance, deposit, date, equity_code="3300"):
-    """Post a tenant's OPENING position when migrating their books into the ledger.
+def post_opening_deposit(tenant, *, deposit, date):
+    """Book a security deposit already held when the tenant's books began.
 
-    Used by the initial property-data load — NOT for ongoing activity.
-
-    Security deposit already held  → DR 1030 / CR 2100  (balance-sheet only).
-    Net arrears the tenant owes    → DR 1040 / CR <equity>  (opening equity,
-                                     NOT current rental income — otherwise the
-                                     cutover month's P&L is overstated by every
-                                     brought-forward balance).
-    Net credit (tenant overpaid)   → DR <equity> / CR 1040.
-
-    Idempotent via the (source_type, source_id, kind) unique constraint:
-    re-running for the same tenant updates rather than duplicates.
-    Returns the list of JournalEntry objects created.
+    DR 1030 / CR 2100 — balance sheet only. The opening ARREARS are not posted
+    here: they are an Arrears row marked ``OPENING_MARKER`` and post themselves
+    to 3300 (see ``post_arrear``), so the receivable and the rent roll start
+    from the same figure.
     """
-    building = getattr(tenant.unit, "building", None) if tenant.unit_id else None
     deposit = Decimal(str(deposit or 0))
-    net = Decimal(str(net_balance or 0))
-    entries = []
-
-    if deposit > 0:
-        entries.append(_build_entry(
-            date=date,
-            memo=f"Opening security deposit held — {tenant}"[:255],
-            building=building,
-            source_type="opening_deposit",
-            source_id=tenant.pk,
-            lines=[
-                ("1030", deposit, Decimal("0"), "Deposit bank (opening balance)"),
-                ("2100", Decimal("0"), deposit, f"Deposit held — {tenant}"),
-            ],
-        ))
-
-    if net > 0:
-        entries.append(_build_entry(
-            date=date,
-            memo=f"Opening arrears — {tenant}"[:255],
-            building=building,
-            source_type="opening_ar",
-            source_id=tenant.pk,
-            lines=[
-                ("1040", net, Decimal("0"), f"Opening receivable — {tenant}"),
-                (equity_code, Decimal("0"), net, "Opening balance equity"),
-            ],
-        ))
-    elif net < 0:
-        credit = -net
-        entries.append(_build_entry(
-            date=date,
-            memo=f"Opening credit (overpaid) — {tenant}"[:255],
-            building=building,
-            source_type="opening_ar",
-            source_id=tenant.pk,
-            lines=[
-                (equity_code, credit, Decimal("0"), "Opening balance equity"),
-                ("1040", Decimal("0"), credit, f"Opening credit — {tenant}"),
-            ],
-        ))
-
-    return entries
+    if deposit <= 0:
+        return None
+    return _build_entry(
+        date=date,
+        memo=f"Opening security deposit held — {tenant}"[:255],
+        building=_tenant_building(tenant),
+        source_type="opening_deposit",
+        source_id=tenant.pk,
+        lines=[
+            ("1030", deposit, ZERO, "Deposit bank (opening balance)"),
+            ("2100", ZERO, deposit, f"Deposit held — {tenant}"),
+        ],
+    )
 
 
 # ── utility ─────────────────────────────────────────────────────────────────

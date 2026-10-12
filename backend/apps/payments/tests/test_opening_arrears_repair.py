@@ -13,12 +13,23 @@ from django.core.management import call_command
 from django.test import TestCase
 
 from apps.buildings.models import Building, Unit, UnitStatus
-from apps.ledger.posting import post_opening_balances
+from apps.ledger.posting import _build_entry
 from apps.payments.models import Arrears
 from apps.payments.services import allocate_payment_fifo, process_payment
 from apps.tenants.models import Tenant
 
 CUTOVER = "2026-06-16"
+
+
+def post_opening_balances(tenant, *, net_balance, deposit, date):
+    """The go-live journal the original load posted (``opening_ar``), which
+    ``repair_opening_arrears`` reads back. Deposits play no part here."""
+    _build_entry(
+        date=date, memo=f"Opening arrears — {tenant}", source_type="opening_ar",
+        source_id=tenant.pk,
+        lines=[("1040", net_balance, Decimal("0"), "Opening receivable"),
+               ("3300", Decimal("0"), net_balance, "Opening balance equity")],
+    )
 
 
 class OpeningArrearsTests(TestCase):

@@ -24,7 +24,8 @@ from apps.accounts.models import AuditLog
 from apps.buildings.models import Building, Unit, UnitClassification, UnitStatus
 from apps.expenses.models import Account, ExpenseCategory
 from apps.ledger.models import JournalEntry, JournalLine
-from apps.payments import credits, reporting
+from apps.ledger.reports import profit_and_loss
+from apps.payments import credits
 from apps.payments.aging import aging_buckets
 from apps.payments.credits import CreditError
 from apps.payments.models import (
@@ -48,6 +49,19 @@ TODAY = _dt.date(2026, 9, 15)
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
+
+def monthly_income_statement(month: int, year: int) -> dict:
+    """The ledger P&L for one month, its account lines flattened."""
+    import calendar
+
+    pnl = profit_and_loss(
+        _dt.date(year, month, 1), _dt.date(year, month, calendar.monthrange(year, month)[1])
+    )
+    return {
+        **pnl,
+        "expenses": [a for group in pnl["expenses"] for a in group["accounts"]],
+    }
+
 
 def _net(code: str) -> Decimal:
     """Debits less credits on one GL account."""
@@ -163,7 +177,7 @@ class TestOverpaymentCarriedForward:
 
 @pytest.mark.django_db
 class TestOverpaymentRefunded:
-    def test_refund_reverses_the_income_the_overpayment_was_booked_to(self, house, owner):
+    def test_refund_clears_the_credit_balance_and_leaves_income_alone(self, house, owner):
         _raise(house, 9)
         _pay(house, "15000", 9)
         income_before = _net("4110")
@@ -175,15 +189,15 @@ class TestOverpaymentRefunded:
 
         assert refund.status == RefundStatus.SENT
         assert refund.number.startswith("RF-")
-        # Overpaid rent went straight to income when it arrived; paying it back
-        # takes it back out of income, not out of 1040.
-        assert _net("4110") - income_before == D("5000.00")
+        # The 5,000 over sat in 1040 as a credit balance, never in income;
+        # paying it back clears 1040 and leaves the rent earned untouched.
+        assert _net("4110") == income_before == D("-10000.00")
         assert _net("1040") == D("0.00")
         assert current_balance(house, today=TODAY) == D("0.00")
         assert available_credit(house) == D("0.00")
         _books_balance()
 
-    def test_commercial_overpayment_refund_gives_the_vat_back(self, shop, owner):
+    def test_commercial_overpayment_refund_leaves_the_invoiced_vat(self, shop, owner):
         _raise(shop, 9, vat=D("1600"))
         _pay(shop, "17400", 9)          # 11,600 owed; 5,800 over
         vat_before = _net("2600")
@@ -193,7 +207,10 @@ class TestOverpaymentRefunded:
             sent_on=TODAY, actor=owner, today=TODAY,
         )
 
-        assert _net("2600") - vat_before == D("800.00")
+        # VAT is owed on the 11,600 invoice, not on the cash; the refund of
+        # money the tenant was never charged gives no VAT back.
+        assert _net("2600") == vat_before == D("-1600.00")
+        assert _net("1040") == D("0.00")
         _books_balance()
 
     def test_cannot_refund_more_than_the_tenant_is_in_credit(self, house, owner):
@@ -250,12 +267,13 @@ class TestBillingCorrection:
         assert applied == D("5000.00")
         assert october.balance == D("5000.00")
         assert credit.remaining == D("0.00")
-        # Income over the two months is the 20,000 agreed, and 1040 is square.
-        assert -_net("4110") == D("15000.00")     # 15,000 cash - 5,000 CN + 5,000 applied
-        assert _net("1040") == D("0.00")
+        # Income over the two months is the 20,000 agreed (25,000 billed less
+        # the 5,000 note), and 1040 holds exactly what October still owes.
+        assert -_net("4110") == D("20000.00")
+        assert _net("1040") == october.balance == D("5000.00")
         _books_balance()
 
-    def test_commercial_credit_note_carries_the_charges_vat_and_nets_to_nothing(self, shop, owner):
+    def test_commercial_credit_note_carries_the_charges_vat(self, shop, owner):
         september = _raise(shop, 9, vat=D("1600"))     # 11,600 unpaid
 
         credit = credits.issue_credit(
@@ -270,9 +288,11 @@ class TestBillingCorrection:
         )
         # Applied at once to the very charge it corrects.
         assert september.balance == D("9280.00")
-        # Nothing was recognised on that unpaid rent, so nothing is reduced.
-        for code in ("4120", "2600", "1040"):
-            assert _net(code) == D("0.00"), code
+        # The invoice recognised 10,000 + 1,600 VAT; the note takes 2,000 +
+        # 320 back, and 1040 is what the tenant still owes.
+        assert -_net("4120") == D("8000.00")
+        assert -_net("2600") == D("1280.00")
+        assert _net("1040") == september.balance
         _books_balance()
 
     def test_a_charge_cannot_be_credited_beyond_what_it_was(self, house, owner):
@@ -596,15 +616,22 @@ class TestStatementAndReports:
 class TestReports:
     """Income, expenses and the P&L have to move with the credits.
 
-    The Accounting page reads the ledger, so it follows a credit the moment it
-    posts. The Reports page is built from Payment/Expense rows, so it is told
-    about credits through `apps.payments.reporting`.
+    Every report reads the general ledger, so a credit reaches them the moment
+    it posts — and only the way the chart of accounts says it should.
     """
 
     def _client(self, user):
         client = APIClient()
         client.force_authenticate(user=user)
         return client
+
+    @staticmethod
+    def _september():
+        return monthly_income_statement(9, 2026)
+
+    @staticmethod
+    def _expenses():
+        return {ln["name"]: ln["amount"] for ln in monthly_income_statement(9, 2026)["expenses"]}
 
     def test_a_credit_note_takes_income_back_out(self, house, owner):
         september = _raise(house, 9, rent="15000")
@@ -614,37 +641,39 @@ class TestReports:
             credit_date=TODAY, description="Overbilled", arrears=september,
             actor=owner, today=TODAY,
         )
-        assert reporting.credit_notes_net(9, 2026) == D("5000.00")
-        assert reporting.income_adjustment(9, 2026) == D("-5000.00")
+        assert self._september()["total_income"] == D("10000.00")
 
-    def test_rent_settled_by_credit_is_income_even_though_no_cash_came(self, house, owner):
-        _raise(house, 9)
+    def test_applying_a_credit_to_rent_moves_no_income(self, house, owner):
+        """The rent was earned when billed; settling it from a credit is the
+        tenant's statement, not a second helping of income."""
+        _raise(house, 9, rent="15000")
         credits.issue_credit(
             tenant=house, reason=CreditReason.OPENING_CREDIT, net_amount="4000",
             credit_date=TODAY, description="Owed at cutover", actor=owner, today=TODAY,
         )
-        # Applied to September rent on issue: earned now, with no Payment row.
-        assert reporting.credit_applied_net(9, 2026) == D("4000.00")
-        assert reporting.income_adjustment(9, 2026) == D("4000.00")
+        assert self._september()["total_income"] == D("15000.00")
+        assert not JournalEntry.objects.filter(source_type="credit_application").exists()
 
-    def test_a_commercial_credit_application_leaves_the_vat_out_of_income(self, shop, owner):
-        _raise(shop, 9, vat=D("1600"))
+    def test_commercial_vat_is_owed_from_the_invoice_not_the_credit(self, shop, owner):
+        _raise(shop, 9, rent="5000", vat=D("800"))
         credits.issue_credit(
             tenant=shop, reason=CreditReason.OPENING_CREDIT, net_amount="5800",
             credit_date=TODAY, description="Owed at cutover", actor=owner, today=TODAY,
         )
-        # 5,800 settles rent of 5,000 plus 800 VAT owed to KRA.
-        assert reporting.credit_applied_net(9, 2026) == D("5000.00")
+        assert self._september()["total_income"] == D("5000.00")
+        assert -_net("2600") == D("800.00")
 
-    def test_refunding_overpaid_rent_reverses_the_income(self, house, owner):
-        _raise(house, 9)
-        _pay(house, "15000", 9)
+    def test_refunding_overpaid_rent_is_not_an_income_event(self, house, owner):
+        """An overpayment is a credit balance on the tenant's account; paying it
+        back clears that balance and touches no income."""
+        _raise(house, 9, rent="15000")
+        _pay(house, "20000", 9)
         credits.create_refund(
             tenant=house, amount="5000", method=PaymentSource.MPESA, reference="QX1",
             sent_on=TODAY, actor=owner, today=TODAY,
         )
-        assert reporting.refunded_income_net(9, 2026) == D("5000.00")
-        assert reporting.income_adjustment(9, 2026) == D("-5000.00")
+        assert self._september()["total_income"] == D("15000.00")
+        assert _net("1040") == D("0.00")
 
     def test_refunding_a_credit_is_not_an_income_event(self, house, owner):
         credits.issue_credit(
@@ -655,7 +684,7 @@ class TestReports:
             tenant=house, amount="5000", method=PaymentSource.CASH,
             sent_on=TODAY, actor=owner, today=TODAY,
         )
-        assert reporting.refunded_income_net(9, 2026) == D("0.00")
+        assert self._september()["total_income"] == D("0.00")
 
     def test_a_cost_the_tenant_paid_is_an_expense_of_ours(self, house, owner, plumbing):
         credits.issue_credit(
@@ -663,10 +692,9 @@ class TestReports:
             credit_date=TODAY, description="Plumber", expense_category=plumbing,
             actor=owner, today=TODAY,
         )
-        assert reporting.expense_additions(9, 2026) == {"Plumbing & Electrical": D("5000.00")}
-        assert reporting.expense_addition_total(9, 2026) == D("5000.00")
+        assert self._expenses() == {"Plumbing & Electrical": D("5000.00")}
         # ...and it is not mistaken for an income movement.
-        assert reporting.income_adjustment(9, 2026) == D("0.00")
+        assert self._september()["total_income"] == D("0.00")
 
     def test_an_opening_credit_is_equity_so_it_moves_neither(self, house, owner):
         credits.issue_credit(
@@ -674,8 +702,9 @@ class TestReports:
             credit_date=TODAY, description="Owed at cutover", hold=True,
             actor=owner, today=TODAY,
         )
-        assert reporting.income_adjustment(9, 2026) == D("0.00")
-        assert reporting.expense_addition_total(9, 2026) == D("0.00")
+        statement = self._september()
+        assert statement["total_income"] == D("0.00")
+        assert statement["total_expenses"] == D("0.00")
 
     def test_a_voided_credit_leaves_the_reports(self, house, owner):
         september = _raise(house, 9, rent="15000")
@@ -686,7 +715,7 @@ class TestReports:
             actor=owner, today=TODAY,
         )
         credits.void_credit(credit, reason="Entered in error", actor=owner, today=TODAY)
-        assert reporting.income_adjustment(9, 2026) == D("0.00")
+        assert self._september()["total_income"] == D("15000.00")
 
     def test_profit_and_loss_reports_the_credit(self, house, owner, plumbing):
         september = _raise(house, 9, rent="15000")
@@ -702,7 +731,7 @@ class TestReports:
             actor=owner, today=TODAY,
         )
         body = self._client(owner).get("/api/reports/profit-loss/?month=9&year=2026").json()
-        assert body["income"] == 10000.0                     # 15,000 cash less the 5,000 credit
+        assert body["income"] == 10000.0                     # 15,000 billed less the 5,000 credit
         assert {"category": "Plumbing & Electrical", "amount": 2000.0} in body["expense_breakdown"]
         assert body["net_profit"] == 8000.0
 
@@ -738,7 +767,7 @@ class TestReports:
             actor=owner, today=TODAY,
         )
         report = self._client(owner).get("/api/reports/profit-loss/?month=9&year=2026").json()
-        # 4110 carries the cash less the credit note; the report must agree.
+        # 4110 carries the rent billed less the credit note; the report must agree.
         assert D(str(report["income"])) == -_net("4110")
 
 

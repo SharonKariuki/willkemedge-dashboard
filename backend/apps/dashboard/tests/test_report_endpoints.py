@@ -204,27 +204,26 @@ class ReportEndpointsTests(APITestCase):
 
     def test_farm_income_counts_in_every_income_figure(self):
         pnl = self.get("/api/reports/profit-loss/", month=JUL, year=YEAR)
-        # Res 4,000 + Com 23,200/1.16 = 20,000 + Sou 20,000 + farm 5,000.
-        assert pnl["income"] == 49000.0
+        # July as billed: Res 10,000 + Com 20,000 (net of VAT) + Sou 8,000
+        # + the 500 water charge + farm 5,000 — whatever cash came in.
+        assert pnl["income"] == 43500.0
         assert {"label": "Farm / Agricultural Income", "amount": 5000.0} in pnl["income_breakdown"]
 
         annual = self.get("/api/reports/annual-income/", year=YEAR)
         july = next(m for m in annual["monthly"] if m["month"] == JUL)
-        assert july["total"] == 49000.0
+        assert july["total"] == 43500.0
         assert july["manual"] == 5000.0
 
         breakdown = self.get("/api/reports/expense-breakdown/", month=JUL, year=YEAR)
-        # Net of VAT now, the same as the P&L; it used to add the gross.
-        assert breakdown["total_income"] == 49000.0
+        # Net of VAT, the same as the P&L.
+        assert breakdown["total_income"] == 43500.0
 
-        # The ledger P&L picks up 4300 now. It also carries the 500 water charge,
-        # which the ledger books to 4150 when billed while the payment-derived
-        # reports count cash — the open "1040" basis difference, not this fix.
+        # The Accounting page reads the same ledger, so it agrees to the shilling.
         ledger_pnl = self.get("/api/reports/accounting/", tab="pnl", month=JUL, year=YEAR)
         ledger_income = {a["code"]: a["amount"] for g in ledger_pnl["income"] for a in g["accounts"]}
         assert ledger_income["4300"] == 5000.0
         assert ledger_income["4150"] == 500.0
-        assert ledger_pnl["total_income"] == 49500.0
+        assert ledger_pnl["total_income"] == pnl["income"] == 43500.0
 
     def test_landlord_statement_matches_the_pnl(self):
         for building in (None, self.north.id, self.farm.id):
@@ -249,7 +248,7 @@ class ReportEndpointsTests(APITestCase):
 
     def test_pnl_building_filter(self):
         north = self.get("/api/reports/profit-loss/", month=JUL, year=YEAR, building=self.north.id)
-        assert north["income"] == 24000.0  # 4,000 + 20,000 net
+        assert north["income"] == 30500.0  # 10,000 + 20,000 net + 500 water, as billed
         assert north["total_expenses"] == 3000.0
         farm = self.get("/api/reports/profit-loss/", month=JUL, year=YEAR, building=self.farm.id)
         assert farm["income"] == 5000.0

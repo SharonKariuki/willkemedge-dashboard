@@ -1,8 +1,8 @@
 """
 Signals that keep the general ledger in step with the source rows.
 
-We connect to post_save / post_delete on Payment, Expense, ManualIncome and
-UtilityCharge:
+We connect to post_save / post_delete on Payment, Expense, ManualIncome,
+UtilityCharge and Arrears (the monthly rent charge):
 
   * create → post a NORMAL journal entry
   * edit   → RE-POST (replace) the NORMAL entry so a corrected amount reaches
@@ -201,4 +201,52 @@ def on_utility_charge_deleted(sender, instance, **kwargs):
     _safe_post(
         source_type="utility_charge", source_id=instance.pk, kind="reversal", operation="reverse",
         fn=lambda: reverse_utility_charge(instance),
+    )
+
+
+# ── Arrears (rent billed) signals ────────────────────────────────────────────
+
+@receiver(post_save, sender="payments.Arrears")
+def on_arrear_saved(sender, instance, created, **kwargs):
+    """Post a month's rent charge; re-post when the charge or its waiver changes.
+
+    An Arrears row is re-saved on every receipt it settles; ``_build_entry``
+    sees the legs are unchanged and leaves the entry alone.
+
+    A row marked as a tenant's opening position turns every earlier row of that
+    tenant into pre-books history (see ``posting._is_opening``), so those are
+    re-posted with it.
+    """
+    from apps.payments.models import Arrears
+    from apps.payments.monthly_ledger import OPENING_MARKER
+
+    from .posting import post_arrear
+
+    rows = [instance]
+    if OPENING_MARKER in (instance.waive_notes or ""):
+        rows += list(
+            Arrears.objects.filter(tenant_id=instance.tenant_id)
+            .exclude(pk=instance.pk)
+            .select_related("tenant__unit__building")
+        )
+    for row in rows:
+        _safe_post(
+            source_type="arrear", source_id=row.pk, kind="normal", operation="post",
+            fn=lambda row=row: post_arrear(row, replace=True),
+        )
+
+
+@receiver(post_delete, sender="payments.Arrears")
+def on_arrear_deleted(sender, instance, **kwargs):
+    """Reverse a deleted rent charge so 1040 and income stop carrying it."""
+    from .models import JournalEntry
+    from .posting import reverse_arrear
+
+    if not JournalEntry.objects.filter(
+        source_type="arrear", source_id=instance.pk, kind="normal"
+    ).exists():
+        return  # never posted (a zero row): nothing to reverse
+    _safe_post(
+        source_type="arrear", source_id=instance.pk, kind="reversal", operation="reverse",
+        fn=lambda: reverse_arrear(instance),
     )

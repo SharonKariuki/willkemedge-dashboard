@@ -17,7 +17,7 @@ from apps.ledger.models import JournalEntry, PostingFailure
 from apps.payments.models import Payment, PaymentSource, PaymentType, UtilityCharge
 from apps.tenants.models import Tenant, TenantStatus
 
-RESIDENTIAL_INCOME = "4110"
+TENANT_ACCOUNT = "1040"  # a receipt settles the tenant's account
 RENT_RECEIVABLE = "1040"
 SERVICE_CHARGE_UTILITIES = "4150"
 
@@ -61,7 +61,7 @@ class TestRepostOnEdit:
             payment_type=PaymentType.RENT, reference="RP-1",
         )
         entry = _normal_entry("payment", pmt.pk)
-        assert _credit_of(entry, RESIDENTIAL_INCOME) == Decimal("20000.00")
+        assert _credit_of(entry, TENANT_ACCOUNT) == Decimal("20000.00")
 
         # Correct a mis-keyed amount.
         pmt.amount = Decimal("15000.00")
@@ -72,7 +72,7 @@ class TestRepostOnEdit:
             source_type="payment", source_id=pmt.pk, kind="normal"
         ).count() == 1
         entry.refresh_from_db()
-        assert _credit_of(entry, RESIDENTIAL_INCOME) == Decimal("15000.00")
+        assert _credit_of(entry, TENANT_ACCOUNT) == Decimal("15000.00")
         assert _debit_of(entry, "1020") == Decimal("15000.00")
 
     def test_revising_utility_charge_updates_the_ledger(self):
@@ -128,7 +128,7 @@ class TestDurablePostingFailure:
         call_command("retry_posting_failures")
 
         entry = _normal_entry("payment", pmt.pk)
-        assert _credit_of(entry, RESIDENTIAL_INCOME) == Decimal("20000.00")
+        assert _credit_of(entry, TENANT_ACCOUNT) == Decimal("20000.00")
         failure = PostingFailure.objects.get(source_id=pmt.pk)
         assert failure.resolved is True
         assert failure.resolved_at is not None
@@ -148,7 +148,7 @@ class TestDurablePostingFailure:
         pmt.save()
 
         assert PostingFailure.objects.get(source_id=pmt.pk).resolved is True
-        assert _credit_of(_normal_entry("payment", pmt.pk), RESIDENTIAL_INCOME) == Decimal("18000.00")
+        assert _credit_of(_normal_entry("payment", pmt.pk), TENANT_ACCOUNT) == Decimal("18000.00")
 
 
 @pytest.mark.django_db

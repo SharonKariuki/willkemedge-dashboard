@@ -43,13 +43,11 @@ from .report_data import (
     money,
     month_end,
     month_start,
-    net_income_sum,
     period_params,
 )
 
 # Kept under their old names: the dashboard summary imports them from here.
-_net_income_sum = net_income_sum
-__all__ = ["INCOME_PAYMENT_FILTER", "_net_income_sum"]
+__all__ = ["INCOME_PAYMENT_FILTER"]
 
 CURRENT_STATUSES = (TenantStatus.ACTIVE, TenantStatus.NOTICE_GIVEN)
 

@@ -131,7 +131,8 @@ class AccountingTests(APITestCase):
 
     def test_journal_entries_each_balance(self):
         body = self.get(tab="ledger", view="journal", start="2026-09-01", end="2026-09-30")
-        assert len(body["entries"]) == 4  # two receipts, an expense, the harvest
+        # two rent charges, two receipts, an expense, the harvest
+        assert len(body["entries"]) == 6
         for entry in body["entries"]:
             assert sum(ln["debit"] for ln in entry["lines"]) == sum(ln["credit"] for ln in entry["lines"])
 

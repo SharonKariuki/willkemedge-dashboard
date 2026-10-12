@@ -61,7 +61,9 @@ class TestDryRun:
         _, made = road_block
         call_command("remove_june_road_block")
         assert _periods(made["RB101"]) == [6, 7, 8]
-        assert JournalEntry.objects.filter(period_month=6).count() == 2
+        assert JournalEntry.objects.filter(
+            period_month=6, memo__startswith="Opening security deposit"
+        ).count() == 2
 
 
 class TestApply:
