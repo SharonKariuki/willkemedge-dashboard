@@ -590,38 +590,59 @@ export default function TenantDetailPage() {
                   <TD className="text-content-muted">{toDayFirst(p.payment_date)}</TD>
                   <TD>{p.period_month}/{p.period_year}</TD>
                   <TD><Badge tone="neutral">{p.source || "—"}</Badge></TD>
-                  <TD className="font-mono text-xs text-content-muted">{p.reference || "—"}</TD>
-                  <TD className="text-right font-medium tabular-nums text-content">{KES(p.amount)}</TD>
+                  <TD className="font-mono text-xs text-content-muted">
+                    <div className="flex items-center gap-2">
+                      {p.reference || "—"}
+                      {p.is_void && (
+                        <Badge tone="unpaid" title={p.void_reason || undefined}>Void</Badge>
+                      )}
+                    </div>
+                    {p.is_void && p.void_reason && (
+                      <p className="mt-0.5 max-w-xs whitespace-normal font-sans text-[11px] text-content-muted">
+                        {p.void_reason}
+                      </p>
+                    )}
+                  </TD>
+                  <TD
+                    className={cn(
+                      "text-right font-medium tabular-nums",
+                      p.is_void ? "text-content-muted line-through" : "text-content",
+                    )}
+                  >
+                    {KES(p.amount)}
+                  </TD>
                   {canManageCredit && (
                     <TD className="text-right">
-                      <button
-                        type="button"
-                        onClick={() => setVoidTarget({
-                          id: p.id,
-                          tenant: tenant.id,
-                          tenant_name: tenant.full_name,
-                          unit_label: tenant.unit_label,
-                          building_name: tenant.building_name,
-                          amount: p.amount,
-                          payment_date: p.payment_date,
-                          period_month: p.period_month,
-                          period_year: p.period_year,
-                          source: p.source,
-                          source_display: p.source,
-                          payment_type: "",
-                          reference: p.reference,
-                          notes: "",
-                          is_void: false,
-                          voided_at: null,
-                          void_reason: "",
-                          created_at: "",
-                        })}
-                        className="inline-flex items-center gap-1 rounded px-1.5 py-1 text-xs font-medium text-ink-500 transition-colors hover:bg-danger-soft hover:text-danger"
-                        title="Void this payment"
-                        aria-label={`Void payment of KES ${p.amount} on ${toDayFirst(p.payment_date)}`}
-                      >
-                        <Undo2 className="h-3.5 w-3.5" /> Void
-                      </button>
+                      {!p.is_void && (
+                        <button
+                          type="button"
+                          onClick={() => setVoidTarget({
+                            id: p.id,
+                            tenant: tenant.id,
+                            tenant_name: tenant.full_name,
+                            unit_label: tenant.unit_label,
+                            building_name: tenant.building_name,
+                            amount: p.amount,
+                            payment_date: p.payment_date,
+                            period_month: p.period_month,
+                            period_year: p.period_year,
+                            source: p.source,
+                            source_display: p.source,
+                            payment_type: "",
+                            reference: p.reference,
+                            notes: "",
+                            is_void: false,
+                            voided_at: null,
+                            void_reason: "",
+                            created_at: "",
+                          })}
+                          className="inline-flex items-center gap-1 rounded px-1.5 py-1 text-xs font-medium text-ink-500 transition-colors hover:bg-danger-soft hover:text-danger"
+                          title="Void this payment"
+                          aria-label={`Void payment of KES ${p.amount} on ${toDayFirst(p.payment_date)}`}
+                        >
+                          <Undo2 className="h-3.5 w-3.5" /> Void
+                        </button>
+                      )}
                     </TD>
                   )}
                 </TR>
