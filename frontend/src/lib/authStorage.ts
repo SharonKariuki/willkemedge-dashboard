@@ -46,8 +46,14 @@ export const authStorage = {
     localStorage.setItem(REFRESH_KEY, refresh);
     localStorage.setItem(USER_KEY, JSON.stringify(user));
   },
-  setAccess(access: string) {
+  /**
+   * Store the result of a token refresh. The API rotates refresh tokens and
+   * blacklists the one it was given, so a returned refresh token MUST replace
+   * the stored one — keeping the old one logs the user out on the next refresh.
+   */
+  setTokens(access: string, refresh?: string) {
     localStorage.setItem(ACCESS_KEY, access);
+    if (refresh) localStorage.setItem(REFRESH_KEY, refresh);
   },
   clear() {
     localStorage.removeItem(ACCESS_KEY);
