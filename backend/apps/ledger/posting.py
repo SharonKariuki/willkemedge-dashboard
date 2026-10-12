@@ -36,7 +36,9 @@ from django.utils.dateparse import parse_date
 
 from apps.buildings.models import UnitClassification
 from apps.expenses.coa import (
+    LATE_FEES,
     OPERATING_BANK,
+    PARKING,
     RENT_COMMERCIAL,
     RENT_RECEIVABLE,
     RENT_RESIDENTIAL,
@@ -515,12 +517,36 @@ def reverse_manual_income(income) -> JournalEntry:
     )
 
 
+def charge_account_code(charge) -> str:
+    """The account a non-rent charge is booked against, by its ``charge_type``.
+
+    Every charge used to land in 4150, so a broken-window recharge or a late
+    penalty showed up as recovered water. A damage recharge credits the expense
+    it recovers, so Repairs & Maintenance reads net of what tenants paid back.
+    """
+    from apps.payments.models import ChargeType
+
+    if charge.charge_type == ChargeType.LATE_FEE:
+        return LATE_FEES
+    if charge.charge_type == ChargeType.PARKING:
+        return PARKING
+    if charge.charge_type == ChargeType.DAMAGE:
+        category = charge.expense_category
+        if category is None or not category.account_id:
+            raise ValueError(f"Damage charge {charge.pk} has no expense account to post to.")
+        return category.account.code
+    return SERVICE_CHARGE_UTILITIES
+
+
 def post_utility_charge(charge, *, replace: bool = False) -> JournalEntry:
     """
-    Post a water/utility charge billed to a tenant.
+    Post a non-rent charge billed to a tenant (water, penalty, parking, recharge).
 
-    Positive: DR 1040 Accounts Receivable / CR 4150 Service Charge — Utilities Reimbursed
-    Negative: DR 4150 Service Charge — Utilities Reimbursed / CR 1040 Accounts Receivable
+    Positive: DR 1040 Accounts Receivable / CR <charge account>
+    Negative: DR <charge account> / CR 1040 Accounts Receivable
+
+    The charge account is 4150 Service Charge — Utilities Reimbursed for water
+    and the like; see ``charge_account_code`` for the rest.
 
     Utility charges appeared on the tenant statement as "Other Charges" but were
     never posted to the general ledger, so recovered utility income was missing
@@ -528,17 +554,22 @@ def post_utility_charge(charge, *, replace: bool = False) -> JournalEntry:
     """
     amt = charge.amount
     building = getattr(charge.tenant.unit, "building", None)
+    account = charge_account_code(charge)
+    income_desc = (
+        "Service Charge / Utilities Reimbursed" if account == SERVICE_CHARGE_UTILITIES
+        else f"{charge.get_charge_type_display()} — {charge.label}"[:255]
+    )
 
     if amt < 0:
         pos = abs(amt)
         lines = [
-            (SERVICE_CHARGE_UTILITIES, pos, Decimal("0"), f"Credit note: {charge.label} — {charge.tenant}"),
+            (account, pos, Decimal("0"), f"Credit note: {charge.label} — {charge.tenant}"),
             (RENT_RECEIVABLE, Decimal("0"), pos, f"Credit note: {charge.label} — {charge.tenant}"),
         ]
     else:
         lines = [
             (RENT_RECEIVABLE, amt, Decimal("0"), f"{charge.label} billed — {charge.tenant}"),
-            (SERVICE_CHARGE_UTILITIES, Decimal("0"), amt, "Service Charge / Utilities Reimbursed"),
+            (account, Decimal("0"), amt, income_desc),
         ]
 
     return _build_entry(
@@ -565,17 +596,18 @@ def reverse_utility_charge(charge) -> JournalEntry:
     """
     amt = charge.amount
     building = getattr(charge.tenant.unit, "building", None)
+    account = charge_account_code(charge)
 
     if amt < 0:
-        # The original was a credit note (DR 4150 / CR 1040); undo that.
+        # The original was a credit note (DR <account> / CR 1040); undo that.
         pos = abs(amt)
         lines = [
             (RENT_RECEIVABLE, pos, Decimal("0"), f"REVERSAL — credit note: {charge.label} — {charge.tenant}"),
-            (SERVICE_CHARGE_UTILITIES, Decimal("0"), pos, f"REVERSAL — credit note: {charge.label}"),
+            (account, Decimal("0"), pos, f"REVERSAL — credit note: {charge.label}"),
         ]
     else:
         lines = [
-            (SERVICE_CHARGE_UTILITIES, amt, Decimal("0"), f"REVERSAL — {charge.label} — {charge.tenant}"),
+            (account, amt, Decimal("0"), f"REVERSAL — {charge.label} — {charge.tenant}"),
             (RENT_RECEIVABLE, Decimal("0"), amt, f"REVERSAL — {charge.label} billed"),
         ]
 
@@ -674,7 +706,8 @@ def _credit_debit_lines(credit) -> list:
     label = f"Credit {credit.number} — {credit.tenant}"
     if credit.reason in (CreditReason.BILLING_CORRECTION, CreditReason.RENT_CONCESSION):
         if credit.utility_charge_id:
-            return [(SERVICE_CHARGE_UTILITIES, credit.net_amount, Decimal("0"), label)]
+            # Correcting a charge unwinds it from the account it was booked to.
+            return [(charge_account_code(credit.utility_charge), credit.net_amount, Decimal("0"), label)]
         lines = [(_rent_income_code(credit.tenant), credit.net_amount, Decimal("0"), label)]
         if credit.vat_amount:
             lines.append((VAT_PAYABLE, credit.vat_amount, Decimal("0"), "16% VAT credited"))

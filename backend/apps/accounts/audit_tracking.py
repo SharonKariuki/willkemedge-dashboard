@@ -157,10 +157,10 @@ TRACKED = [
         create_summary=("source", "payment_type", "reference"),
     ),
     Tracked(
-        "payments.UtilityCharge", "utility_charge", "water charge",
+        "payments.UtilityCharge", "utility_charge", "charge",
         _safe(lambda c: f"{c.label} {c.period_month}/{c.period_year} for {_tenant_with_unit(c.tenant)}"),
         financial=frozenset({"*"}),
-        create_summary=("amount", "units"),
+        create_summary=("amount", "units", "charge_type"),
     ),
     Tracked(
         "payments.Arrears", "arrears", "rent charge",

@@ -20,6 +20,7 @@ import PaymentsPage from "@/pages/PaymentsPage";
 import ReconciliationPage from "@/pages/ReconciliationPage";
 import ReportsPage from "@/pages/ReportsPage";
 import SettingsPage from "@/pages/SettingsPage";
+import AddChargePage from "@/pages/AddChargePage";
 import AddCreditPage from "@/pages/AddCreditPage";
 import RefundCreditPage from "@/pages/RefundCreditPage";
 import TenantDetailPage from "@/pages/TenantDetailPage";
@@ -50,6 +51,7 @@ export default function App() {
         <Route path="/units" element={<UnitsPage />} />
         <Route path="/tenants" element={<TenantsPage />} />
         <Route path="/tenants/:id" element={<TenantDetailPage />} />
+        <Route path="/tenants/:id/charges/new" element={<AddChargePage />} />
         <Route path="/tenants/:id/credits/new" element={<AddCreditPage />} />
         <Route path="/tenants/:id/credits/refund" element={<RefundCreditPage />} />
         <Route path="/payments" element={<PaymentsPage />} />

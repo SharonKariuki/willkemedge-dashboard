@@ -1,7 +1,12 @@
 """Payment serializers."""
+from decimal import Decimal
+
 from rest_framework import serializers
 
-from .models import Arrears, Payment, Transaction, UtilityCharge
+from apps.expenses.models import ExpenseCategory
+from apps.tenants.models import Tenant
+
+from .models import Arrears, ChargeType, Payment, Transaction, UtilityCharge
 
 
 class PaymentSerializer(serializers.ModelSerializer):
@@ -208,6 +213,10 @@ class UtilityChargeSerializer(serializers.ModelSerializer):
     tenant_name = serializers.CharField(source="tenant.full_name", read_only=True)
     unit_label = serializers.CharField(source="tenant.unit.label", read_only=True)
     building_name = serializers.CharField(source="tenant.unit.building.name", read_only=True)
+    charge_type_display = serializers.CharField(source="get_charge_type_display", read_only=True)
+    expense_category_name = serializers.CharField(
+        source="expense_category.name", read_only=True, default="",
+    )
 
     class Meta:
         model = UtilityCharge
@@ -215,5 +224,22 @@ class UtilityChargeSerializer(serializers.ModelSerializer):
             "id", "tenant", "tenant_name", "unit_label", "building_name",
             "posting_date", "period_month", "period_year", "label",
             "opening_reading", "closing_reading", "units", "amount", "notes",
+            "charge_type", "charge_type_display", "expense_category", "expense_category_name",
         ]
         read_only_fields = fields
+
+
+class ChargeCreateSerializer(serializers.Serializer):
+    """The owner's Add Charge form. Rules live in ``payments.charges``."""
+
+    tenant = serializers.PrimaryKeyRelatedField(queryset=Tenant.objects.all())
+    charge_type = serializers.ChoiceField(choices=ChargeType.choices)
+    amount = serializers.DecimalField(max_digits=10, decimal_places=2, min_value=Decimal("0.01"))
+    label = serializers.CharField(max_length=60)
+    posting_date = serializers.DateField()
+    period_month = serializers.IntegerField(min_value=1, max_value=12)
+    period_year = serializers.IntegerField(min_value=2020, max_value=2100)
+    expense_category = serializers.PrimaryKeyRelatedField(
+        queryset=ExpenseCategory.objects.select_related("account"), required=False, allow_null=True,
+    )
+    notes = serializers.CharField(required=False, allow_blank=True, default="")
