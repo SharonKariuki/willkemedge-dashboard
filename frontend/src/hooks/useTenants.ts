@@ -58,6 +58,10 @@ export interface TenantPaymentHistory {
     period_year: number;
     source: string;
     reference: string;
+    /** Voided rows are listed for the record but excluded from every total. */
+    is_void: boolean;
+    voided_at: string | null;
+    void_reason: string;
   }[];
   /** `expected` is the full obligation (rent + VAT) that `balance` is measured
    *  against; the two components are broken out for commercial units. */

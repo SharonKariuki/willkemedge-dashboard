@@ -430,9 +430,12 @@ class TenantViewSet(viewsets.ModelViewSet):
         from apps.payments.monthly_ledger import build_monthly_ledger
         from apps.tenants.deposits import deposit_held_on_books
         tenant = self.get_object()
+        # Voided payments stay in the list, flagged, so a void (e.g. money
+        # re-pointed to the right unit) is visible on the tenant it came off.
+        # They are still excluded from every total below.
         payments = (
-            Payment.objects.filter(tenant=tenant, voided_at__isnull=True)
-            .order_by("-payment_date")[:24]
+            Payment.objects.filter(tenant=tenant)
+            .order_by("-payment_date", "-id")[:24]
         )
         arrears = Arrears.objects.filter(tenant=tenant, is_cleared=False)
         # Voided payments are excluded from every other balance in the system;
@@ -459,6 +462,9 @@ class TenantViewSet(viewsets.ModelViewSet):
                     "period_year": p.period_year,
                     "source": p.source,
                     "reference": p.reference,
+                    "is_void": p.voided_at is not None,
+                    "voided_at": p.voided_at.isoformat() if p.voided_at else None,
+                    "void_reason": p.void_reason,
                 }
                 for p in payments
             ],

@@ -31,6 +31,12 @@ test.beforeEach(async ({ page }) => {
         payments: [{
           id: 5, amount: "3000.00", payment_date: "2026-10-03", period_month: 10,
           period_year: 2026, source: "mpesa", reference: "UJ3ABC123",
+          is_void: false, voided_at: null, void_reason: "",
+        }, {
+          id: 4, amount: "3000.00", payment_date: "2026-10-03", period_month: 10,
+          period_year: 2026, source: "mpesa", reference: "UJ3OLD999",
+          is_void: true, voided_at: "2026-10-12T09:00:00Z",
+          void_reason: "Paid to the wrong unit — meant for RB405",
         }],
       }),
     }),
@@ -49,5 +55,13 @@ test("void dialog opens on screen from the tenant page", async ({ page }) => {
   await expect(page.getByLabel("Reason *")).toBeInViewport();
   // The action buttons sit in the footer — they must be reachable too.
   await expect(page.getByRole("button", { name: "Cancel" })).toBeInViewport();
+  await expect(await hasNoHorizontalScroll(page)).toBe(true);
+});
+
+test("a voided payment stays on the tenant page, marked void", async ({ page }) => {
+  await page.goto("/tenants/1");
+  await expect(page.getByText("Paid to the wrong unit — meant for RB405")).toBeVisible();
+  // Only the live payment can be voided; the voided one has no button.
+  await expect(page.getByRole("button", { name: /Void payment of KES 3000/ })).toHaveCount(1);
   await expect(await hasNoHorizontalScroll(page)).toBe(true);
 });
