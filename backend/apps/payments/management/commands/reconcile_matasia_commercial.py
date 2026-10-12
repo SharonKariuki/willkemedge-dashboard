@@ -195,9 +195,6 @@ class Command(BaseCommand):
         if existing:
             self._skip(f"{label} {tenant.full_name}: July row already exists — leaving it alone")
             return
-        if bf == 0:
-            self._skip(f"{label} {tenant.full_name}: nothing brought forward")
-            return
 
         # The B/Forward is a closing position: it already contains every charge
         # raised up to that date. Seeding it alongside a charge that also sits in
@@ -218,6 +215,25 @@ class Command(BaseCommand):
             return
 
         key = f"OPENING-CREDIT-2026-07-{label}"
+        if bf == 0:
+            # Nothing brought forward is still an opening position, and it needs
+            # a row as much as any other. With July left empty the catch-up
+            # billing saw a month never raised and raised it at a full month's
+            # rent: on 12 Sept 2026 MCG02, MCG03 and MCG05 each gained a July
+            # charge the statement says was never owed, and later receipts were
+            # allocated to it ahead of the months they were paid for.
+            self._do(f"{label} {tenant.full_name}: July closes at nil (nothing brought forward)")
+            if self.apply:
+                Arrears.objects.create(
+                    tenant=tenant, period_year=year, period_month=month,
+                    expected_rent=D(0), expected_vat=D(0), amount_paid=D(0),
+                    balance=D(0), is_cleared=True,
+                    waive_notes=(
+                        "Opening position carried from the 21 Aug 2026 statement's "
+                        "B/Forward column — not a billed month."
+                    ),
+                )
+            return
         if bf > 0:
             self._do(f"{label} {tenant.full_name}: July closes owing {bf} (brought forward)")
             if self.apply:

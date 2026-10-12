@@ -387,8 +387,20 @@ def recalculate_all_statuses() -> None:
     """
     Nightly at 00:30 EAT. Recalculate every occupied unit's status
     based on current-month payments to catch anything missed intraday.
+
+    A tenant who has given notice still holds the unit until they move out —
+    the same "current tenant" every other occupancy check uses. This sweep used
+    to look for ACTIVE alone, so the first night after notice was given it
+    marked the unit vacant: MCF12 read Vacant from 22 Sept 2026 while Sidai was
+    still in it and still being billed. A unit it has wrongly vacated is
+    re-examined too, or that mistake would never be undone.
+
+    The other units of a combined space hold no tenancy of their own; they
+    mirror their head and are kept in step with it here rather than vacated.
     """
     from decimal import Decimal
+
+    from django.db.models import Exists, OuterRef, Q
 
     from apps.buildings.models import Unit, UnitStatus
     from apps.buildings.services import recalculate_unit_status
@@ -396,17 +408,28 @@ def recalculate_all_statuses() -> None:
 
     from .services import expected_vat_for, rent_payments_for
 
+    current = [TenantStatus.ACTIVE, TenantStatus.NOTICE_GIVEN]
     now = timezone.now()
-    occupied = Unit.objects.exclude(status=UnitStatus.VACANT).select_related("building")
+    has_tenant = Tenant.objects.filter(unit=OuterRef("pk"), status__in=current)
+    heads = (
+        Unit.objects.filter(combined_into__isnull=True)
+        .filter(~Q(status=UnitStatus.VACANT) | Exists(has_tenant))
+        .select_related("building")
+    )
     updated = 0
 
-    for unit in occupied:
-        tenant = Tenant.objects.filter(unit=unit, status=TenantStatus.ACTIVE).first()
+    for unit in heads:
+        tenant = Tenant.objects.filter(unit=unit, status__in=current).first()
         if not tenant:
             unit.status = UnitStatus.VACANT
             unit.save(update_fields=["status", "updated_at"])
             updated += 1
             continue
+        if unit.status == UnitStatus.VACANT:
+            # recalculate_unit_status will not touch a vacant unit; a unit with
+            # a current tenant is occupied before it is anything else.
+            unit.status = UnitStatus.OCCUPIED_UNPAID
+            unit.save(update_fields=["status", "updated_at"])
 
         # Only non-void RENT settles rent, and a commercial tenant's obligation
         # includes the VAT they actually pay — same basis as _update_arrears.
@@ -417,6 +440,12 @@ def recalculate_all_statuses() -> None:
 
         recalculate_unit_status(unit, total_paid, obligation=obligation)
         updated += 1
+
+    # Unit.save mirrors a head's status onto its space only when the head's
+    # status changes; a member that drifted while the head stood still is
+    # brought back here.
+    for head in Unit.objects.filter(combined_units__isnull=False).distinct():
+        head.combined_units.exclude(status=head.status).update(status=head.status)
 
     logger.info("recalculate_all_statuses: updated %d units", updated)
 

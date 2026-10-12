@@ -25,6 +25,8 @@ import { forwardRef, useEffect, useId, useRef, useState } from "react";
 import { cn } from "@/lib/cn";
 import { fromDayFirst, maskDayFirst, toDayFirst } from "@/lib/dates";
 
+const UNFINISHED = "Enter the full date as dd/mm/yyyy, e.g. 01/10/2026";
+
 interface DatePickerProps
   extends Omit<React.InputHTMLAttributes<HTMLInputElement>, "type"> {
   label?: string;
@@ -90,6 +92,18 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
       emit(fromDayFirst(next));
     };
 
+    // Something typed that is not a whole date — `01/10/26`, `31/02/2026` —
+    // emits `""`, which for an optional field reads as "left blank". Without
+    // this the form went through and the API answered "Date has wrong format"
+    // with no hint of which box. Marking the box invalid makes the browser
+    // stop the submit and point at it; the message shows once they leave it.
+    const unfinished = text.trim() !== "" && fromDayFirst(text) === "";
+    const [left, setLeft] = useState(false);
+    useEffect(() => {
+      textInputRef.current?.setCustomValidity(unfinished ? UNFINISHED : "");
+    }, [unfinished]);
+    const shownError = error ?? (unfinished && left ? UNFINISHED : undefined);
+
     /** The native picker wrote an ISO date into the real field. */
     const handlePicked = (e: React.ChangeEvent<HTMLInputElement>) => {
       const iso = e.target.value;
@@ -114,7 +128,7 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
     // id of its own even when the caller supplied none.
     const generatedId = useId();
     const textId = `${id ?? name ?? generatedId}-typed`;
-    const errorId = error ? `${textId}-error` : undefined;
+    const errorId = shownError ? `${textId}-error` : undefined;
 
     return (
       <div className={wrapperClassName}>
@@ -152,10 +166,11 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
             placeholder={placeholder ?? "dd/mm/yyyy"}
             value={text}
             onChange={handleTyping}
-            onBlur={onBlur}
+            onBlur={(e) => { setLeft(true); onBlur?.(e); }}
+            onFocus={() => setLeft(false)}
             disabled={disabled}
             required={required}
-            aria-invalid={error ? true : undefined}
+            aria-invalid={shownError ? true : undefined}
             aria-describedby={errorId}
             className={cn(
               "w-full rounded-md bg-surface-raised hairline pl-9 pr-3 py-2.5 text-sm text-ink-900",
@@ -191,8 +206,8 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
             className="pointer-events-none absolute bottom-0 left-3 h-px w-px opacity-0"
           />
         </div>
-        {error && (
-          <p id={errorId} className="mt-1 text-[11px] text-status-unpaid">{error}</p>
+        {shownError && (
+          <p id={errorId} className="mt-1 text-[11px] text-status-unpaid">{shownError}</p>
         )}
       </div>
     );
