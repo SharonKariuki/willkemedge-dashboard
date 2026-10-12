@@ -13,7 +13,7 @@ from django.utils import timezone
 from rest_framework.test import APIClient, APITestCase
 
 from apps.buildings.models import Building, Unit, UnitClassification, UnitStatus
-from apps.payments.models import Payment, PaymentSource, PaymentType
+from apps.payments.models import Arrears, Payment, PaymentSource, PaymentType
 from apps.tenants.models import Tenant, TenantStatus
 
 User = get_user_model()
@@ -71,6 +71,14 @@ class DashboardSummaryTests(APITestCase):
             payment_date=now.date(), period_month=cls.month, period_year=cls.year,
             source=PaymentSource.MPESA,
         )
+        # The month's rent as billed: income is recognised here (accrual) —
+        # residential 10,000 + commercial 20,000 with 3,200 VAT owed to KRA.
+        for tenant, rent, vat in ((cls.res_t, "10000", "0"), (cls.com_t, "20000", "3200")):
+            Arrears.objects.create(
+                tenant=tenant, period_month=cls.month, period_year=cls.year,
+                expected_rent=Decimal(rent), expected_vat=Decimal(vat),
+                amount_paid=Decimal(rent) + Decimal(vat), balance=Decimal("0"), is_cleared=True,
+            )
         # Rent: residential 10,000 + commercial 23,200 (gross, incl 16% VAT).
         Payment.objects.create(
             tenant=cls.res_t, amount=Decimal("10000"), payment_type=PaymentType.RENT,
@@ -131,17 +139,17 @@ class DashboardSummaryTests(APITestCase):
         data = self._summary()
         current = data["income_trend"][-1]
         assert current["month"] == f"{self.year}-{self.month:02d}"
-        # Income is net of VAT and excludes the refundable 15,000 deposit:
-        # residential 10,000 + commercial 23,200/1.16 = 30,000. The 16% on
-        # commercial rent is a liability owed to KRA, not income.
+        # Income is the rent billed, net of VAT, and excludes the refundable
+        # 15,000 deposit: residential 10,000 + commercial 20,000 = 30,000. The
+        # 3,200 VAT on commercial rent is a liability owed to KRA, not income.
         assert round(current["amount"], 2) == 30000.0
 
     def test_annual_income_report_excludes_deposit(self):
         resp = self.client.get("/api/reports/annual-income/", {"year": self.year})
         assert resp.status_code == 200
         monthly = {row["month"]: row["total"] for row in resp.json()["monthly"]}
-        # Rent only (deposit excluded) and net of VAT — the same basis as the
-        # dashboard income trend and the P&L: 10,000 + 23,200/1.16 = 30,000.
+        # Rent billed (deposit excluded) and net of VAT — the same basis as the
+        # dashboard income trend and the P&L: 10,000 + 20,000 = 30,000.
         assert round(monthly[self.month], 2) == 30000.0
 
     def test_occupancy_report_excludes_under_maintenance(self):
@@ -158,6 +166,6 @@ class DashboardSummaryTests(APITestCase):
             "/api/reports/profit-loss/", {"month": self.month, "year": self.year}
         )
         assert resp.status_code == 200
-        # Commercial 23,200 gross -> 20,000 net + residential 10,000 = 30,000.
-        # The 15,000 deposit is excluded. (Was 33,200 gross before the fix.)
+        # Commercial 20,000 net of VAT + residential 10,000 = 30,000.
+        # The 15,000 deposit is excluded.
         assert abs(resp.json()["income"] - 30000) < 0.5

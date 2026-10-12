@@ -137,7 +137,7 @@ def record_initial_deposit(
     (Tenant Security Deposits Held) both stayed flat, and a deposit was visible
     on the tenant's card while being absent from the balance sheet. Existing
     tenants only have theirs on the books because the cutover posted it through
-    ``post_opening_balances``; a tenant registered afterwards had no equivalent.
+    ``post_opening_deposit``; a tenant registered afterwards had no equivalent.
 
     Posting it as a DEPOSIT payment reuses the path the dashboard's own
     "record a payment" screen uses, so the ledger entry, the Transaction row

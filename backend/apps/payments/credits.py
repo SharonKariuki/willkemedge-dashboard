@@ -394,8 +394,6 @@ def issue_credit(
 # ---------------------------------------------------------------------------
 
 def _apply(credit: TenantCredit, arrears: Arrears, amount: Decimal, *, origin, actor, on) -> CreditApplication:
-    from apps.ledger.posting import post_credit_application
-
     application = CreditApplication.objects.create(
         credit=credit, arrears=arrears, amount=amount, applied_on=on,
         origin=origin, created_by=_actor(actor),
@@ -405,7 +403,6 @@ def _apply(credit: TenantCredit, arrears: Arrears, amount: Decimal, *, origin, a
     credit.amount_applied = credit.amount_applied + amount
     credit.save(update_fields=["amount_applied"])
 
-    post_credit_application(application)
     _refresh_unit_status(arrears, on)
 
     audit.record(
@@ -515,8 +512,6 @@ def set_hold(credit: TenantCredit, *, hold: bool, actor=None, today: _dt.date | 
 
 
 def _unapply(application: CreditApplication, *, reason: str, actor, on) -> None:
-    from apps.ledger.posting import reverse_credit_application
-
     arrears = Arrears.objects.select_for_update().get(pk=application.arrears_id)
     arrears.credit_applied = max((arrears.credit_applied or ZERO) - application.amount, ZERO)
     _resettle(arrears)
@@ -530,7 +525,6 @@ def _unapply(application: CreditApplication, *, reason: str, actor, on) -> None:
     application.reverse_reason = reason[:255]
     application.save(update_fields=["reversed_at", "reversed_by", "reverse_reason"])
 
-    reverse_credit_application(application, on=on)
     _refresh_unit_status(arrears, on)
 
 

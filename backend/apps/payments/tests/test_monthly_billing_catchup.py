@@ -15,8 +15,8 @@ from django.test import TestCase
 from django.utils import timezone
 
 from apps.buildings.models import Building, Unit, UnitClassification, UnitStatus
-from apps.ledger.posting import post_opening_balances
 from apps.payments.models import Arrears
+from apps.payments.monthly_ledger import OPENING_MARKER
 from apps.payments.tasks import generate_monthly_arrears
 from apps.tenants.models import Tenant
 
@@ -50,13 +50,12 @@ class BillingCatchUpTests(TestCase):
             move_in_date=move_in,
         )
         if opening is not None:
-            post_opening_balances(
-                tenant, net_balance=Decimal(opening), deposit=Decimal("0"), date=CUTOVER,
-            )
+            # The go-live load's cutover row: the balance carried in, marked so.
             Arrears.objects.create(
-                tenant=tenant, period_month=6, period_year=2026,
+                tenant=tenant, period_month=CUTOVER.month, period_year=CUTOVER.year,
                 expected_rent=Decimal(opening), amount_paid=Decimal("0"),
                 balance=Decimal(opening), is_cleared=Decimal(opening) <= 0,
+                waive_notes=f"{OPENING_MARKER} at go-live.",
             )
         return tenant
 
@@ -165,13 +164,11 @@ class BackfillCommandTests(TestCase):
             phone="+254707575747", unit=unit, monthly_rent=Decimal("7000"),
             move_in_date="2026-01-01",
         )
-        post_opening_balances(
-            self.tenant, net_balance=Decimal("1000"), deposit=Decimal("0"), date=CUTOVER,
-        )
         Arrears.objects.create(
             tenant=self.tenant, period_month=6, period_year=2026,
             expected_rent=Decimal("1000"), amount_paid=Decimal("0"),
             balance=Decimal("1000"), is_cleared=False,
+            waive_notes=f"{OPENING_MARKER} at go-live.",
         )
 
     def _run(self, *args):

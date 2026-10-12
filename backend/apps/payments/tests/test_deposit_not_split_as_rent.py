@@ -228,8 +228,11 @@ def test_repair_leaves_the_gl_holding_only_the_deposit(miscoded):
     call_command("repair_deposit_miscoding", "--unit", "MCG07", "--apply", stdout=StringIO())
 
     # Both wrong entries reversed...
-    assert _lines("payment", payment_pk, "reversal")["4120"][0] == D("155172.41")
-    assert _lines("payment", payment_pk, "reversal")["2600"][0] == D("24827.59")
+    # (a receipt settles the tenant's account, so its reversal puts 1040 back;
+    # income and VAT were never touched by the cash)
+    reversal = _lines("payment", payment_pk, "reversal")
+    assert reversal["1040"][0] == payment.amount
+    assert "4120" not in reversal and "2600" not in reversal
     assert _lines("utility_charge", charge_pk, "reversal")["4150"][0] == DEPOSIT
 
     # ...and the deposit is the only thing left standing.

@@ -32,10 +32,10 @@ where the statement says 69,600 — which is why this survived review:
                             ────────
                               28,800     against a statement reading 69,600
 
-Arrears carry no journal entries — the books are cash-basis and ``post_arrear``
-is deliberately unwired (see ``ledger.posting``) — so removing a period is a
-pure subledger operation with no ledger reversal to make. Only the deposit
-reclassification touches the GL.
+Removing a period deletes its Arrears row, and the ledger signal reverses that
+row's rent charge (see ``ledger.posting``, arrears section) — so the GL follows
+without a step here. (When this ran the books were cash-basis and arrears
+carried no entries at all.)
 
 Safety
 ------

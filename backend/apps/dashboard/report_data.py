@@ -15,12 +15,10 @@ import calendar
 import datetime as _dt
 from decimal import Decimal
 
-from django.db.models import Case, DecimalField, F, Q, Sum, When
+from django.db.models import Count, Q, Sum
 from rest_framework.exceptions import ValidationError
 
-from apps.buildings.models import UnitClassification
 from apps.payments.models import Payment, PaymentType
-from apps.payments.tax_service import TAX_RATE_BUSINESS
 
 ZERO = Decimal("0.00")
 _CENT = Decimal("0.01")
@@ -31,12 +29,6 @@ _CENT = Decimal("0.01")
 # Voided payments are excluded everywhere: the money was unwound in the ledger,
 # so leaving them in would overstate every income and collection figure.
 INCOME_PAYMENT_FILTER = ~Q(payment_type=PaymentType.DEPOSIT) & Q(voided_at__isnull=True)
-
-_VAT_MULTIPLIER = Decimal("1") + TAX_RATE_BUSINESS
-_COMMERCIAL_RENT = Q(payment_type=PaymentType.RENT) & Q(
-    tenant__unit__classification=UnitClassification.BUSINESS
-)
-
 
 def money(value) -> Decimal:
     return (Decimal(value) if value is not None else ZERO).quantize(_CENT)
@@ -82,83 +74,85 @@ def previous_month(year: int, month: int) -> tuple[int, int]:
 
 # ── income ───────────────────────────────────────────────────────────────────
 
-def net_income_sum():
-    """Sum of payments recognised as income, net of VAT.
+#: Income accounts with a line of their own; every other income account
+#: (farm produce and the like) is listed by name under ``manual_income``.
+_RENT_RESIDENTIAL, _RENT_COMMERCIAL, _LATE_FEES = "4110", "4120", "4200"
+_OTHER_INCOME = ("4150", "4250")
 
-    Commercial rent is received VAT-inclusive, but the 16% is a liability owed
-    to KRA (booked to 2600 by the ledger), not income. Strip the VAT out of
-    commercial RENT so the payment-derived reports agree with the ledger;
-    residential rent, late fees and other income pass through unchanged.
-    Callers must still apply INCOME_PAYMENT_FILTER to exclude deposits.
-    """
-    return Sum(
-        Case(
-            When(_COMMERCIAL_RENT, then=F("amount") / _VAT_MULTIPLIER),
-            default=F("amount"),
-            output_field=DecimalField(max_digits=14, decimal_places=2),
-        )
+
+def _ledger_period(month: int, year: int, building_id):
+    """``{code: (account, debits, credits)}`` for the month, from the ledger."""
+    from apps.expenses.models import Account
+    from apps.ledger.models import JournalLine
+
+    lines = JournalLine.objects.filter(
+        entry__is_posted=True,
+        entry__date__gte=month_start(year, month),
+        entry__date__lte=month_end(year, month),
     )
+    if building_id:
+        lines = lines.filter(entry__building_id=building_id)
+    accounts = {a.code: a for a in Account.objects.filter(is_header=False)}
+    return {
+        row["account__code"]: (accounts[row["account__code"]], money(row["dr"]), money(row["cr"]), row["n"])
+        for row in lines.values("account__code").annotate(
+            dr=Sum("debit"), cr=Sum("credit"), n=Count("entry", distinct=True)
+        )
+    }
 
 
 def income_lines(month: int, year: int, *, building_id: int | None = None) -> dict:
     """Every component of a period's income, net of VAT, plus the memo figures.
 
-    ``total`` is what the P&L, the annual summary, the expense breakdown and the
-    landlord statement all print as income. Rent is on the period it pays for
-    (``period_month``/``period_year``), the same basis the ledger posts on.
+    Read from the general ledger, so it is the same income the Accounting page
+    reports: rent in the month it is billed, water and other charges, credit
+    notes already netted into the account they reduce, farm and other manual
+    income — never deposits, never VAT.
 
     Returns Decimals::
 
         residential_rent, commercial_rent, late_fees, other_income,
         manual_income  -> [(account name, amount), ...]  (farm produce etc.)
-        credit_adjustment  (credits applied − credit notes − refunded rent)
+        credit_adjustment  (always 0: credits sit inside the accounts above)
         total
         vat_collected, deposits_received   (memo: not income)
     """
-    from apps.expenses.models import ManualIncome
-    from apps.payments.reporting import income_adjustment
+    from apps.expenses.models import AccountType
 
-    payments = Payment.objects.filter(
-        voided_at__isnull=True, period_month=month, period_year=year
-    )
-    manual = ManualIncome.objects.filter(period_month=month, period_year=year)
-    if building_id:
-        payments = payments.filter(tenant__unit__building_id=building_id)
-        manual = manual.filter(building_id=building_id)
+    period = _ledger_period(month, year, building_id)
 
-    def _sum(qs):
-        return money(qs.aggregate(t=Sum("amount"))["t"])
+    def income(code):
+        _acct, dr, cr, _n = period.get(code, (None, ZERO, ZERO, 0))
+        return cr - dr
 
-    rent = payments.filter(payment_type=PaymentType.RENT)
-    residential = _sum(rent.exclude(tenant__unit__classification=UnitClassification.BUSINESS))
-    commercial_gross = _sum(rent.filter(tenant__unit__classification=UnitClassification.BUSINESS))
-    commercial = money(commercial_gross / _VAT_MULTIPLIER)
-    late_fees = _sum(payments.filter(payment_type=PaymentType.LATE_FEE))
-    other = _sum(payments.filter(payment_type=PaymentType.OTHER))
-    deposits = _sum(payments.filter(payment_type=PaymentType.DEPOSIT))
-
+    residential = income(_RENT_RESIDENTIAL)
+    commercial = income(_RENT_COMMERCIAL)
+    late_fees = income(_LATE_FEES)
+    other = sum((income(c) for c in _OTHER_INCOME), ZERO)
+    named = {_RENT_RESIDENTIAL, _RENT_COMMERCIAL, _LATE_FEES, *_OTHER_INCOME}
     manual_rows = [
-        (row["account__name"], money(row["t"]))
-        for row in manual.values("account__code", "account__name")
-        .annotate(t=Sum("amount"))
-        .order_by("account__code")
+        (acct.name, cr - dr)
+        for code, (acct, dr, cr, _n) in sorted(period.items())
+        if acct.account_type == AccountType.INCOME and code not in named and cr != dr
     ]
-    adjustment = money(income_adjustment(month, year, building_id=building_id))
+    total = residential + commercial + late_fees + other + sum((a for _, a in manual_rows), ZERO)
 
-    total = (
-        residential + commercial + late_fees + other
-        + sum((amount for _, amount in manual_rows), ZERO) + adjustment
+    deposits = Payment.objects.filter(
+        voided_at__isnull=True, payment_type=PaymentType.DEPOSIT,
+        payment_date__gte=month_start(year, month), payment_date__lte=month_end(year, month),
     )
+    if building_id:
+        deposits = deposits.filter(tenant__unit__building_id=building_id)
     return {
         "residential_rent": residential,
         "commercial_rent": commercial,
         "late_fees": late_fees,
         "other_income": other,
         "manual_income": manual_rows,
-        "credit_adjustment": adjustment,
+        "credit_adjustment": ZERO,
         "total": money(total),
-        "vat_collected": money(commercial_gross - commercial),
-        "deposits_received": deposits,
+        "vat_collected": income("2600"),
+        "deposits_received": money(deposits.aggregate(t=Sum("amount"))["t"]),
     }
 
 
@@ -167,31 +161,19 @@ def income_total(month: int, year: int, *, building_id: int | None = None) -> De
 
 
 def expense_by_category(month: int, year: int, *, building_id: int | None = None) -> list[dict]:
-    """``[{category, total, count}]`` — Expense rows plus costs tenants bore for us."""
-    from django.db.models import Count
+    """``[{category, total, count}]`` from the ledger, one row per expense account.
 
-    from apps.expenses.models import Expense
-    from apps.payments.reporting import expense_addition_rows
+    Every expense category posts to exactly one account of the same name (the
+    locked chart), and a cost a tenant paid for us posts there too.
+    """
+    from apps.expenses.models import AccountType
 
-    qs = Expense.objects.filter(period_month=month, period_year=year)
-    if building_id:
-        qs = qs.filter(building_id=building_id)
-    merged: dict[str, dict] = {}
-    for row in qs.values("category__name").annotate(total=Sum("amount"), count=Count("id")):
-        merged[row["category__name"]] = {
-            "category": row["category__name"],
-            "total": money(row["total"]),
-            "count": row["count"],
-        }
-    # Costs the tenant paid for us: a real expense of the category, recorded as
-    # a credit on their account rather than an Expense row.
-    for row in expense_addition_rows(month, year, building_id=building_id):
-        entry = merged.setdefault(
-            row["category"], {"category": row["category"], "total": ZERO, "count": 0}
-        )
-        entry["total"] += money(row["total"])
-        entry["count"] += row["count"]
-    return sorted(merged.values(), key=lambda r: (-r["total"], r["category"]))
+    rows = [
+        {"category": acct.name, "total": dr - cr, "count": n}
+        for _code, (acct, dr, cr, n) in _ledger_period(month, year, building_id).items()
+        if acct.account_type == AccountType.EXPENSE and dr != cr
+    ]
+    return sorted(rows, key=lambda r: (-r["total"], r["category"]))
 
 
 # ── rent roll for one month, many tenants ────────────────────────────────────

@@ -471,23 +471,51 @@ def billable_active_tenants(*select_related: str):
 def billing_floor() -> tuple[int, int] | None:
     """The first month the books charge rent for — the month after cutover.
 
-    The changeover posted one ``opening_ar`` journal entry per tenant carrying
-    everything owed up to that date, so rent accrues from the month after it.
-    Without this floor, catching up would walk back to each tenant's move-in and
-    re-bill years that the opening balance already settled.
+    Each tenant's opening position carries everything owed up to the changeover,
+    so rent accrues from the month after it. Without this floor, catching up
+    would walk back to each tenant's move-in and re-bill years that the opening
+    balance already settled.
 
-    None when no opening entries exist (a fresh install), in which case each
-    tenant is simply billed from their move-in month.
+    The cutover is the earliest month of anybody's opening position: an Arrears
+    row marked ``OPENING_MARKER`` or an earlier row of the same tenant (the
+    go-live load's June rows — see ``ledger.posting._is_opening``). The go-live
+    journal entries (``opening_ar``, ``opening_deposit``) are read too, so a
+    database whose opening rows were never marked still finds its cutover.
+
+    None when there is no opening position at all (a fresh install), in which
+    case each tenant is simply billed from their move-in month.
     """
+    from django.db.models import Exists, OuterRef, Q
+
     from apps.ledger.models import JournalEntry
 
-    cutover = (
-        JournalEntry.objects.filter(source_type="opening_ar")
+    from .models import Arrears
+    from .monthly_ledger import OPENING_MARKER
+
+    marked_later = Arrears.objects.filter(
+        Q(period_year__gt=OuterRef("period_year"))
+        | Q(period_year=OuterRef("period_year"), period_month__gte=OuterRef("period_month")),
+        tenant_id=OuterRef("tenant_id"),
+        waive_notes__contains=OPENING_MARKER,
+    )
+    candidates = []
+    first_opening_row = (
+        Arrears.objects.filter(Exists(marked_later))
+        .order_by("period_year", "period_month")
+        .values_list("period_year", "period_month")
+        .first()
+    )
+    if first_opening_row:
+        candidates.append(first_opening_row)
+    go_live = (
+        JournalEntry.objects.filter(source_type__in=("opening_ar", "opening_deposit"))
         .order_by("date")
         .values_list("date", flat=True)
         .first()
     )
-    return next_period(cutover.year, cutover.month) if cutover else None
+    if go_live:
+        candidates.append((go_live.year, go_live.month))
+    return next_period(*min(candidates)) if candidates else None
 
 
 def first_billable_period(tenant, floor) -> tuple[int, int] | None:
