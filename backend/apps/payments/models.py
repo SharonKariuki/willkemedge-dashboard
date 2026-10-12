@@ -281,9 +281,12 @@ class UtilityCharge(models.Model):
             # The meter form and the importer both update_or_create on these
             # four fields. Without the constraint two concurrent submissions
             # both find nothing, both insert, and the tenant pays twice.
+            # Metered charges only: hand-made charges (parking, damage, other
+            # costs) may legitimately repeat a label within a month.
             models.UniqueConstraint(
                 fields=["tenant", "period_year", "period_month", "label"],
-                name="unique_utility_charge_per_period",
+                condition=models.Q(closing_reading__isnull=False),
+                name="unique_metered_charge_per_period",
             ),
             models.CheckConstraint(
                 condition=models.Q(period_month__gte=1) & models.Q(period_month__lte=12), name="utility_charge_period_month_valid",

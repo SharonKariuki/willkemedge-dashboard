@@ -25,7 +25,7 @@ class Migration(migrations.Migration):
         ),
         migrations.AddConstraint(
             model_name='utilitycharge',
-            constraint=models.UniqueConstraint(fields=('tenant', 'period_year', 'period_month', 'label'), name='unique_utility_charge_per_period'),
+            constraint=models.UniqueConstraint(condition=models.Q(('closing_reading__isnull', False)), fields=('tenant', 'period_year', 'period_month', 'label'), name='unique_metered_charge_per_period'),
         ),
         migrations.AddConstraint(
             model_name='utilitycharge',

@@ -125,7 +125,7 @@ def violations(apps, *, limit: int = 10) -> list[dict]:
 
 
 def duplicate_utility_charges(apps, *, limit: int = 10) -> list[dict]:
-    """Rows that block the (tenant, period, label) uniqueness on UtilityCharge.
+    """Metered rows that block the (tenant, period, label) uniqueness.
 
     Both writers — the staff meter form and the spreadsheet importer — use
     ``update_or_create`` on exactly these four fields, so uniqueness is already
@@ -136,7 +136,8 @@ def duplicate_utility_charges(apps, *, limit: int = 10) -> list[dict]:
 
     UtilityCharge = apps.get_model("payments", "UtilityCharge")
     dupes = (
-        UtilityCharge.objects.values("tenant_id", "period_year", "period_month", "label")
+        UtilityCharge.objects.filter(closing_reading__isnull=False)
+        .values("tenant_id", "period_year", "period_month", "label")
         .annotate(n=Count("id"))
         .filter(n__gt=1)
         .order_by("-n")[:limit]

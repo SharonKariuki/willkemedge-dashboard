@@ -102,11 +102,23 @@ def test_a_second_water_charge_for_the_same_meter_and_month_is_refused(world):
     common = dict(
         tenant=world["tenant"], period_month=6, period_year=2026,
         label="Water Usage", posting_date=dt.date(2026, 6, 30),
+        opening_reading=Decimal("10"), closing_reading=Decimal("17"),
     )
     UtilityCharge.objects.create(amount=Decimal("1400"), **common)
 
     with pytest.raises(IntegrityError), transaction.atomic():
         UtilityCharge.objects.create(amount=Decimal("1400"), **common)
+
+
+def test_a_hand_made_charge_may_repeat_its_label_in_a_month(world):
+    """Two parking or damage charges in one month are real (#305); no reading, no rule."""
+    common = dict(
+        tenant=world["tenant"], period_month=6, period_year=2026,
+        label="Repairs", posting_date=dt.date(2026, 6, 30),
+    )
+    UtilityCharge.objects.create(amount=Decimal("1500"), **common)
+    second = UtilityCharge.objects.create(amount=Decimal("800"), **common)
+    assert second.pk
 
 
 def test_a_different_meter_in_the_same_month_is_fine(world):
