@@ -477,12 +477,20 @@ export function EmailStatementsModal({
         <div className="max-h-56 overflow-y-auto rounded-md hairline p-2">
           <div className="grid gap-1">
             {tenants.map((t) => (
-              <div key={t.id} className="flex items-center justify-between gap-2 px-2 py-1 text-xs">
+              // min-w-0 on the row too: as a grid item it defaults to
+              // min-width:auto, so without it the row refuses to shrink and the
+              // address is clipped mid-word by the scroll container instead of
+              // truncating with an ellipsis.
+              <div key={t.id} className="flex min-w-0 items-center justify-between gap-2 px-2 py-1 text-xs">
                 <span className="min-w-0 truncate font-medium text-ink-900 dark:text-white">
                   {t.full_name}
                   <span className="ml-1 font-normal text-ink-400">· {t.unit_label}</span>
                 </span>
-                <span className="shrink-0 truncate text-ink-500">{t.email}</span>
+                {/* Both halves shrink: a long address used to be clipped mid-word
+                    with no ellipsis, so you could not tell it was truncated. */}
+                <span className="min-w-0 shrink truncate text-right text-ink-500" title={t.email}>
+                  {t.email}
+                </span>
               </div>
             ))}
           </div>
