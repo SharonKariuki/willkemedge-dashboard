@@ -11,9 +11,14 @@ and exits cleanly, so it is harmless to leave in a deploy step.
 
 Usage:
     python manage.py change_login_email \
-        --from william@gmail.com --to wilkem.ventures@gmail.com
+        --from william@gmail.com --to owner.personal@gmail.com
     python manage.py change_login_email \
-        --from william@gmail.com --to wilkem.ventures@gmail.com --apply
+        --from william@gmail.com --to owner.personal@gmail.com --apply
+
+Never point a login at EMAIL_HOST_USER (wilkem.ventures@gmail.com). The app
+holds that mailbox's app password, which reads IMAP as well as sending SMTP,
+so anyone who can read the env vars could open the reset link and take the
+account.
 
 If --from is omitted the command targets the single superuser, and refuses
 to guess when there is more than one.
