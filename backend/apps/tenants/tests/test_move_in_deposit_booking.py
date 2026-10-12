@@ -123,6 +123,16 @@ class MoveInDepositBookingTests(APITestCase):
         assert str(payment.payment_date) == "2026-09-01"
         assert payment.source == PaymentSource.CASH
 
+    def test_a_blank_deposit_date_falls_back_to_the_move_in_date(self):
+        # The dashboard's date box sends "" when left empty; DRF used to reject
+        # that as "Date has wrong format" and block the whole registration.
+        unit = self._vacant("WED1G", "20000")
+
+        response = self._register(unit, deposit_date="")
+
+        assert response.status_code == status.HTTP_201_CREATED, response.data
+        assert str(Payment.objects.get().payment_date) == "2026-09-01"
+
     def test_a_deposit_cannot_predate_the_move_in(self):
         unit = self._vacant("WED1F", "20000")
 

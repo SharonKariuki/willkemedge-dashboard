@@ -77,12 +77,31 @@ describe("DatePicker", () => {
   it("holds nothing until the date is finished", async () => {
     const user = userEvent.setup();
     const onSubmitted = vi.fn();
-    render(<RegisteredForm onSubmitted={onSubmitted} />);
+    const { container } = render(<RegisteredForm onSubmitted={onSubmitted} />);
 
     await user.type(box(), "01/10");
+    // Not "2026-01-10", not a guess — the field holds nothing yet.
+    expect(container.querySelector<HTMLInputElement>('input[name="when"]')!.value).toBe("");
+    // And the form will not go out with it: an unfinished date on an optional
+    // field used to reach the API as "" and come back "Date has wrong format".
     await user.click(screen.getByRole("button", { name: "Save" }));
-    // Not "2026-01-10", not a guess — a required-field check should read this
-    // as "not filled in yet".
+    expect(onSubmitted).not.toHaveBeenCalled();
+    expect(box()).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByText(/full date as dd\/mm\/yyyy/)).toBeInTheDocument();
+  });
+
+  it("refuses a two-digit year rather than sending a blank", async () => {
+    const user = userEvent.setup();
+    const onSubmitted = vi.fn();
+    render(<RegisteredForm onSubmitted={onSubmitted} />);
+
+    await user.type(box(), "01/10/26");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(onSubmitted).not.toHaveBeenCalled();
+
+    await user.clear(box());
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    // Emptied again, it is simply blank — that is allowed.
     expect(onSubmitted.mock.calls[0][0].when).toBe("");
   });
 
