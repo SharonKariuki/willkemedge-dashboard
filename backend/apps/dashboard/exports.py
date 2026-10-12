@@ -21,6 +21,8 @@ from decimal import Decimal
 from django.http import HttpResponse
 from django.utils import timezone
 
+from apps.common.csv_safety import csv_safe
+
 FORMATS = {
     "csv": ("text/csv; charset=utf-8", "csv"),
     "xlsx": ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "xlsx"),
@@ -83,29 +85,48 @@ def _stamp() -> str:
     return timezone.localtime().strftime("%d %b %Y %H:%M")
 
 
+def _xlsx_cell(ws, row: int, column: int, value):
+    """Write a cell, keeping text that starts with ``=`` as text.
+
+    openpyxl stores any string beginning ``=`` as a live formula, so a tenant
+    name or description typed as ``=HYPERLINK(...)`` would run when the
+    workbook is opened. Unlike CSV, Excel keeps a cell's type, so storing it
+    as a string is enough and the value reads exactly as typed.
+    """
+    cell = ws.cell(row=row, column=column, value=value)
+    if isinstance(value, str) and value.startswith("="):
+        cell.data_type = "s"
+    return cell
+
+
 # ── CSV ──────────────────────────────────────────────────────────────────────
 
 def to_csv(sheet: Sheet) -> bytes:
     out = io.StringIO()
     writer = csv.writer(out)
-    writer.writerow([f"{COMPANY} — {sheet.title}"])
+    # Text cells go through csv_safe so a spreadsheet cannot execute them.
+    # Money and dates are left alone: they are not text, and a negative figure
+    # must stay a number.
+    writer.writerow([csv_safe(f"{COMPANY} — {sheet.title}")])
     for line in sheet.subtitle:
-        writer.writerow([line])
+        writer.writerow([csv_safe(line)])
     writer.writerow([f"Printed {_stamp()}"])
     writer.writerow([])
-    writer.writerow([c.label for c in sheet.columns])
+    writer.writerow([csv_safe(c.label) for c in sheet.columns])
     for row in sheet.rows:
         cells = []
         for c in sheet.columns:
             value = _plain(row.get(c.key), c.kind)
             if isinstance(value, _dt.date):
                 value = value.isoformat()
+            elif c.kind not in ("money", "number"):
+                value = csv_safe(value)
             cells.append(value)
         writer.writerow(cells)
     if sheet.notes:
         writer.writerow([])
         for note in sheet.notes:
-            writer.writerow([note])
+            writer.writerow([csv_safe(note)])
     # BOM so Excel opens the UTF-8 (KES, em dashes, names) correctly.
     return ("﻿" + out.getvalue()).encode("utf-8")
 
@@ -122,17 +143,17 @@ def to_xlsx(sheet: Sheet) -> bytes:
     ws.title = re.sub(r"[\[\]:*?/\\]", "", sheet.title)[:31] or "Report"
 
     ncols = len(sheet.columns)
-    ws.cell(row=1, column=1, value=f"{COMPANY} — {sheet.title}").font = Font(bold=True, size=14)
+    _xlsx_cell(ws, 1, 1, f"{COMPANY} — {sheet.title}").font = Font(bold=True, size=14)
     r = 2
     for line in [*sheet.subtitle, f"Printed {_stamp()}"]:
-        ws.cell(row=r, column=1, value=line).font = Font(color="636776", size=10)
+        _xlsx_cell(ws, r, 1, line).font = Font(color="636776", size=10)
         r += 1
     r += 1
 
     header_row = r
     header_fill = PatternFill("solid", fgColor="F0EDE5")
     for i, col in enumerate(sheet.columns, start=1):
-        cell = ws.cell(row=r, column=i, value=col.label)
+        cell = _xlsx_cell(ws, r, i, col.label)
         cell.font = Font(bold=True, color="404554")
         cell.fill = header_fill
         cell.alignment = Alignment(horizontal="right" if col.kind in ("money", "number") else "left")
@@ -152,7 +173,7 @@ def to_xlsx(sheet: Sheet) -> bytes:
             value = _plain(row.get(col.key), col.kind)
             if isinstance(value, Decimal):
                 value = float(value)
-            cell = ws.cell(row=r, column=i, value=value if value != "" else None)
+            cell = _xlsx_cell(ws, r, i, value if value != "" else None)
             if col.kind == "money":
                 cell.number_format = '#,##0.00;(#,##0.00);"-"'
             elif col.kind == "date" and isinstance(value, _dt.date):
@@ -168,7 +189,7 @@ def to_xlsx(sheet: Sheet) -> bytes:
     if sheet.notes:
         r += 1
         for note in sheet.notes:
-            ws.cell(row=r, column=1, value=note).font = Font(italic=True, color="636776", size=9)
+            _xlsx_cell(ws, r, 1, note).font = Font(italic=True, color="636776", size=9)
             r += 1
 
     for i, col in enumerate(sheet.columns, start=1):

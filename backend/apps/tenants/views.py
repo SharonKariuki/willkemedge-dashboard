@@ -236,6 +236,8 @@ class TenantViewSet(viewsets.ModelViewSet):
 
         from django.http import HttpResponse
 
+        from apps.common.csv_safety import csv_safe_row
+
         qs = self._walk_order(self.get_queryset())
         balances = rent_roll_balances(qs)
         response = HttpResponse(content_type="text/csv")
@@ -246,10 +248,14 @@ class TenantViewSet(viewsets.ModelViewSet):
             balance = balances.get(t.pk, Decimal("0.00"))
             arrears_balance = getattr(t, "outstanding_balance", None) or 0
             payment_status = "In Arrears" if arrears_balance > 0 else "Paid"
+            # Name, building and unit are typed in by staff, so a spreadsheet
+            # could execute them. The balance is a string from _money and must
+            # stay out of csv_safe, or a credit (-500.00) would become text.
+            name, building, unit = csv_safe_row([t.full_name, t.unit.building.name, t.unit.label])
             writer.writerow([
-                t.full_name,
-                t.unit.building.name,
-                t.unit.label,
+                name,
+                building,
+                unit,
                 _money(balance),
                 payment_status,
                 t.get_status_display(),
