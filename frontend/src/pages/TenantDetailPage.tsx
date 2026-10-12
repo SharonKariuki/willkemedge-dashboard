@@ -581,7 +581,7 @@ export default function TenantDetailPage() {
             <THead>
               <TR>
                 <TH>Date</TH><TH>Period</TH><TH>Method</TH><TH>Reference</TH><TH className="text-right">Amount</TH>
-                {canManageCredit && <TH><span className="sr-only">Actions</span></TH>}
+                {canManageCredit && <TH aria-label="Actions" />}
               </TR>
             </THead>
             <TBody>
