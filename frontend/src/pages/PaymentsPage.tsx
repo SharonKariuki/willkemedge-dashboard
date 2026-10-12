@@ -1,7 +1,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Banknote, Building2, CreditCard, Eye, EyeOff, FileText, Mail, Plus, Smartphone, Undo2, UserPlus, Wallet, X } from "lucide-react";
 
-import { cloneElement, isValidElement, useId, useState } from "react";
+import { cloneElement, isValidElement, useId, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import toast from "react-hot-toast";
 import { Link } from "react-router-dom";
@@ -24,6 +24,8 @@ import {
   THead,
   TR,
 } from "@/components/ui";
+import { TenantPicker } from "@/features/payments/TenantPicker";
+import { toChoices } from "@/features/payments/tenantChoices";
 import { VoidPaymentModal } from "@/features/payments/VoidPaymentModal";
 import { useAuth } from "@/hooks/useAuth";
 import {
@@ -121,6 +123,7 @@ function Field({
 
 export default function PaymentsPage() {
   const [sourceFilter, setSourceFilter] = useState("");
+  const [tenantFilter, setTenantFilter] = useState<number | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [showVoided, setShowVoided] = useState(false);
   const [voidTarget, setVoidTarget] = useState<Payment | null>(null);
@@ -151,6 +154,7 @@ export default function PaymentsPage() {
   const filters: Record<string, string> = {};
 
   if (sourceFilter) filters.source = sourceFilter;
+  if (tenantFilter) filters.tenant = String(tenantFilter);
   // Voided rows are hidden by default so the list agrees with arrears and the
   // ledger; the toggle brings them back for audit.
   if (showVoided) filters.include_void = "true";
@@ -159,6 +163,10 @@ export default function PaymentsPage() {
   const { data: progress } = useCollectionProgress();
   const { data: tenants, isLoading: tenantsLoading } = useTenants({ status: "active" });
   const createPayment = useCreatePayment();
+  // The filter searches every tenancy, not just active ones: a payment that
+  // needs voiding may sit on a tenant who has since given notice or moved out.
+  const { data: allTenants } = useTenants();
+  const tenantChoices = useMemo(() => toChoices(allTenants), [allTenants]);
 
   const hasTenants = (tenants?.length ?? 0) > 0;
 
@@ -364,11 +372,31 @@ export default function PaymentsPage() {
             );
           })}
         </div>
+        <div className="ml-auto flex items-center gap-1.5">
+          <div className="w-64 max-w-full">
+            <TenantPicker
+              choices={tenantChoices}
+              value={tenantFilter}
+              onChange={setTenantFilter}
+              ariaLabel="Filter payments by tenant"
+            />
+          </div>
+          {tenantFilter && (
+            <button
+              onClick={() => setTenantFilter(null)}
+              className="rounded-full p-1.5 text-ink-500 transition-colors hover:bg-ink-100 hover:text-ink-900"
+              title="Clear tenant filter"
+              aria-label="Clear tenant filter"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
         <button
           onClick={() => setShowVoided((v) => !v)}
           aria-pressed={showVoided}
           className={cn(
-            "ml-auto inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-all",
+            "inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-all",
             showVoided
               ? "bg-ink-900 text-canvas shadow-float dark:bg-ink-100 dark:text-canvas"
               : "glass text-ink-700"
@@ -399,8 +427,12 @@ export default function PaymentsPage() {
         <Card variant="glass" padding="none" className="py-4">
           <EmptyState
             icon={<CreditCard className="h-5 w-5" />}
-            title="No payments yet"
-            description="Recorded payments will appear here."
+            title={tenantFilter ? "No payments for this tenant" : "No payments yet"}
+            description={
+              tenantFilter
+                ? "Nothing recorded against this tenant matches the current filters."
+                : "Recorded payments will appear here."
+            }
           />
         </Card>
       ) : (

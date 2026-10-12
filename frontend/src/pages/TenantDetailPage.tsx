@@ -7,7 +7,7 @@
  * and a rent reminder (SMS / Email).
  */
 import { zodResolver } from "@hookform/resolvers/zod";
-import { AlertTriangle, ArrowLeft, BellRing, Download, History, LogIn, LogOut, Mail, Pencil, Phone, Plus, Send } from "lucide-react";
+import { AlertTriangle, ArrowLeft, BellRing, Download, History, LogIn, LogOut, Mail, Pencil, Phone, Plus, Send, Undo2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import toast from "react-hot-toast";
@@ -19,11 +19,13 @@ import {
   Table, TBody, TD, TH, THead, TR,
 } from "@/components/ui";
 import { CreditsPanel } from "@/features/credits/CreditsPanel";
+import { VoidPaymentModal } from "@/features/payments/VoidPaymentModal";
 import { MoveInAgainForm } from "@/features/tenants/MoveInAgainForm";
 import { SpacePanel } from "@/features/tenants/SpacePanel";
 import { Field, KycPanel, RemindModal, inputCls } from "@/features/tenants/shared";
 import { useAuth } from "@/hooks/useAuth";
 import { useCreditPosition } from "@/hooks/useCredits";
+import type { Payment } from "@/hooks/usePayments";
 import {
   useEmailStatement, usePaymentHistory, useMoveOutNotice, useMoveOutTenant, useTenant,
   useUpdateTenant,
@@ -166,6 +168,8 @@ export default function TenantDetailPage() {
   // privilege as waiving arrears or voiding a payment.
   const { user } = useAuth();
   const canManageCredit = Boolean(user?.can_forgive_money);
+  // Voiding is owner-only on the API (CanForgiveMoney), same as credits.
+  const [voidTarget, setVoidTarget] = useState<Payment | null>(null);
   const { data: creditPosition } = useCreditPosition(id ?? null);
   const refundable = Number(creditPosition?.refundable ?? 0);
   const creditsHeld = Number(creditPosition?.credits_held ?? 0);
@@ -575,7 +579,10 @@ export default function TenantDetailPage() {
         {history?.payments.length ? (
           <Table minWidth={720}>
             <THead>
-              <TR><TH>Date</TH><TH>Period</TH><TH>Method</TH><TH>Reference</TH><TH className="text-right">Amount</TH></TR>
+              <TR>
+                <TH>Date</TH><TH>Period</TH><TH>Method</TH><TH>Reference</TH><TH className="text-right">Amount</TH>
+                {canManageCredit && <TH><span className="sr-only">Actions</span></TH>}
+              </TR>
             </THead>
             <TBody>
               {history.payments.map((p) => (
@@ -585,6 +592,38 @@ export default function TenantDetailPage() {
                   <TD><Badge tone="neutral">{p.source || "—"}</Badge></TD>
                   <TD className="font-mono text-xs text-content-muted">{p.reference || "—"}</TD>
                   <TD className="text-right font-medium tabular-nums text-content">{KES(p.amount)}</TD>
+                  {canManageCredit && (
+                    <TD className="text-right">
+                      <button
+                        type="button"
+                        onClick={() => setVoidTarget({
+                          id: p.id,
+                          tenant: tenant.id,
+                          tenant_name: tenant.full_name,
+                          unit_label: tenant.unit_label,
+                          building_name: tenant.building_name,
+                          amount: p.amount,
+                          payment_date: p.payment_date,
+                          period_month: p.period_month,
+                          period_year: p.period_year,
+                          source: p.source,
+                          source_display: p.source,
+                          payment_type: "",
+                          reference: p.reference,
+                          notes: "",
+                          is_void: false,
+                          voided_at: null,
+                          void_reason: "",
+                          created_at: "",
+                        })}
+                        className="inline-flex items-center gap-1 rounded px-1.5 py-1 text-xs font-medium text-ink-500 transition-colors hover:bg-danger-soft hover:text-danger"
+                        title="Void this payment"
+                        aria-label={`Void payment of KES ${p.amount} on ${toDayFirst(p.payment_date)}`}
+                      >
+                        <Undo2 className="h-3.5 w-3.5" /> Void
+                      </button>
+                    </TD>
+                  )}
                 </TR>
               ))}
             </TBody>
@@ -593,6 +632,10 @@ export default function TenantDetailPage() {
           <p className="px-5 py-6 text-sm text-content-muted">No payments recorded yet.</p>
         )}
       </Card>
+
+      {voidTarget && (
+        <VoidPaymentModal payment={voidTarget} onClose={() => setVoidTarget(null)} />
+      )}
 
       {/* Combined commercial space — the units this tenancy occupies. Changing
           it moves the rent, so it takes the record-money privilege. */}
