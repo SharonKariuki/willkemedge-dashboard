@@ -467,10 +467,18 @@ class TenantDetailPaymentFieldsTests(APITestCase):
         body = self.client.get(f"/api/tenants/{self.tenant.pk}/").json()
         assert Decimal(body["total_paid"]) == Decimal("6000.00")
 
-    def test_payment_history_excludes_voided(self):
+    def test_payment_history_total_excludes_voided(self):
         body = self.client.get(f"/api/tenants/{self.tenant.pk}/payment-history/").json()
         assert Decimal(body["total_paid"]) == Decimal("6000.00")
-        assert [Decimal(p["amount"]) for p in body["payments"]] == [Decimal("6000.00")]
+
+    def test_payment_history_lists_voided_flagged(self):
+        """A void must show on the tenant it came off, marked as such."""
+        body = self.client.get(f"/api/tenants/{self.tenant.pk}/payment-history/").json()
+        rows = [(Decimal(p["amount"]), p["is_void"], p["void_reason"]) for p in body["payments"]]
+        assert rows == [
+            (Decimal("4000.00"), True, "duplicate capture"),
+            (Decimal("6000.00"), False, ""),
+        ]
 
 
 class TenantClassificationExposureTests(APITestCase):
