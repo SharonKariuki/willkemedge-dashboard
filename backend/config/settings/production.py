@@ -7,6 +7,18 @@ from .base import *  # noqa: F401,F403
 DEBUG = False
 
 SECRET_KEY = config("DJANGO_SECRET_KEY")
+# The key signs every JWT. `config()` with no default stops a MISSING key, but
+# not a short one or the development placeholder, and a weak HMAC key means
+# forgeable access tokens. The floor is 32 characters, not Django's 50: the live
+# key is 44 (32 random bytes, base64), which is strong, and a floor above it
+# would stop the service from booting — taking the Co-op IPN endpoint down.
+if len(SECRET_KEY) < 32 or SECRET_KEY.startswith("insecure-"):
+    raise RuntimeError(
+        "DJANGO_SECRET_KEY must be at least 32 random characters in production "
+        "and must not be the development placeholder. Generate one with:\n"
+        "  python -c \"from django.core.management.utils import "
+        'get_random_secret_key as k; print(k())"'
+    )
 ALLOWED_HOSTS = config("DJANGO_ALLOWED_HOSTS", cast=Csv())
 
 DATABASE_URL = config("DATABASE_URL", default="")

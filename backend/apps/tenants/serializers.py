@@ -372,10 +372,18 @@ class MoveOutNoticeSerializer(serializers.Serializer):
 
 
 class MoveOutSerializer(serializers.Serializer):
-    """Finalise move-out."""
+    """Finalise move-out.
+
+    The refund percentage is bounded 0..100. `max_digits=5` alone accepted
+    999.99, and the view multiplies `deposit_paid` by it — a typo could have
+    authorised a refund of nine times the deposit held.
+    """
     move_out_date = serializers.DateField(required=False)
     notes = serializers.CharField(required=False, allow_blank=True, default="")
-    deposit_refund_percentage = serializers.DecimalField(max_digits=5, decimal_places=2, required=False, default=100)
+    deposit_refund_percentage = serializers.DecimalField(
+        max_digits=5, decimal_places=2, required=False, default=100,
+        min_value=Decimal("0"), max_value=Decimal("100"),
+    )
 
 
 # What a returning tenant's new letting is made of. Everything else — who they
