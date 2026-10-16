@@ -9,7 +9,7 @@ class Migration(migrations.Migration):
     dependencies = [
         # Runs only after the pre-flight has confirmed live data already complies.
         ('buildings', '0013_financial_invariant_preflight'),
-        ('payments', '0020_deposit_receipts_carry_no_vat'),
+        ('payments', '0021_merge_deposit_vat_and_charge_type'),
         ('tenants', '0009_tenant_tenant_monthly_rent_non_negative_and_more'),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
