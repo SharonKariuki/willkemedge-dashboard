@@ -160,6 +160,26 @@ class Tenant(models.Model):
                 condition=models.Q(status__in=["active", "notice_given"]),
                 name="tenant_id_number_unique_while_current",
             ),
+            models.CheckConstraint(
+                condition=models.Q(monthly_rent__gte=0),
+                name="tenant_monthly_rent_non_negative",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(deposit_paid__gte=0),
+                name="tenant_deposit_paid_non_negative",
+            ),
+            # The reminder run builds date(year, month, due_day); a zero raises
+            # and takes the run down for every tenant.
+            models.CheckConstraint(
+                condition=models.Q(due_day__gte=1) & models.Q(due_day__lte=31),
+                name="tenant_due_day_valid",
+            ),
+            # The move-out view multiplies deposit_paid by this.
+            models.CheckConstraint(
+                condition=models.Q(deposit_refund_percentage__gte=0)
+                & models.Q(deposit_refund_percentage__lte=100),
+                name="tenant_deposit_refund_percentage_valid",
+            ),
         ]
 
     def __str__(self) -> str:

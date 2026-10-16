@@ -52,12 +52,12 @@ async function refreshAccessToken(): Promise<string | null> {
   if (!refresh) return null;
 
   try {
-    const { data } = await axios.post<{ access: string }>(
+    const { data } = await axios.post<{ access: string; refresh?: string }>(
       `${baseURL}/auth/refresh/`,
       { refresh },
       { timeout: 10_000 }
     );
-    authStorage.setAccess(data.access);
+    authStorage.setTokens(data.access, data.refresh);
     return data.access;
   } catch {
     authStorage.clear();
