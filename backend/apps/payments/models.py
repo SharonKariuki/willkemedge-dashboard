@@ -126,6 +126,16 @@ class Payment(models.Model):
                 condition=~models.Q(idempotency_key=""),
                 name="unique_payment_idempotency_key_per_tenant",
             ),
+            # Every write path already rejects a non-positive amount; this makes
+            # it structural, so a management command, an admin save or a psql
+            # session cannot book a zero or negative receipt either.
+            models.CheckConstraint(
+                condition=models.Q(amount__gt=0), name="payment_amount_positive",
+            ),
+            # A payment filed to month 13 vanishes from every period report.
+            models.CheckConstraint(
+                condition=models.Q(period_month__gte=1) & models.Q(period_month__lte=12), name="payment_period_month_valid",
+            ),
         ]
 
     def __str__(self) -> str:
@@ -300,6 +310,22 @@ class UtilityCharge(models.Model):
         ordering = ["-posting_date", "-id"]
         indexes = [
             models.Index(fields=["tenant", "period_year", "period_month"]),
+        ]
+        constraints = [
+            # The meter form and the importer both update_or_create on these
+            # four fields. Without the constraint two concurrent submissions
+            # both find nothing, both insert, and the tenant pays twice.
+            # Metered charges only: hand-made charges (parking, damage, other
+            # costs) may legitimately repeat a label within a month.
+            models.UniqueConstraint(
+                fields=["tenant", "period_year", "period_month", "label"],
+                condition=models.Q(closing_reading__isnull=False),
+                name="unique_metered_charge_per_period",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(period_month__gte=1) & models.Q(period_month__lte=12), name="utility_charge_period_month_valid",
+            ),
+            # No amount rule: a negative UtilityCharge is a credit line.
         ]
 
     def __str__(self) -> str:
