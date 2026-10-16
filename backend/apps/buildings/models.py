@@ -212,6 +212,12 @@ class Unit(models.Model):
             # payment reference like '90290#DON1A' maps to exactly one unit on any
             # channel — no ambiguity for the matcher to guess at.
             models.UniqueConstraint(Upper("label"), name="unique_unit_label_global"),
+            # adjust-rent rewrites this across a whole building at once; a
+            # negative rent inverts every obligation derived from it.
+            models.CheckConstraint(
+                condition=models.Q(monthly_rent__gte=0),
+                name="unit_monthly_rent_non_negative",
+            ),
         ]
 
     def __str__(self) -> str:
