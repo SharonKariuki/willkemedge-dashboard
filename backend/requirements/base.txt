@@ -1,6 +1,9 @@
 # Core
-Django>=5.1,<5.2
-djangorestframework>=3.15
+Django>=5.2.18,<5.3
+# <3.18: 3.18 stops validating conditional UniqueConstraints whose condition
+# field is not on the serializer (tenant_id_number_unique_while_current), so a
+# duplicate ID number reaches the database as a 500 instead of a 400.
+djangorestframework>=3.15,<3.18
 djangorestframework-simplejwt>=5.3
 django-cors-headers>=4.4
 
