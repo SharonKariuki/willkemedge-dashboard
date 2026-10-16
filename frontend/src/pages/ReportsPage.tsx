@@ -1050,8 +1050,8 @@ function TrialBalanceTab() {
     <ReportCard
       title={<span className="flex items-center gap-3">Trial Balance
         {data && <Badge tone={data.is_balanced ? "sage" : "coral"} withDot>{data.is_balanced ? "Balanced" : "Unbalanced"}</Badge>}</span>}
-      summary={`${periodLabel(month, year)} · from the general ledger`}
-      exportBar={<ExportBar title={`Trial Balance ${periodLabel(month, year)}`} filename={`trial-balance-${year}-${month}`}
+      summary={`${periodLabel(month, year)} · debits and credits posted in the month, from the general ledger`}
+      exportBar={<ExportBar title={`Trial Balance (movements) ${periodLabel(month, year)}`} filename={`trial-balance-${year}-${month}`}
         cols={TB_COLS} rows={data?.accounts ?? []} footer={footer} />}
       filters={<FilterBar>
         <MonthYearPicker month={month} year={year} onMonth={setMonth} onYear={setYear} />
