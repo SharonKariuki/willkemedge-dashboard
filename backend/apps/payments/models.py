@@ -231,6 +231,21 @@ class Arrears(models.Model):
 # UtilityCharge — water / electricity / other monthly usage billed to a tenant
 # ---------------------------------------------------------------------------
 
+class ChargeType(models.TextChoices):
+    """What a non-rent charge is for — decides the account it is booked to.
+
+    Every type maps onto an account already in the auditor-locked chart, so
+    adding one here never needs a new account (see ``charge_account_code``).
+    """
+
+    UTILITY = "utility", "Water, electricity or service charge"
+    LATE_FEE = "late_fee", "Late payment penalty"
+    PARKING = "parking", "Parking"
+    # A cost the landlord paid and the tenant owes back. Booked against the
+    # expense it recovers, the mirror of a "tenant paid for a repair" credit.
+    DAMAGE = "damage", "Damage or repair recharge"
+
+
 class UtilityCharge(models.Model):
     """
     A non-rent charge that appears on the tenant's statement ledger.
@@ -242,7 +257,26 @@ class UtilityCharge(models.Model):
     Meter readings are stored on the charge but deliberately kept off the
     statement: the tenant-facing document shows the consumption and what it
     cost, not the raw dial figures behind it.
+
+    Despite the name it carries every non-rent debit — penalties, parking and
+    damage recharges too, told apart by ``charge_type``. They all sit in the
+    statement's "Other Charges" and the rent roll the same way water does.
     """
+
+    charge_type = models.CharField(
+        max_length=20, choices=ChargeType.choices, default=ChargeType.UTILITY,
+        help_text="What the charge is for; decides the income or expense account.",
+    )
+    expense_category = models.ForeignKey(
+        "expenses.ExpenseCategory", on_delete=models.PROTECT, null=True, blank=True,
+        related_name="tenant_charges",
+        help_text="Damage/repair recharges only: the expense the charge recovers.",
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="+",
+        help_text="Who added the charge by hand. Blank for meter readings and imports.",
+    )
 
     tenant = models.ForeignKey(
         Tenant,
