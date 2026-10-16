@@ -7,6 +7,7 @@ from rest_framework_simplejwt.views import TokenRefreshView
 
 from . import audit
 from .serializers import (
+    ChangePasswordSerializer,
     LoginSerializer,
     LogoutSerializer,
     PasswordResetConfirmSerializer,
@@ -87,6 +88,61 @@ class LogoutView(APIView):
         return Response(status=status.HTTP_205_RESET_CONTENT)
 
 
+def _blacklist_all_refresh_tokens(user) -> None:
+    """Invalidate every outstanding refresh token for a user.
+
+    Called after a password change so a session opened with the OLD password —
+    an attacker's, if that is why the password is being changed — cannot be
+    refreshed back to life. The caller is issued a fresh pair so the person who
+    made the change stays signed in.
+    """
+    from rest_framework_simplejwt.token_blacklist.models import (
+        BlacklistedToken,
+        OutstandingToken,
+    )
+
+    for outstanding in OutstandingToken.objects.filter(user=user):
+        BlacklistedToken.objects.get_or_create(token=outstanding)
+
+
+class ChangePasswordView(APIView):
+    """POST /api/auth/change-password/ — change your own password.
+
+    Body: {"current_password": "...", "new_password": "..."}
+
+    This is the routine way to change a password, and the only one with no
+    email in the loop: nothing is mailed, so there is no link to intercept.
+    The route was missing entirely, so the Settings page posted here and got
+    a 404 — the reason no one could change a password from the application.
+
+    The change invalidates every outstanding refresh token and returns a fresh
+    pair, so other sessions are signed out while the caller is not.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        from rest_framework_simplejwt.tokens import RefreshToken
+
+        serializer = ChangePasswordSerializer(
+            data=request.data, context={"user": request.user}
+        )
+        serializer.is_valid(raise_exception=True)
+
+        user = request.user
+        user.set_password(serializer.validated_data["new_password"])
+        user.save(update_fields=["password"])
+
+        _blacklist_all_refresh_tokens(user)
+        refresh = RefreshToken.for_user(user)
+
+        return Response({
+            "detail": "Password updated. Other sessions have been signed out.",
+            "access": str(refresh.access_token),
+            "refresh": str(refresh),
+        })
+
+
 class MeView(APIView):
     """GET /api/auth/me/ — return current authenticated user."""
     permission_classes = [IsAuthenticated]
@@ -142,11 +198,6 @@ class PasswordResetConfirmView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request, *args, **kwargs):
-        from rest_framework_simplejwt.token_blacklist.models import (
-            BlacklistedToken,
-            OutstandingToken,
-        )
-
         from .models import PasswordResetToken
 
         # Validate shape + password strength via the serializer.
@@ -189,8 +240,7 @@ class PasswordResetConfirmView(APIView):
         token_obj.save(update_fields=["used"])
 
         # Blacklist all outstanding JWT refresh tokens for this user.
-        for outstanding in OutstandingToken.objects.filter(user=user):
-            BlacklistedToken.objects.get_or_create(token=outstanding)
+        _blacklist_all_refresh_tokens(user)
 
         _record_auth("auth.password_reset", "Reset password from an emailed link", user.email, actor=user)
         return Response({"detail": "Password updated successfully."})

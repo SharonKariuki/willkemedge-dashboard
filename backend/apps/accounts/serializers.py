@@ -91,6 +91,36 @@ class PasswordResetRequestSerializer(serializers.Serializer):
     email = serializers.EmailField()
 
 
+class ChangePasswordSerializer(serializers.Serializer):
+    """Change the password of the signed-in account.
+
+    The current password is required even though the caller is already
+    authenticated: a stolen access token should not be enough to take permanent
+    ownership of the account.
+    """
+
+    current_password = serializers.CharField(write_only=True, trim_whitespace=False)
+    new_password = serializers.CharField(write_only=True, min_length=12, trim_whitespace=False)
+
+    def validate_current_password(self, value):
+        user = self.context["user"]
+        if not user.check_password(value):
+            raise serializers.ValidationError("Current password is incorrect.")
+        return value
+
+    def validate_new_password(self, value):
+        from django.contrib.auth.password_validation import validate_password
+        validate_password(value, user=self.context["user"])
+        return value
+
+    def validate(self, attrs):
+        if attrs["current_password"] == attrs["new_password"]:
+            raise serializers.ValidationError(
+                {"new_password": "The new password must differ from the current one."}
+            )
+        return attrs
+
+
 class PasswordResetConfirmSerializer(serializers.Serializer):
     """Accepts a token + new password and completes the reset.
 

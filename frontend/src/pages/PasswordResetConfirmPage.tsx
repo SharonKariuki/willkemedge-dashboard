@@ -38,7 +38,7 @@ export default function PasswordResetConfirmPage() {
 
   const onSubmit = async ({ password }: FormValues) => {
     try {
-      await api.post("/auth/password-reset/confirm/", { token, password });
+      await api.post("/auth/password-reset/confirm/", { token, new_password: password });
       setDone(true);
       setTimeout(() => navigate("/login"), 2500);
     } catch {
