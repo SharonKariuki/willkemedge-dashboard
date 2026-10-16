@@ -15,6 +15,11 @@ def main():
             "available on your PYTHONPATH environment variable? Did you "
             "forget to activate a virtual environment?"
         ) from exc
+    # Everything a command changes is audited as "Server command: <name>",
+    # so a `--apply` run from the Render shell is on the director's log.
+    from apps.accounts.audit_context import start_command
+
+    start_command(sys.argv)
     execute_from_command_line(sys.argv)
 
 

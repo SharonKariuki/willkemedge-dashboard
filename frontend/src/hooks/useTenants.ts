@@ -33,6 +33,10 @@ export interface MonthlyLedgerRow {
   vat: string;
   other_charges: string;
   waived: string;
+  /** Credits added (Add Credit) in the month — reduce the balance. */
+  credits?: string;
+  /** Refunds paid out in the month — add back to the balance. */
+  refunds?: string;
   total_due: string;
   paid: string;
   balance: string;
@@ -54,6 +58,10 @@ export interface TenantPaymentHistory {
     period_year: number;
     source: string;
     reference: string;
+    /** Voided rows are listed for the record but excluded from every total. */
+    is_void: boolean;
+    voided_at: string | null;
+    void_reason: string;
   }[];
   /** `expected` is the full obligation (rent + VAT) that `balance` is measured
    *  against; the two components are broken out for commercial units. */
@@ -137,6 +145,24 @@ export function useMoveOutTenant(id: number | string) {
   return useMutation({
     mutationFn: async (payload: { move_out_date?: string; notes?: string; deposit_refund_percentage?: number }) => {
       const { data } = await api.post(`/tenants/${id}/move-out/`, payload);
+      return data as TenantDetail;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["tenants"] });
+      qc.invalidateQueries({ queryKey: ["units"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+  });
+}
+
+/** A moved-out tenant takes a vacant unit again — the one they left, another in
+ *  the block, or one in another property. Returns the NEW tenancy; the old one
+ *  stays as it was moved out. */
+export function useMoveInAgain(id: number | string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: Record<string, unknown>) => {
+      const { data } = await api.post(`/tenants/${id}/move-in/`, payload);
       return data as TenantDetail;
     },
     onSuccess: () => {

@@ -57,3 +57,27 @@ export function useUpdateUnit(id: number | string) {
     },
   });
 }
+
+export interface ReconfigureSpacePayload {
+  add?: number[];
+  remove?: number[];
+  /** Agreed base rent (excl. VAT) after the change; omit to use the suggestion. */
+  monthly_rent?: string;
+}
+
+/** Add units to, or take units out of, the combined space headed by `headId`.
+ *  Moves the tenant's rent, so it refreshes tenants as well as units. */
+export function useReconfigureSpace(headId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: ReconfigureSpacePayload) => {
+      const { data } = await api.post(`/units/${headId}/reconfigure-space/`, payload);
+      return data as Unit;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["units"] });
+      qc.invalidateQueries({ queryKey: ["buildings"] });
+      qc.invalidateQueries({ queryKey: ["tenants"] });
+    },
+  });
+}

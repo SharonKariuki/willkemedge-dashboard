@@ -37,12 +37,16 @@ export default function Sidebar() {
   const toggle = () => setPreferCollapsed((c) => !c);
 
   const { prefs } = useViewPreferences();
+  const { user, logout } = useAuth();
+  const isOwner = Boolean(user?.can_forgive_money);
   const visibleItems = useMemo(
-    () => NAV_ITEMS.filter((item) => !item.togglable || prefs[item.key]),
-    [prefs]
+    () =>
+      NAV_ITEMS.filter(
+        (item) => (!item.togglable || prefs[item.key]) && (!item.ownerOnly || isOwner)
+      ),
+    [prefs, isOwner]
   );
 
-  const { user, logout } = useAuth();
   const handle = displayName(user?.email?.split("@")[0] ?? "");
   const initials =
     (handle || "??")

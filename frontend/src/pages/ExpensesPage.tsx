@@ -18,6 +18,7 @@ import {
 import { useUnits } from "@/hooks/useUnits";
 import { getErrorMessage } from "@/lib/apiError";
 import { cn } from "@/lib/cn";
+import { toDayFirst } from "@/lib/dates";
 import { AccountingSuite } from "@/pages/AccountingPage";
 
 const expenseSchema = z.object({
@@ -380,7 +381,7 @@ export default function ExpensesPage() {
             <TBody>
               {expenses.map((e) => (
                 <TR key={e.id}>
-                  <TD className="whitespace-nowrap text-ink-700">{e.date}</TD>
+                  <TD className="whitespace-nowrap text-ink-700">{toDayFirst(e.date)}</TD>
                   <TD className="whitespace-nowrap text-ink-500">
                     {e.building_name ?? <span className="italic">Portfolio</span>}
                   </TD>

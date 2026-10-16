@@ -10,6 +10,7 @@ from .views import (
     PasswordResetRequestView,
     RefreshView,
 )
+from .views_audit import ActivityLogView
 from .views_settings import LoginAuditView
 
 app_name = "accounts"
@@ -23,4 +24,5 @@ urlpatterns = [
     path("password-reset/",          PasswordResetRequestView.as_view(), name="password-reset"),
     path("password-reset/confirm/",  PasswordResetConfirmView.as_view(), name="password-reset-confirm"),
     path("login-audit/",             LoginAuditView.as_view(),           name="login-audit"),
+    path("activity/",                ActivityLogView.as_view(),          name="activity"),
 ]

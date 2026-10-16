@@ -37,3 +37,20 @@ class CanForgiveMoney(BasePermission):
         if request.method in SAFE_METHODS:
             return True
         return bool(getattr(request.user, "can_forgive_money", False))
+
+
+class IsOwner(BasePermission):
+    """Owner/director only, for reading as well as writing.
+
+    Used for the activity log: it names who did what to whom, including other
+    staff's sign-ins, so it is not "read for everyone" like the money pages.
+    """
+
+    message = "Only the owner/director may view the activity log."
+
+    def has_permission(self, request, view):
+        return bool(
+            request.user
+            and request.user.is_authenticated
+            and getattr(request.user, "can_forgive_money", False)
+        )

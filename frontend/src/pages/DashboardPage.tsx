@@ -41,8 +41,9 @@ import {
 } from "@/components/ui";
 import SmsBalanceCard from "@/components/SmsBalanceCard";
 import { cn } from "@/lib/cn";
+import { useBuildingPhotoSrc, useBuildings } from "@/hooks/useBuildings";
 import { useDashboard } from "@/hooks/useDashboard";
-import { avatarFor, propertyImage } from "@/lib/images";
+import { avatarFor } from "@/lib/images";
 import { formatKES } from "@/lib/money";
 
 // Chart palette — teal (income/occupied) + semantic status, no rainbow.
@@ -72,6 +73,16 @@ function formatK(n: number) {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(0)}k`;
   return String(n);
+}
+
+/** A building's own photo when it has one, else its stock picture. The
+ *  dashboard's figures come without photo details, so they are looked up from
+ *  the buildings list (already cached by the Buildings page). */
+function BuildingThumb({ id, name, className }: { id: number | undefined; name: string; className?: string }) {
+  const { data: buildings } = useBuildings();
+  const building = buildings?.find((b) => b.id === id) ?? (id != null ? { id, name } : undefined);
+  const src = useBuildingPhotoSrc(building);
+  return <img src={src} alt={name} loading="lazy" className={className} />;
 }
 
 export default function DashboardPage() {
@@ -431,10 +442,9 @@ export default function DashboardPage() {
                   className="group relative block overflow-hidden rounded-2xl bg-surface shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md dark:border dark:border-border"
                 >
                   <div className="relative h-44 w-full overflow-hidden">
-                    <img
-                      src={propertyImage(b.id ?? b.name, "md")}
-                      alt={b.name}
-                      loading="lazy"
+                    <BuildingThumb
+                      id={b.id}
+                      name={b.name}
                       className="h-full w-full object-cover transition-transform duration-700 ease-out group-hover:scale-[1.04]"
                     />
                     <div className="absolute inset-0 bg-gradient-to-t from-neutral-950/70 via-neutral-950/10 to-transparent" />

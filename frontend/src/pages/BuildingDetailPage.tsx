@@ -51,7 +51,9 @@ export default function BuildingDetailPage() {
       .map((t) => [t.unit_label, t]),
   );
   const units = building.units ?? [];
-  const occupied = units.filter((u) => tenantByUnit.has(u.label)).length;
+  const occupied = units.filter(
+    (u) => tenantByUnit.has(u.label) || (u.combined_into_label != null && tenantByUnit.has(u.combined_into_label)),
+  ).length;
 
   // Everyone in this property who can actually be written to. Sourced from the
   // same current-occupant map as the table, so the button sends to exactly the
@@ -112,7 +114,9 @@ export default function BuildingDetailPage() {
             </THead>
             <TBody>
               {units.map((u) => {
-                const tenant = tenantByUnit.get(u.label);
+                // A unit in a combined space is let through its head unit.
+                const tenant = tenantByUnit.get(u.label)
+                  ?? (u.combined_into_label ? tenantByUnit.get(u.combined_into_label) : undefined);
                 return (
                   <TR
                     key={u.id}
@@ -132,7 +136,12 @@ export default function BuildingDetailPage() {
                         : undefined
                     }
                   >
-                    <TD className="font-medium text-content">{u.label}</TD>
+                    <TD className="font-medium text-content">
+                      {u.label}
+                      {u.combined_into_label && (
+                        <span className="ml-2 text-[11px] font-normal text-content-muted">with {u.combined_into_label}</span>
+                      )}
+                    </TD>
                     <TD className="text-content-muted">{u.classification_display}</TD>
                     <TD>{tenant ? tenant.full_name : <span className="text-content-muted">Vacant</span>}</TD>
                     <TD className="text-right tabular-nums">{KES(u.monthly_rent)}</TD>

@@ -22,6 +22,7 @@ import {
   useCreateManualIncome, useDeleteManualIncome, useIncomeAccounts, useManualIncome,
 } from "@/hooks/useManualIncome";
 import { getErrorMessage } from "@/lib/apiError";
+import { toDayFirst } from "@/lib/dates";
 
 const inputCls =
   "w-full rounded-md bg-surface-raised hairline px-3 py-2.5 text-sm text-ink-900 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-sage-500/40";
@@ -163,7 +164,7 @@ export default function ManualIncomePage() {
           <TBody>
             {income.map((i) => (
               <TR key={i.id}>
-                <TD className="text-ink-500">{i.date}</TD>
+                <TD className="text-ink-500">{toDayFirst(i.date)}</TD>
                 <TD>{i.building_name}</TD>
                 <TD className="text-ink-500">{i.account_code} · {i.account_name}</TD>
                 <TD className="max-w-sm whitespace-normal">{i.description}</TD>

@@ -3,8 +3,8 @@
 The arcade's VAT invoice has to be in the tenant's hands before the month it
 covers begins, so a commercial letting is billed a month ahead of the calendar:
 on 25 August 2026 the system raises September's rent and emails September's
-statement. Residential lettings are on the other cycle — billed on the 1st for
-the month just begun — and are covered by test_residential_billing_cycle.py.
+statement. Residential lettings are also billed a month ahead, but on the
+28th — covered by test_residential_billing_cycle.py.
 See apps/payments/billing_calendar.py.
 
 The three things that have to hold together, and each of which broke the
@@ -34,7 +34,8 @@ from apps.buildings.models import (
 from apps.payments.aging import aging_buckets
 from apps.payments.billing_calendar import (
     billing_period,
-    statement_run_day,
+    commercial_run_day,
+    residential_run_day,
     tenant_billing_period,
 )
 from apps.payments.models import (
@@ -70,8 +71,8 @@ def _make_tenant(building, *, rent="20000", label="RB101", email="tenant@example
     """A COMMERCIAL letting — the cycle this module is about.
 
     Classification is what puts a tenant on the advance cycle, so every tenant
-    here is BUSINESS. A residential tenant billed on 25 August is still on
-    August, which is the point of the other test module.
+    here is BUSINESS. A residential tenant is still on August on 25 August,
+    until their own run day on the 28th — the point of the other module.
     """
     unit = Unit.objects.create(
         building=building, label=label, monthly_rent=Decimal(rent),
@@ -116,9 +117,13 @@ class TestBillingPeriod:
     def test_the_run_day_is_clamped_into_every_month(self, settings):
         """A run day of 31 would silently never fire in February."""
         settings.STATEMENT_RUN_DAY = 31
-        assert statement_run_day() == 28
+        assert commercial_run_day() == 28
         settings.STATEMENT_RUN_DAY = "nonsense"
-        assert statement_run_day() == 25
+        assert commercial_run_day() == 25
+        settings.RESIDENTIAL_RUN_DAY = 30
+        assert residential_run_day() == 28
+        settings.RESIDENTIAL_RUN_DAY = 0
+        assert residential_run_day() == 1
 
 
 class TestArrearsRaisedInAdvance:
@@ -240,12 +245,12 @@ class TestAdvanceStatementRun:
         assert counts["as_at"] == "2026-08-25"
         assert counts["sent"] == 1
         html = send.call_args.args[2]
-        # The emailed ledger is a copy of the statement ledger, so it carries
-        # the ledger's own month label ("Sept-2026"), not the period name the
-        # subject line and the rent roll use.
-        assert "Sept-2026" in html
+        # The email body is a covering note, not a copy of the ledger, so it names
+        # the billing month spelled in full — "Sept" is the PDF ledger's own
+        # shorthand and stops at the document.
+        assert "September-2026" in html
 
-        note = TenantNotification.objects.get(tenant=tenant)
+        note = TenantNotification.objects.get(tenant=tenant, channel="email")
         assert note.dedupe_key == f"statement:{tenant.id}:2026-09"
 
     def test_the_september_run_is_not_swallowed_as_an_august_duplicate(self, building):
@@ -268,7 +273,7 @@ class TestAdvanceStatementRun:
         assert august["sent"] == 1 and september["sent"] == 1
         assert send.call_count == 2
         assert set(
-            TenantNotification.objects.filter(tenant=tenant).values_list(
+            TenantNotification.objects.filter(tenant=tenant, channel="email").values_list(
                 "dedupe_key", flat=True
             )
         ) == {f"statement:{tenant.id}:2026-08", f"statement:{tenant.id}:2026-09"}
@@ -300,10 +305,10 @@ class TestAdvanceStatementRun:
             note = send_tenant_statement(tenant, automatic=False)
 
         assert note.status == NotificationStatus.SENT
-        # The emailed ledger is a copy of the statement ledger, so it carries
-        # the ledger's own month label ("Sept-2026"), not the period name the
-        # subject line and the rent roll use.
-        assert "Sept-2026" in send.call_args.args[2]
+        # The email body is a covering note, not a copy of the ledger, so it names
+        # the billing month spelled in full — "Sept" is the PDF ledger's own
+        # shorthand and stops at the document.
+        assert "September-2026" in send.call_args.args[2]
 
 
 class TestAdvanceChargeIsNotOverdue:

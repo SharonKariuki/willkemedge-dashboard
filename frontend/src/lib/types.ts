@@ -37,8 +37,22 @@ export interface Unit {
   /** Active tenant occupying this unit, or null when vacant. */
   current_tenant_id: number | null;
   current_tenant_name: string | null;
+  /** Head unit of the combined commercial space this unit is part of, if any. */
+  combined_into: number | null;
+  combined_into_label: string | null;
+  /** On a head unit: the other units let with it. Empty otherwise. */
+  combined_units: SpaceUnit[];
+  /** "MCG05 + MCG06" for a combined space, else the plain label. */
+  space_label: string;
   created_at: string;
   updated_at: string;
+}
+
+/** One unit within a combined commercial space. */
+export interface SpaceUnit {
+  id: number;
+  label: string;
+  monthly_rent: string;
 }
 
 export type PropertyType = "rental" | "farm" | "expense_only";
@@ -55,6 +69,10 @@ export interface Building {
   notes: string;
   unit_count: number;
   occupied_count: number;
+  /** A cover photo was uploaded; without one the card shows a placeholder. */
+  has_photo?: boolean;
+  /** Changes whenever the photo does, so a cached copy is refreshed. */
+  photo_version?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -131,6 +149,10 @@ export interface TenantDetail extends TenantListItem {
   /** RESIDENTIAL | BUSINESS — commercial lettings are VAT-rated and take a
    *  three-month deposit against the residential one month. */
   unit_classification: string;
+  /** Units this tenancy occupies, head first — more than one for a combined
+   *  commercial space. Older API responses omit these. */
+  space_units?: SpaceUnit[];
+  space_label?: string;
   /** Name printed on the rent statement, e.g. a guarantor or company. */
   care_of: string;
   emergency_contact: string;
@@ -165,6 +187,17 @@ export interface TenantDetail extends TenantListItem {
   kyc_verified_by: number | null;
   kyc_verified_by_name: string | null;
   kyc_notes: string;
+  /** Every tenancy this person has held (matched on ID number), oldest first,
+   *  this one included — a returning tenant has one row per letting. */
+  tenancies?: {
+    id: number;
+    unit_label: string;
+    building_name: string;
+    move_in_date: string;
+    move_out_date: string | null;
+    status: TenantStatus;
+    status_display: string;
+  }[];
   documents: TenantDocument[];
   created_at: string;
   updated_at: string;

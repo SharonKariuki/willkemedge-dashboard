@@ -3,9 +3,12 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import AuthLayout from "@/components/AuthLayout";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import AccountingPage from "@/pages/AccountingPage";
+import ActivityPage from "@/pages/ActivityPage";
 import BuildingDetailPage from "@/pages/BuildingDetailPage";
 import BuildingsPage from "@/pages/BuildingsPage";
+import AddBuildingPage from "@/pages/AddBuildingPage";
 import DashboardPage from "@/pages/DashboardPage";
+import EditBuildingPage from "@/pages/EditBuildingPage";
 import ExpensesPage from "@/pages/ExpensesPage";
 import ManualIncomePage from "@/pages/ManualIncomePage";
 import LoginPage from "@/pages/LoginPage";
@@ -17,6 +20,9 @@ import PaymentsPage from "@/pages/PaymentsPage";
 import ReconciliationPage from "@/pages/ReconciliationPage";
 import ReportsPage from "@/pages/ReportsPage";
 import SettingsPage from "@/pages/SettingsPage";
+import AddChargePage from "@/pages/AddChargePage";
+import AddCreditPage from "@/pages/AddCreditPage";
+import RefundCreditPage from "@/pages/RefundCreditPage";
 import TenantDetailPage from "@/pages/TenantDetailPage";
 import TenantsPage from "@/pages/TenantsPage";
 import UnitsPage from "@/pages/UnitsPage";
@@ -39,10 +45,15 @@ export default function App() {
       >
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/buildings" element={<BuildingsPage />} />
+        <Route path="/buildings/new" element={<AddBuildingPage />} />
         <Route path="/buildings/:id" element={<BuildingDetailPage />} />
+        <Route path="/buildings/:id/edit" element={<EditBuildingPage />} />
         <Route path="/units" element={<UnitsPage />} />
         <Route path="/tenants" element={<TenantsPage />} />
         <Route path="/tenants/:id" element={<TenantDetailPage />} />
+        <Route path="/tenants/:id/charges/new" element={<AddChargePage />} />
+        <Route path="/tenants/:id/credits/new" element={<AddCreditPage />} />
+        <Route path="/tenants/:id/credits/refund" element={<RefundCreditPage />} />
         <Route path="/payments" element={<PaymentsPage />} />
         <Route path="/reconciliation" element={<ReconciliationPage />} />
         <Route path="/expenses" element={<ExpensesPage />} />
@@ -51,6 +62,7 @@ export default function App() {
         <Route path="/accounting" element={<AccountingPage />} />
         <Route path="/notifications" element={<NotificationsPage />} />
         <Route path="/reports" element={<ReportsPage />} />
+        <Route path="/activity" element={<ActivityPage />} />
         <Route path="/settings" element={<SettingsPage />} />
       </Route>
 

@@ -16,6 +16,8 @@ Ledger rows are derived from stored records only:
   * Arrears        -> "Month Rent - <Mon>-<Year>"  (+ "16% VAT on Rent" for BUSINESS)
   * UtilityCharge  -> "<Label> <Mon. 'YY>" (+ multi-line readings if recorded)
   * Payment        -> "Payment Received"
+  * TenantCredit   -> "Credit Note CN-… - <explanation>" / "Credit CR-… - …"
+  * Refund         -> "Refund Paid RF-… - <method> <reference>"
 
 Public API
 ----------
@@ -37,6 +39,7 @@ from apps.expenses.coa import (
     SERVICE_CHARGE_UTILITIES,
 )
 
+from .meter_service import invoiced_with
 from .monthly_ledger import OPENING_MARKER
 
 ZERO = Decimal("0.00")
@@ -151,7 +154,14 @@ def _deposit_label(tenant, amount) -> str:
     Only when the figure is whole months of the current rent. An odd amount, or
     a rent that has moved since the deposit was taken, gets the plain label
     rather than a month count that would not be true.
+
+    A deposit the landlord agreed by hand is not months of anything, even when
+    the figure happens to divide evenly, so it is named as agreed.
     """
+    from apps.tenants.deposits import has_agreed_deposit
+
+    if has_agreed_deposit(tenant):
+        return "Rent Security Deposit (Agreed)"
     rent = _money(tenant.monthly_rent)
     if rent > 0:
         months = _money(amount) / rent
@@ -172,31 +182,34 @@ _ORDER_RENT = 3
 _ORDER_VAT = 4
 _ORDER_UTILITY = 5
 _ORDER_WAIVER = 6
+_ORDER_CREDIT = 7
+_ORDER_CREDIT_VAT = 8
+_ORDER_REFUND = 9
 
 
-def _raised_on(tenant, year: int, month: int, *, in_advance: bool) -> _dt.date:
+def _raised_on(tenant, year: int, month: int) -> _dt.date:
     """The date the statement shows a month's rent as having been raised.
 
     The books hold a charge against a *period*, not a day, so the statement has
-    to decide what date to print beside it. It prints the day the charge fell
-    due on the tenant:
+    to decide what date to print beside it. It prints the day the invoice for
+    that month went out:
 
-      * commercial rent is billed for the month ahead, so it is raised at the
-        close of the month before — September's on 31 August;
-      * residential rent is raised on the 1st of its own month;
+      * rent is invoiced a month ahead, on the tenant's run day — October's on
+        28 September for a house and on 25 September for a shop;
       * neither is ever shown as raised before the tenant moved in. Fortcom's
-        August rent is dated 10 August, the day their lease began, not 31 July.
+        August rent is dated 10 August, the day their lease began, not 25 July.
 
     The period a charge belongs to is untouched by this — only the date printed
     beside it. Arrears, the summary box and the roll-forward all still key off
-    the period, which is why a September charge shown on 31 August does not
-    fall into August's brought-forward figure.
+    the period, which is why an October charge shown on 28 September does not
+    fall into September's brought-forward figure.
     """
+    from .billing_calendar import invoice_date
+
     try:
-        first = _dt.date(year, month, 1)
+        raised = invoice_date(tenant, (year, month))
     except ValueError:
         return _dt.date(year, max(1, min(12, month)), 1)
-    raised = first - _dt.timedelta(days=1) if in_advance else first
     move_in = getattr(tenant, "move_in_date", None)
     if isinstance(move_in, _dt.datetime):
         move_in = move_in.date()
@@ -226,7 +239,6 @@ def _ordinal(n: int) -> str:
 def _build_ledger(
     tenant,
     *,
-    is_business: bool,
     as_of: _dt.date | None,
     period_start: _dt.date | None = None,
 ):
@@ -236,7 +248,8 @@ def _build_ledger(
     balance the moment before ``period_start`` — everything the account carries
     into the month the statement is about.
     """
-    from .models import Arrears, Payment, PaymentType, UtilityCharge
+    from .credits import issued_credits, sent_refunds
+    from .models import Arrears, CreditType, Payment, PaymentType, UtilityCharge
 
     # Two dates, and they are not the same thing:
     #
@@ -245,11 +258,14 @@ def _build_ledger(
     #   ``period`` the month the charge belongs to — what the summary box, the
     #              brought-forward figure and the arrears roll key off.
     #
-    # They only diverge for rent: commercial rent for September is shown as
-    # raised on 31 August but belongs to September, and a first month is shown
-    # on the move-in date. Keeping them apart is what lets the ledger read like
-    # the landlord's sheet without September's rent falling into August's
-    # arrears.
+    # They diverge for rent, which is invoiced a month ahead — October's rent
+    # is shown as raised on 28 September but belongs to October, and a first
+    # month is shown on the move-in date — and for metered water, which is
+    # invoiced with the FOLLOWING month's rent: September's water sits on the
+    # October invoice, so ``period`` is October for it. Keeping them apart is
+    # what lets the ledger read like the landlord's sheet without October's
+    # rent falling into September's arrears, or September's water into the
+    # October invoice's brought-forward figure.
     #
     # (shown, sort_order, description, invoice_amount, payment_amount, period)
     events: list[tuple[_dt.date, int, str, Decimal, Decimal, _dt.date]] = []
@@ -260,13 +276,11 @@ def _build_ledger(
         except ValueError:
             continue
         # ``as_of`` cuts on the period, not on the date shown: a statement drawn
-        # on 1 September must carry September's rent even though the charge is
-        # dated 31 August.
+        # on 1 October must carry October's rent, which is dated 28 September,
+        # and one cut at 30 September must not.
         if as_of and period > as_of:
             continue
-        posting = _raised_on(
-            tenant, arr.period_year, arr.period_month, in_advance=is_business
-        )
+        posting = _raised_on(tenant, arr.period_year, arr.period_month)
         base = _money(arr.expected_rent)
         period_label = _ledger_period(arr.period_month, arr.period_year)
 
@@ -316,10 +330,24 @@ def _build_ledger(
     for util in UtilityCharge.objects.filter(tenant=tenant).order_by("posting_date", "id"):
         if as_of and util.posting_date > as_of:
             continue
-        events.append((
-            util.posting_date, _ORDER_UTILITY, util.description(),
-            _money(util.amount), ZERO, util.posting_date,
-        ))
+        invoiced = invoiced_with(util)
+        amount = _money(util.amount)
+        if amount < 0:
+            # A negative "charge" is money the landlord is giving back — DON2B's
+            # 2,096 August credit, or a reconcile correcting an over-posted
+            # reading downwards. Printed in the invoice column it read as water
+            # billed at a negative price. It goes in the payments column as a
+            # credit instead: invoice minus payment is unchanged, so the running
+            # balance, the total due and the brought-forward figure all stay put.
+            events.append((
+                util.posting_date, _ORDER_UTILITY, f"Credit - {util.description()}",
+                ZERO, -amount, invoiced,
+            ))
+        else:
+            events.append((
+                util.posting_date, _ORDER_UTILITY, util.description(),
+                amount, ZERO, invoiced,
+            ))
 
     # Every credit the tenant sent, shown the way they sent it.
     #
@@ -366,6 +394,40 @@ def _build_ledger(
                 deposit, ZERO, posting,
             ))
 
+    # Credits on account (Add Credit) and the refunds paid out of them. A
+    # credit sits in the payments column, like money received; a credit note
+    # that gives VAT back shows that VAT on its own line, the way rent and its
+    # VAT are shown. A refund is money going back to the tenant, so it sits in
+    # the charges column and brings a credit balance back towards nil.
+    # Applying a credit to a later invoice adds no row: the credit already
+    # counted in full when it was issued. Voided credits and refunds stay off,
+    # as voided payments do.
+    for credit in issued_credits([tenant.pk]).order_by("credit_date", "id"):
+        if as_of and credit.credit_date > as_of:
+            continue
+        label = "Credit Note" if credit.credit_type == CreditType.CREDIT_NOTE else "Credit"
+        events.append((
+            credit.credit_date, _ORDER_CREDIT,
+            f"{label} {credit.number} - {credit.description}",
+            ZERO, _money(credit.net_amount), credit.credit_date,
+        ))
+        if credit.vat_amount:
+            events.append((
+                credit.credit_date, _ORDER_CREDIT_VAT, "16% VAT credited",
+                ZERO, _money(credit.vat_amount), credit.credit_date,
+            ))
+
+    for refund in sent_refunds([tenant.pk]).order_by("sent_on", "id"):
+        if as_of and refund.sent_on > as_of:
+            continue
+        how = refund.get_method_display()
+        if refund.reference:
+            how = f"{how} {refund.reference}"
+        events.append((
+            refund.sent_on, _ORDER_REFUND, f"Refund Paid {refund.number} - {how}",
+            _money(refund.amount), ZERO, refund.sent_on,
+        ))
+
     events.sort(key=lambda e: (e[0], e[1]))
 
     # Summed over the periods that closed, not read off the running balance at
@@ -405,13 +467,16 @@ def _unit_descriptor(tenant) -> str:
     """Right-hand cell on the statement.
 
     Honors `Unit.statement_descriptor` when set; otherwise falls back to a
-    sensible default ("Unit G05 — Building Name").
+    sensible default ("Unit G05 — Building Name", or "Units MCG05 + MCG06 — …"
+    for a combined space).
     """
     unit = tenant.unit
     explicit = getattr(unit, "statement_descriptor", "") or ""
     if explicit:
         return explicit
-    return f"Unit {unit.label} — {unit.building.name}"
+    space = unit.space_units
+    noun = "Units" if len(space) > 1 else "Unit"
+    return f"{noun} {unit.space_label} — {unit.building.name}"
 
 
 def build_statement(
@@ -474,7 +539,7 @@ def build_statement(
         _dt.date(current.period_year, current.period_month, 1) if current is not None else None
     )
     rows, balance, arrears_bf = _build_ledger(
-        tenant, is_business=is_business, as_of=as_of, period_start=period_start
+        tenant, as_of=as_of, period_start=period_start
     )
 
     if current is not None:
@@ -516,10 +581,33 @@ def build_statement(
         payments_q = payments_q.filter(payment_date__lte=as_of)
     payments_received = _money(payments_q.aggregate(t=Sum("amount"))["t"])
 
+    # Credits added (Add Credit) and refunds paid out in the period being
+    # stated. Each keeps its own summary line for the same reason payments do:
+    # netted silently into "Arrears / Others", a credit would make that line
+    # read as arrears the tenant never had. The cut on the date matches the one
+    # the ledger makes for brought-forward, so earlier ones are already inside
+    # Arrears B/F and nothing is counted twice.
+    from .credits import issued_credits, sent_refunds
+
+    credits_q = issued_credits([tenant.pk])
+    refunds_q = sent_refunds([tenant.pk])
+    if period_start:
+        credits_q = credits_q.filter(credit_date__gte=period_start)
+        refunds_q = refunds_q.filter(sent_on__gte=period_start)
+    if as_of:
+        credits_q = credits_q.filter(credit_date__lte=as_of)
+        refunds_q = refunds_q.filter(sent_on__lte=as_of)
+    account_credits = _money(credits_q.aggregate(t=Sum("amount"))["t"])
+    refunds_paid = _money(refunds_q.aggregate(t=Sum("amount"))["t"])
+
     # Derived so the column always foots to `total_due`, which is the ledger's
-    # own closing balance. With the payment shown separately this resolves to
-    # the arrears genuinely brought forward from earlier periods.
-    arrears_others = total_due - current_base - vat_on_rent + payments_received
+    # own closing balance. With payments, credits and refunds shown separately
+    # this resolves to the arrears genuinely brought forward from earlier
+    # periods.
+    arrears_others = (
+        total_due - current_base - vat_on_rent + payments_received
+        + account_credits - refunds_paid
+    )
 
     # --- Receipt breakdown (Feature 7) ---------------------------------------
     # Five named figures for the SMS/email receipt, each sourced from real
@@ -527,13 +615,14 @@ def build_statement(
     # `total_due` ("Unpaid Balance"). They are additive to the account rather
     # than a re-derivation of the net balance.
 
-    #  Security deposit held = deposit-type payments received (up to as_of).
-    deposit_q = Payment.objects.filter(
-        tenant=tenant, payment_type=PaymentType.DEPOSIT, voided_at__isnull=True
-    )
-    if as_of:
-        deposit_q = deposit_q.filter(payment_date__lte=as_of)
-    security_deposit = _money(deposit_q.aggregate(t=Sum("amount"))["t"])
+    #  Security deposit held = what 2100 holds for the tenant (up to as_of):
+    #  deposit payments plus any deposit the cutover posted without a payment.
+    #  An edit to the deposit is booked (``adjust_deposit_held``), so this is
+    #  also the figure the director last set.
+    from apps.tenants.deposits import deposit_held_on_books, expected_deposit, has_agreed_deposit
+
+    security_deposit = _money(deposit_held_on_books(tenant, as_of=as_of))
+    deposit_is_agreed = has_agreed_deposit(tenant)
 
     #  Arrears brought forward comes off the ledger above — the running balance
     #  the month before the current one closed on. It used to be a separate
@@ -547,11 +636,28 @@ def build_statement(
     #  in full, against an unpaid balance of nil on the same page.
     arrears_bf = _money(arrears_bf)
 
-    #  Other charges = non-rent utility charges posted (up to as_of).
+    #  Other charges = the water and other costs on the invoice being stated.
+    #  It used to sum every utility charge the tenant ever had, but the ledger
+    #  already folds earlier invoices into Arrears Brought Forward, so from a
+    #  tenant's second water bill the breakdown counted last month's water
+    #  twice. The cut is the one `_build_ledger` makes for brought-forward —
+    #  on the invoice a charge rides on, against the current period's start —
+    #  so the two figures partition the charges between them. Metered water
+    #  rides on the NEXT month's invoice: the October statement's Other Charges
+    #  is September's water. With no rent period on file there is nothing
+    #  brought forward, and every charge belongs here.
+    #
+    #  Credits are split out rather than netted in: a landlord credit is not
+    #  negative water, and "Other Charges -2,096" is what the tenant used to see.
     util_q = UtilityCharge.objects.filter(tenant=tenant)
     if as_of:
         util_q = util_q.filter(posting_date__lte=as_of)
-    other_charges = _money(util_q.aggregate(t=Sum("amount"))["t"])
+    on_this_invoice = [
+        _money(u.amount) for u in util_q
+        if not period_start or invoiced_with(u) >= period_start
+    ]
+    other_charges = _money(sum((a for a in on_this_invoice if a > 0), ZERO))
+    other_credits = _money(ZERO - sum((a for a in on_this_invoice if a < 0), ZERO))
 
     #  Rent income code depends on the unit's tax classification.
     rent_code = RENT_COMMERCIAL if is_business else RENT_RESIDENTIAL
@@ -610,6 +716,20 @@ def build_statement(
         # tenant who has not yet paid this month — the summary then reads
         # exactly as it always did.
         "payments_received_value": payments_received,
+        # Credits and refunds in the period, each on its own line and hidden
+        # when nil like payments are.
+        "account_credits": _fmt_money(account_credits),
+        "account_credits_value": account_credits,
+        "refunds_paid": _fmt_money(refunds_paid),
+        "refunds_paid_value": refunds_paid,
+        # What a tenant-facing summary calls "Less: Credits" — landlord water
+        # credits and credits on account together.
+        "credits_total": _fmt_money(other_credits + account_credits),
+        "credits_total_value": other_credits + account_credits,
+        # A tenant in credit reads "Credit on Account", not a negative balance.
+        "in_credit": total_due < 0,
+        "credit_on_account": _fmt_money(-total_due) if total_due < 0 else _fmt_money(ZERO),
+        "credit_on_account_whole": _fmt_money_whole(-total_due) if total_due < 0 else "0",
         "total_due": _fmt_money(total_due),
         "total_due_whole": _fmt_money_whole(total_due),
         "total_due_value": total_due,
@@ -617,9 +737,17 @@ def build_statement(
 
         # --- receipt breakdown: the named totals ---
         "security_deposit": _fmt_money(security_deposit),
+        "security_deposit_value": security_deposit,
+        # The agreed figure, printed beside what is held only where the
+        # director overrode the rule — the rule itself is not news to a tenant.
+        "deposit_is_agreed": deposit_is_agreed,
+        "agreed_deposit": _fmt_money(expected_deposit(tenant)) if deposit_is_agreed else "",
         "arrears_bf": _fmt_money(arrears_bf),
         "month_rent": _fmt_money(current_base),
         "other_charges": _fmt_money(other_charges),
+        "other_charges_value": other_charges,
+        "other_credits": _fmt_money(other_credits),
+        "other_credits_value": other_credits,
         "rent_plus_arrears": _fmt_money(current_base + arrears_bf),
         "unpaid_balance": _fmt_money(total_due),
 
@@ -631,6 +759,20 @@ def build_statement(
             ("Arrears Brought Forward", _fmt_money(arrears_bf), RENT_RECEIVABLE, "Accounts Receivable (Rent Arrears)"),
             ("Month Rent", _fmt_money(current_base), rent_code, rent_name),
             ("Other Charges", _fmt_money(other_charges), SERVICE_CHARGE_UTILITIES, "Service Charge / Utilities"),
+            # Only when there is one, so a tenant with no credit sees the
+            # breakdown exactly as before.
+            *(
+                [("Less: Credits", f"({_fmt_money(other_credits)})", SERVICE_CHARGE_UTILITIES, "Service Charge / Utilities")]
+                if other_credits else []
+            ),
+            *(
+                [("Less: Credit on Account", f"({_fmt_money(account_credits)})", RENT_RECEIVABLE, "Accounts Receivable (Rent Arrears)")]
+                if account_credits else []
+            ),
+            *(
+                [("Add: Refunds Paid", _fmt_money(refunds_paid), RENT_RECEIVABLE, "Accounts Receivable (Rent Arrears)")]
+                if refunds_paid else []
+            ),
             ("Rent + Arrears", _fmt_money(current_base + arrears_bf), RENT_RECEIVABLE, "Accounts Receivable (Rent Arrears)"),
             ("Unpaid Balance", _fmt_money(total_due), RENT_RECEIVABLE, "Accounts Receivable (Rent Arrears)"),
         ],

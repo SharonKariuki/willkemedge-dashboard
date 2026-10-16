@@ -1,7 +1,8 @@
 """Age a tenant's outstanding balance into 0-30 / 31-60 / 61-90 / 90+ buckets.
 
 The buckets are cut from the same figures as the rent roll — ``Arrears`` for
-the monthly charge, ``UtilityCharge`` for other costs, ``Payment`` for cash —
+the monthly charge, ``UtilityCharge`` for other costs, ``Payment`` for cash,
+``TenantCredit`` and ``Refund`` for credits given and paid back out —
 so they always sum to the balance ``monthly_ledger.current_balance`` reports.
 An aging table that does not add up to the balance printed beside it is worse
 than no aging table at all, so that identity is the point of this module and
@@ -99,6 +100,23 @@ def aging_buckets(tenants, *, today: _dt.date | None = None) -> dict[int, dict]:
     )
     for tenant_id, amount in payments:
         received[tenant_id] += _money(amount)
+
+    # A numbered credit settles the oldest charge exactly as cash would. A
+    # refund puts money back on the account: a fresh debit, aged from the month
+    # it was paid out (it only ever shows here when the credit behind it was
+    # later voided, leaving the tenant owing it).
+    from .credits import issued_credits, sent_refunds
+
+    for tenant_id, amount in (
+        issued_credits(ids).filter(credit_date__lt=first_of_next_month)
+        .values_list("tenant_id", "amount")
+    ):
+        received[tenant_id] += _money(amount)
+    for tenant_id, sent_on, amount in (
+        sent_refunds(ids).filter(sent_on__lt=first_of_next_month)
+        .values_list("tenant_id", "sent_on", "amount")
+    ):
+        _add(tenant_id, sent_on.year, sent_on.month, _money(amount))
 
     # An opening row is a balance carried from before the books began. Aging it
     # from its own month would call the whole pre-cutover history 30 days old,

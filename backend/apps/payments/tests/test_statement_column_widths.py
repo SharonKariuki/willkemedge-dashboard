@@ -35,6 +35,7 @@ WORST_CASE = {
         "Water usage September 2026 (12 Units @ KES 200)",
         "Balance brought forward - September-2026",
         "Three Months Rent Deposit",
+        "Rent Security Deposit (Agreed)",
     ],
     "Invoice Amount": ["1,234,567.89"],
     "Payments": ["1,234,567.89"],

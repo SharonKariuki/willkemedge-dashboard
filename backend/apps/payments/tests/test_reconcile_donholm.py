@@ -22,7 +22,7 @@ import pytest
 from django.core.management import call_command
 from django.core.management.base import CommandError
 
-from apps.accounts.models import FinancialAuditLog
+from apps.accounts.models import AuditLog
 from apps.buildings.models import Building, Unit, UnitClassification, UnitStatus
 from apps.payments.management.commands import reconcile_donholm as cmd
 from apps.payments.models import Arrears, Payment, UtilityCharge
@@ -271,7 +271,7 @@ class TestAugustCash:
 
         call_command("reconcile_donholm", "--apply")
 
-        logs = FinancialAuditLog.objects.filter(action="payment.reallocate")
+        logs = AuditLog.objects.filter(action="payment.reallocate")
         assert logs.count() == 2
         assert all(log.old_values["payment_date"] == "2026-08-03" for log in logs)
         assert all(log.new_values == {"period_month": 8, "period_year": 2026} for log in logs)

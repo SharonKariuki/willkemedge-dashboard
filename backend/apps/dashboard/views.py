@@ -106,16 +106,16 @@ class DashboardSummaryView(APIView):
         # Net of VAT and void, on exactly the basis the P&L and the annual
         # income report use, so "income" means one thing across the dashboard
         # rather than gross here and net there.
-        from apps.dashboard.views_reports import INCOME_PAYMENT_FILTER, _net_income_sum
+        # Farm and other manual income and credits count too — this is the
+        # P&L's own income figure, month by month.
+        from apps.dashboard.report_data import income_total
 
         income_trend = []
         for i in range(11, -1, -1):
             total_months = current_year * 12 + (current_month - 1) - i
             y, m0 = divmod(total_months, 12)
             m = m0 + 1
-            month_total = Payment.objects.filter(
-                INCOME_PAYMENT_FILTER, period_month=m, period_year=y
-            ).aggregate(total=_net_income_sum())["total"] or 0
+            month_total = income_total(m, y)
             income_trend.append({
                 "month": f"{y}-{m:02d}",
                 "amount": float(month_total),

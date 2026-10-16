@@ -6,8 +6,8 @@ from .models import Building, Unit, UnitAlias
 class UnitInline(admin.TabularInline):
     model = Unit
     extra = 0
-    fields = ("label", "floor", "unit_type", "monthly_rent", "status")
-    readonly_fields = ("status",)
+    fields = ("label", "floor", "unit_type", "monthly_rent", "status", "combined_into")
+    readonly_fields = ("status", "combined_into")
 
 
 class UnitAliasInline(admin.TabularInline):
@@ -38,10 +38,12 @@ class BuildingAdmin(admin.ModelAdmin):
 
 @admin.register(Unit)
 class UnitAdmin(admin.ModelAdmin):
-    list_display = ("label", "building", "unit_type", "monthly_rent", "status")
+    list_display = ("label", "building", "unit_type", "monthly_rent", "status", "combined_into")
     list_filter = ("status", "unit_type", "building")
     search_fields = ("label", "building__name")
-    readonly_fields = ("status",)
+    # Combining changes the tenant's rent, so it goes through
+    # apps.buildings.spaces (the tenant page), never a bare admin edit.
+    readonly_fields = ("status", "combined_into")
     inlines = [UnitAliasInline]
 
 

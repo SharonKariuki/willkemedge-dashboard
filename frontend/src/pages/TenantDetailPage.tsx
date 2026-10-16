@@ -7,27 +7,38 @@
  * and a rent reminder (SMS / Email).
  */
 import { zodResolver } from "@hookform/resolvers/zod";
-import { AlertTriangle, ArrowLeft, BellRing, Download, LogOut, Mail, Pencil, Phone } from "lucide-react";
+import { AlertTriangle, ArrowLeft, BellRing, Download, History, LogIn, LogOut, Mail, Pencil, Phone, Plus, Send, Undo2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import toast from "react-hot-toast";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { z } from "zod";
 
 import {
   Badge, Button, Card, DatePicker, ErrorState, Skeleton,
   Table, TBody, TD, TH, THead, TR,
 } from "@/components/ui";
+import { CreditsPanel } from "@/features/credits/CreditsPanel";
+import { VoidPaymentModal } from "@/features/payments/VoidPaymentModal";
+import { MoveInAgainForm } from "@/features/tenants/MoveInAgainForm";
+import { SpacePanel } from "@/features/tenants/SpacePanel";
 import { Field, KycPanel, RemindModal, inputCls } from "@/features/tenants/shared";
+import { useAuth } from "@/hooks/useAuth";
+import { useCreditPosition } from "@/hooks/useCredits";
+import type { Payment } from "@/hooks/usePayments";
 import {
   useEmailStatement, usePaymentHistory, useMoveOutNotice, useMoveOutTenant, useTenant,
   useUpdateTenant,
 } from "@/hooks/useTenants";
 import { getErrorMessage } from "@/lib/apiError";
 import { cn } from "@/lib/cn";
+import { toDayFirst, todayIso } from "@/lib/dates";
 import { downloadPdf } from "@/lib/downloadPdf";
 import { isNonNegativeAmountOrBlank, isPositiveAmount } from "@/lib/formValidators";
 import { formatBalanceKES, formatKES } from "@/lib/money";
+import {
+  DEFAULT_RENT_ROLL_FILTER, RENT_ROLL_PRESETS, filterRentRoll, parseRentRollFilter, rowMonthValue,
+} from "@/lib/rentRollFilter";
 
 const KES = formatKES;
 
@@ -81,18 +92,32 @@ const moveOutSchema = z.object({
 });
 type MoveOutFormValues = z.infer<typeof moveOutSchema>;
 
-type Mode = "view" | "edit" | "notice" | "moveout";
+type Mode = "view" | "edit" | "notice" | "moveout" | "movein";
 
 export default function TenantDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { data: tenant, isLoading, isError, refetch } = useTenant(id ?? null);
   const { data: history } = usePaymentHistory(id ?? null);
+  // Which months of the rent roll to show. Kept in the URL so a reload, the
+  // back button or a shared link opens on the same view; the default (last
+  // three months) is left out so a plain /tenants/:id link stays plain.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const rollFilter = parseRentRollFilter(searchParams.get("roll"));
+  const setRollFilter = (value: string) => {
+    setSearchParams((params) => {
+      if (value === DEFAULT_RENT_ROLL_FILTER) params.delete("roll");
+      else params.set("roll", value);
+      return params;
+    }, { replace: true });
+  };
   // Commercial units carry 16% VAT and the statement bills it as its own
   // column; residential is exempt. Drive it off the ledger rather than the
   // unit's classification so a unit reclassified mid-tenancy still shows the
   // VAT it was actually charged.
   const showVat = (history?.monthly_ledger ?? []).some((m) => Number(m.vat) > 0);
+  const showCredits = (history?.monthly_ledger ?? []).some((m) => Number(m.credits ?? 0) > 0);
+  const showRefunds = (history?.monthly_ledger ?? []).some((m) => Number(m.refunds ?? 0) > 0);
   // The arrears card shows the balance owed as at now — what the landlord
   // actually chases — rather than a sum across every period.
   //
@@ -111,6 +136,8 @@ export default function TenantDetailPage() {
     ?? [...ledger].reverse().find((m) => monthKey(m.period_year, m.period_month) <= nowKey)
     ?? null;
   const owedNow = Number(thisMonth?.balance ?? 0);
+  // Filtering only hides rows: balances and the card above read the full roll.
+  const rollRows = filterRentRoll(ledger, rollFilter);
   // Derived by the backend from one rule (apps/tenants/deposits.py) so the
   // page, the integrity check and the API cannot drift on what a deposit
   // should be. Older API responses omit them; fall back rather than render NaN.
@@ -137,17 +164,27 @@ export default function TenantDetailPage() {
 
   const [mode, setMode] = useState<Mode>("view");
   const [reminding, setReminding] = useState(false);
+  // Credits and refunds forgive or pay out money: owner-only, the same
+  // privilege as waiving arrears or voiding a payment.
+  const { user } = useAuth();
+  const canManageCredit = Boolean(user?.can_forgive_money);
+  // Voiding is owner-only on the API (CanForgiveMoney), same as credits.
+  const [voidTarget, setVoidTarget] = useState<Payment | null>(null);
+  const { data: creditPosition } = useCreditPosition(id ?? null);
+  const refundable = Number(creditPosition?.refundable ?? 0);
+  const creditsHeld = Number(creditPosition?.credits_held ?? 0);
+  const refundsToSend = Number(creditPosition?.refunds_to_send ?? 0);
   const [downloading, setDownloading] = useState(false);
   const emailStatement = useEmailStatement();
 
   const editForm = useForm<EditFormValues>({ resolver: zodResolver(editSchema) });
   const noticeForm = useForm<NoticeFormValues>({
     resolver: zodResolver(noticeSchema),
-    defaultValues: { notice_date: new Date().toISOString().slice(0, 10), intended_move_out_date: "", notes: "" },
+    defaultValues: { notice_date: todayIso(), intended_move_out_date: "", notes: "" },
   });
   const moveOutForm = useForm<MoveOutFormValues>({
     resolver: zodResolver(moveOutSchema),
-    defaultValues: { move_out_date: new Date().toISOString().slice(0, 10), deposit_refund_percentage: 100, notes: "" },
+    defaultValues: { move_out_date: todayIso(), deposit_refund_percentage: 100, notes: "" },
   });
 
   useEffect(() => {
@@ -215,6 +252,11 @@ export default function TenantDetailPage() {
 
   const isActive = tenant.status === "active" || tenant.status === "notice_given";
   const inArrears = tenant.payment_status === "in_arrears";
+  const tenancies = tenant.tenancies ?? [];
+  // Only a tenancy that has ended can be followed by another, and only while
+  // the person does not already hold a current one elsewhere.
+  const canMoveInAgain = tenant.status === "moved_out"
+    && !tenancies.some((t) => t.status === "active" || t.status === "notice_given");
 
   return (
     <div className="space-y-6">
@@ -228,7 +270,7 @@ export default function TenantDetailPage() {
           </button>
           <h1 className="font-display text-2xl font-bold text-content sm:text-3xl">{tenant.full_name}</h1>
           <p className="mt-1 text-sm text-content-muted">
-            {tenant.building_name} · Unit {tenant.unit_label}
+            {tenant.building_name} · {(tenant.space_units?.length ?? 1) > 1 ? `Units ${tenant.space_label}` : `Unit ${tenant.unit_label}`}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -254,14 +296,41 @@ export default function TenantDetailPage() {
               >
                 <Mail className="h-4 w-4" /> Email Statement
               </Button>
+              {canManageCredit && (
+                <>
+                  <Button variant="outline" onClick={() => navigate(`/tenants/${id}/charges/new`)}>
+                    <Plus className="h-4 w-4" /> Add Charge
+                  </Button>
+                  <Button variant="outline" onClick={() => navigate(`/tenants/${id}/credits/new`)}>
+                    <Plus className="h-4 w-4" /> Add Credit
+                  </Button>
+                </>
+              )}
               <Button variant="outline" onClick={() => setMode("notice")}><AlertTriangle className="h-4 w-4" /> Notice</Button>
               <Button variant="danger" onClick={() => setMode("moveout")}><LogOut className="h-4 w-4" /> Move Out</Button>
             </>
           )}
           {!isActive && mode === "view" && (
-            <Button variant="outline" onClick={handleStatement} loading={downloading}>
-              <Download className="h-4 w-4" /> Statement PDF
-            </Button>
+            <>
+              {canMoveInAgain && (
+                <Button onClick={() => setMode("movein")}><LogIn className="h-4 w-4" /> Move In Again</Button>
+              )}
+              {/* Damage found at handover is still recharged to a tenant who has left. */}
+              {canManageCredit && tenant.status === "moved_out" && (
+                <Button variant="outline" onClick={() => navigate(`/tenants/${id}/charges/new`)}>
+                  <Plus className="h-4 w-4" /> Add Charge
+                </Button>
+              )}
+              {/* A tenant who has left can still be owed money back. */}
+              {canManageCredit && (
+                <Button variant="outline" onClick={() => navigate(`/tenants/${id}/credits/new`)}>
+                  <Plus className="h-4 w-4" /> Add Credit
+                </Button>
+              )}
+              <Button variant="outline" onClick={handleStatement} loading={downloading}>
+                <Download className="h-4 w-4" /> Statement PDF
+              </Button>
+            </>
           )}
           {mode !== "view" && (
             <Button variant="ghost" onClick={() => setMode("view")}>Cancel</Button>
@@ -297,7 +366,15 @@ export default function TenantDetailPage() {
               <Field label="Phone" error={editForm.formState.errors.phone?.message}><input {...editForm.register("phone")} className={inputCls} /></Field>
               <Field label="Email" error={editForm.formState.errors.email?.message}><input {...editForm.register("email")} className={inputCls} /></Field>
               <Field label="Monthly rent (KES)" error={editForm.formState.errors.monthly_rent?.message}><input {...editForm.register("monthly_rent")} className={inputCls} /></Field>
-              <Field label="Rent security deposit (KES)" error={editForm.formState.errors.deposit_paid?.message}><input {...editForm.register("deposit_paid")} className={inputCls} /></Field>
+              {/* Changing this books the difference to 1030/2100, so the
+                  statement and the balance sheet follow the edit. */}
+              <Field
+                label="Rent security deposit (KES)"
+                error={editForm.formState.errors.deposit_paid?.message}
+                hint="Changing this books the difference to the deposit account and shows on the statement."
+              >
+                <input {...editForm.register("deposit_paid")} className={inputCls} />
+              </Field>
               {/* The override, not the default: blank leaves the letting on the
                   rule (one month's rent, three commercial). It exists because
                   some deposits were agreed at a figure the rule never produces,
@@ -390,6 +467,36 @@ export default function TenantDetailPage() {
         </Card>
       )}
 
+      {mode === "movein" && (
+        <Card padding="md">
+          <MoveInAgainForm tenant={tenant} onCancel={() => setMode("view")} />
+        </Card>
+      )}
+
+      {/* A returning tenant has one row per letting; link them together. */}
+      {tenancies.length > 1 && (
+        <Card padding="md">
+          <p className="text-xs uppercase tracking-wider text-content-muted">Tenancies</p>
+          <ul className="mt-2 divide-y divide-border text-sm">
+            {tenancies.map((t) => (
+              <li key={t.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                {t.id === tenant.id ? (
+                  <span className="font-medium text-content">{t.building_name} · {t.unit_label} (this tenancy)</span>
+                ) : (
+                  <Link to={`/tenants/${t.id}`} className="font-medium text-sage-700 hover:underline">
+                    {t.building_name} · {t.unit_label}
+                  </Link>
+                )}
+                <span className="text-content-muted tabular-nums">
+                  {toDayFirst(t.move_in_date)} – {t.move_out_date ? toDayFirst(t.move_out_date) : "present"}
+                  {" · "}{t.status_display}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
+
       {/* Contact + finance summary */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card padding="md">
@@ -423,12 +530,33 @@ export default function TenantDetailPage() {
             {depositAgreed ? `${KES(tenant.expected_deposit)} agreed` : depositRule}
           </p>
         </Card>
+        {/* Balance: what the tenant owes, or the Credit on Account they hold.
+            A credit is the other side of the same figure, so it lives here
+            rather than on a card of its own. */}
         <Card padding="md">
-          <p className="text-xs uppercase tracking-wider text-content-muted">Arrears</p>
-          <p className={cn("mt-2 font-semibold tabular-nums", owedNow > 0 ? "text-orange-600" : "text-sage-600")}>
-            {formatBalanceKES(owedNow)}
+          <p className="text-xs uppercase tracking-wider text-content-muted">
+            {owedNow < 0 ? "Credit on Account" : "Balance"}
           </p>
-          {thisMonth && <p className="mt-1 text-xs text-content-muted">{thisMonth.label}</p>}
+          <p className={cn("mt-2 font-semibold tabular-nums", owedNow > 0 ? "text-orange-600" : "text-sage-600")}>
+            {owedNow < 0 ? KES(-owedNow) : owedNow > 0 ? `Owes ${KES(owedNow)}` : formatBalanceKES(owedNow)}
+          </p>
+          <p className="mt-1 text-xs text-content-muted">
+            {owedNow < 0 ? "Applies to next invoice" : thisMonth?.label}
+            {creditsHeld > 0 && ` · ${KES(creditsHeld)} held`}
+            {refundsToSend > 0 && ` · ${KES(refundsToSend)} refund to send`}
+          </p>
+          {canManageCredit && (
+            <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs">
+              {refundable > 0 && (
+                <Link to={`/tenants/${id}/credits/refund`} className="inline-flex items-center gap-1 text-teal-700 hover:underline">
+                  <Send className="h-3 w-3" /> Refund Credit
+                </Link>
+              )}
+              <a href="#credit-history" className="inline-flex items-center gap-1 text-teal-700 hover:underline">
+                <History className="h-3 w-3" /> Credit History
+              </a>
+            </div>
+          )}
         </Card>
       </div>
 
@@ -462,16 +590,72 @@ export default function TenantDetailPage() {
         {history?.payments.length ? (
           <Table minWidth={720}>
             <THead>
-              <TR><TH>Date</TH><TH>Period</TH><TH>Method</TH><TH>Reference</TH><TH className="text-right">Amount</TH></TR>
+              <TR>
+                <TH>Date</TH><TH>Period</TH><TH>Method</TH><TH>Reference</TH><TH className="text-right">Amount</TH>
+                {canManageCredit && <TH aria-label="Actions" />}
+              </TR>
             </THead>
             <TBody>
               {history.payments.map((p) => (
                 <TR key={p.id}>
-                  <TD className="text-content-muted">{p.payment_date}</TD>
+                  <TD className="text-content-muted">{toDayFirst(p.payment_date)}</TD>
                   <TD>{p.period_month}/{p.period_year}</TD>
                   <TD><Badge tone="neutral">{p.source || "—"}</Badge></TD>
-                  <TD className="font-mono text-xs text-content-muted">{p.reference || "—"}</TD>
-                  <TD className="text-right font-medium tabular-nums text-content">{KES(p.amount)}</TD>
+                  <TD className="font-mono text-xs text-content-muted">
+                    <div className="flex items-center gap-2">
+                      {p.reference || "—"}
+                      {p.is_void && (
+                        <Badge tone="unpaid" title={p.void_reason || undefined}>Void</Badge>
+                      )}
+                    </div>
+                    {p.is_void && p.void_reason && (
+                      <p className="mt-0.5 max-w-xs whitespace-normal font-sans text-[11px] text-content-muted">
+                        {p.void_reason}
+                      </p>
+                    )}
+                  </TD>
+                  <TD
+                    className={cn(
+                      "text-right font-medium tabular-nums",
+                      p.is_void ? "text-content-muted line-through" : "text-content",
+                    )}
+                  >
+                    {KES(p.amount)}
+                  </TD>
+                  {canManageCredit && (
+                    <TD className="text-right">
+                      {!p.is_void && (
+                        <button
+                          type="button"
+                          onClick={() => setVoidTarget({
+                            id: p.id,
+                            tenant: tenant.id,
+                            tenant_name: tenant.full_name,
+                            unit_label: tenant.unit_label,
+                            building_name: tenant.building_name,
+                            amount: p.amount,
+                            payment_date: p.payment_date,
+                            period_month: p.period_month,
+                            period_year: p.period_year,
+                            source: p.source,
+                            source_display: p.source,
+                            payment_type: "",
+                            reference: p.reference,
+                            notes: "",
+                            is_void: false,
+                            voided_at: null,
+                            void_reason: "",
+                            created_at: "",
+                          })}
+                          className="inline-flex items-center gap-1 rounded px-1.5 py-1 text-xs font-medium text-ink-500 transition-colors hover:bg-danger-soft hover:text-danger"
+                          title="Void this payment"
+                          aria-label={`Void payment of KES ${p.amount} on ${toDayFirst(p.payment_date)}`}
+                        >
+                          <Undo2 className="h-3.5 w-3.5" /> Void
+                        </button>
+                      )}
+                    </TD>
+                  )}
                 </TR>
               ))}
             </TBody>
@@ -481,18 +665,48 @@ export default function TenantDetailPage() {
         )}
       </Card>
 
+      {voidTarget && (
+        <VoidPaymentModal payment={voidTarget} onClose={() => setVoidTarget(null)} />
+      )}
+
+      {/* Combined commercial space — the units this tenancy occupies. Changing
+          it moves the rent, so it takes the record-money privilege. */}
+      <SpacePanel tenant={tenant} canManage={Boolean(user?.can_record_money)} />
+
+      {/* Credits & refunds — Credit History, Refund Credit, Void. */}
+      <CreditsPanel tenantId={tenant.id} tenantName={tenant.full_name} canManage={canManageCredit} />
+
       {/* Monthly rent roll — one row per month, extends itself as billing posts.
           VAT gets its own column for commercial units, matching the statement;
           residential is exempt, so the column is hidden rather than showing a
           row of dashes. */}
       <Card padding="none">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-hairline px-5 py-4">
-          <h2 className="font-semibold text-content">Monthly rent roll</h2>
-          <p className="text-xs text-content-muted">
-            Arrears b/f + rent + other charges − payments. A new row appears each month.
-          </p>
+          <div>
+            <h2 className="font-semibold text-content">Monthly rent roll</h2>
+            <p className="text-xs text-content-muted">
+              Arrears b/f + rent + other charges + refunds − payments − credits. A new row appears each month.
+            </p>
+          </div>
+          {ledger.length > 0 && (
+            <select
+              aria-label="Rent roll period"
+              value={rollFilter}
+              onChange={(e) => setRollFilter(e.target.value)}
+              className="rounded-md border border-border bg-surface py-1.5 pl-3 pr-8 text-sm text-content focus:border-teal-600 focus:outline-none focus:ring-2 focus:ring-ring/25"
+            >
+              {RENT_ROLL_PRESETS.map((p) => (
+                <option key={p.value} value={p.value}>{p.label}</option>
+              ))}
+              <optgroup label="Month">
+                {[...ledger].reverse().map((m) => (
+                  <option key={m.period} value={rowMonthValue(m)}>{m.label}</option>
+                ))}
+              </optgroup>
+            </select>
+          )}
         </div>
-        {history?.monthly_ledger?.length ? (
+        {rollRows.length ? (
           <Table minWidth={940}>
             <THead>
               <TR>
@@ -501,13 +715,15 @@ export default function TenantDetailPage() {
                 <TH className="text-right">Rent</TH>
                 {showVat && <TH className="text-right">16% VAT</TH>}
                 <TH className="text-right">Other charges</TH>
+                {showRefunds && <TH className="text-right">Refunds</TH>}
                 <TH className="text-right">Total due</TH>
                 <TH className="text-right">Payment made</TH>
+                {showCredits && <TH className="text-right">Credits</TH>}
                 <TH className="text-right">Balance</TH>
               </TR>
             </THead>
             <TBody>
-              {history.monthly_ledger.map((m) => {
+              {rollRows.map((m) => {
                 const balance = Number(m.balance);
                 return (
                   <TR key={m.period}>
@@ -522,8 +738,18 @@ export default function TenantDetailPage() {
                     <TD className="text-right tabular-nums text-content-muted">
                       {Number(m.other_charges) ? KES(m.other_charges) : "—"}
                     </TD>
+                    {showRefunds && (
+                      <TD className="text-right tabular-nums text-content-muted">
+                        {Number(m.refunds ?? 0) ? KES(m.refunds) : "—"}
+                      </TD>
+                    )}
                     <TD className="text-right tabular-nums">{KES(m.total_due)}</TD>
                     <TD className="text-right tabular-nums text-sage-600">{KES(m.paid)}</TD>
+                    {showCredits && (
+                      <TD className="text-right tabular-nums text-sage-600">
+                        {Number(m.credits ?? 0) ? KES(m.credits) : "—"}
+                      </TD>
+                    )}
                     <TD className={cn(
                       "text-right font-medium tabular-nums",
                       balance > 0 ? "text-orange-600" : "text-sage-600",
@@ -535,6 +761,13 @@ export default function TenantDetailPage() {
               })}
             </TBody>
           </Table>
+        ) : ledger.length ? (
+          <p className="px-5 py-6 text-sm text-content-muted">
+            No rent-roll rows in this period.{" "}
+            <button type="button" className="font-medium text-teal-700 hover:underline" onClick={() => setRollFilter("all")}>
+              Show all months
+            </button>
+          </p>
         ) : (
           <p className="px-5 py-6 text-sm text-content-muted">
             Nothing billed yet — the first row appears once rent is charged for a month.

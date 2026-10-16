@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 
-from .models import FinancialAuditLog, LoginAttempt, User
+from .models import AuditLog, LoginAttempt, User
 
 
 @admin.register(User)
@@ -13,19 +13,19 @@ class CustomUserAdmin(UserAdmin):
     add_fieldsets = UserAdmin.add_fieldsets + (("Dashboard role", {"fields": ("role",)}),)
 
 
-@admin.register(FinancialAuditLog)
-class FinancialAuditLogAdmin(admin.ModelAdmin):
+@admin.register(AuditLog)
+class AuditLogAdmin(admin.ModelAdmin):
     """Read-only by design — the audit trail is append-only.
 
     Nothing in the codebase updates or deletes a row; blocking it here means the
     log cannot be quietly tidied up from the admin either.
     """
 
-    list_display = ("created_at", "action", "object_type", "object_id", "actor", "summary")
-    list_filter = ("action", "object_type")
-    search_fields = ("summary", "actor__email", "object_id")
+    list_display = ("created_at", "kind", "action", "object_label", "actor_label", "source", "summary")
+    list_filter = ("kind", "source", "is_financial", "object_type")
+    search_fields = ("summary", "object_label", "actor_label", "actor__email", "session_id", "request_id")
     date_hierarchy = "created_at"
-    readonly_fields = tuple(f.name for f in FinancialAuditLog._meta.fields)
+    readonly_fields = tuple(f.name for f in AuditLog._meta.fields)
 
     def has_add_permission(self, request):
         return False

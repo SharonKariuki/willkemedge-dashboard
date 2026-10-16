@@ -9,6 +9,7 @@ import {
   Receipt,
   Scale,
   Droplets,
+  History,
   Settings,
   Sprout,
   Users,
@@ -28,6 +29,7 @@ export type ViewKey =
   | "accounting"
   | "notifications"
   | "reports"
+  | "activity"
   | "settings";
 
 export interface NavItem {
@@ -36,6 +38,8 @@ export interface NavItem {
   label: string;
   icon: LucideIcon;
   togglable: boolean;
+  /** Shown only to the owner/director (`can_forgive_money`). */
+  ownerOnly?: boolean;
   description?: string;
 }
 
@@ -52,5 +56,6 @@ export const NAV_ITEMS: NavItem[] = [
   { key: "accounting", to: "/accounting", label: "Accounting", icon: Calculator, togglable: true, description: "Chart of accounts, P&L, balance sheet" },
   { key: "notifications", to: "/notifications", label: "Notifications", icon: Bell, togglable: true, description: "Reminders and alerts" },
   { key: "reports", to: "/reports", label: "Reports", icon: BarChart3, togglable: true, description: "Statements and analytics" },
+  { key: "activity", to: "/activity", label: "Activity", icon: History, togglable: false, ownerOnly: true },
   { key: "settings", to: "/settings", label: "Settings", icon: Settings, togglable: false },
 ];

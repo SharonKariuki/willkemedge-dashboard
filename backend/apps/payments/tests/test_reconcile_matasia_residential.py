@@ -18,7 +18,7 @@ from django.core.management.base import CommandError
 from apps.buildings.models import Building, Unit, UnitClassification, UnitStatus
 from apps.payments.management.commands import reconcile_matasia_residential as cmd
 from apps.payments.models import Arrears, Payment, UtilityCharge
-from apps.payments.monthly_ledger import build_monthly_ledger
+from apps.payments.monthly_ledger import OPENING_MARKER, build_monthly_ledger
 from apps.payments.services import process_payment
 from apps.tenants.models import Tenant, TenantStatus
 
@@ -148,12 +148,29 @@ class TestOpeningPosition:
         assert D(rows["7/2026"]["balance"]) == D("-2000.00")
         assert D(rows["8/2026"]["total_due"]) == D("19800.00")
 
-    def test_zero_brought_forward_creates_nothing(self, flats, monkeypatch):
+    def test_zero_brought_forward_writes_a_nil_opening(self, flats, monkeypatch):
         _stmt(monkeypatch, [_row(flats["owing"], 0, 22000)])
 
         call_command("reconcile_matasia_residential", "--apply")
 
-        assert _july(flats["owing"]) is None
+        jul = _july(flats["owing"])
+        assert jul.expected_rent == D("0.00")
+        assert jul.expected_vat == D("0.00")
+        assert OPENING_MARKER in jul.waive_notes
+
+    def test_catch_up_billing_does_not_raise_a_nil_opening_month(self, flats, monkeypatch):
+        """MCG02, MCG03 and MCG05 were billed a full July on 12 Sept 2026 because
+        their nil opening left July with no row for the catch-up to find."""
+        from apps.payments import tasks
+
+        _stmt(monkeypatch, [_row(flats["owing"], 0, 22000)])
+        call_command("reconcile_matasia_residential", "--apply")
+
+        monkeypatch.setattr(tasks, "billing_floor", lambda: (2026, 7))
+        monkeypatch.setattr(tasks.timezone, "localdate", lambda: _dt.date(2026, 9, 1))
+        tasks.generate_monthly_arrears()
+
+        assert _july(flats["owing"]).expected_rent == D("0.00"), "July was billed over a nil opening"
 
     def test_an_existing_july_row_is_never_overwritten(self, flats, monkeypatch):
         Arrears.objects.create(

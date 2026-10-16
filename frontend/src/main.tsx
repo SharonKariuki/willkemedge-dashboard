@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MutationCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { Toaster } from "react-hot-toast";
@@ -24,7 +24,19 @@ try {
   // ignore
 }
 
-const queryClient = new QueryClient({
+// Any change that succeeds — a payment, credit, water reading, move-out,
+// manual income, deposit edit — can move the books. Rather than every mutation
+// remembering to say so, all of them refresh the money screens: the reports
+// and accounting figures and the dashboard. Only screens on display refetch.
+const mutationCache = new MutationCache({
+  onSuccess: () => {
+    void queryClient.invalidateQueries({ queryKey: ["reports"] });
+    void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+  },
+});
+
+const queryClient: QueryClient = new QueryClient({
+  mutationCache,
   defaultOptions: {
     queries: {
       refetchOnWindowFocus: false,

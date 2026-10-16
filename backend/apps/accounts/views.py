@@ -5,6 +5,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.views import TokenRefreshView
 
+from . import audit
 from .serializers import (
     ChangePasswordSerializer,
     LoginSerializer,
@@ -18,6 +19,20 @@ from .services import (
     is_locked_out,
     record_login_attempt,
 )
+
+
+def _record_auth(action: str, summary: str, email: str, *, actor=None, session_id=None) -> None:
+    audit.record(
+        kind="auth",
+        action=action,
+        object_type="user",
+        object_id=getattr(actor, "pk", None),
+        object_label=email,
+        summary=summary,
+        actor=actor,
+        is_financial=False,
+        session_id=session_id,
+    )
 
 
 class HealthView(APIView):
@@ -37,6 +52,7 @@ class LoginView(APIView):
 
         if email and is_locked_out(email, ip_address):
             record_login_attempt(email=email, request=request, successful=False)
+            _record_auth("auth.locked_out", f"Sign-in blocked for {email}: too many failed attempts", email)
             return Response(
                 {"detail": "Account temporarily locked. Try again in 30 minutes."},
                 status=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -46,12 +62,17 @@ class LoginView(APIView):
         if not serializer.is_valid():
             if email:
                 record_login_attempt(email=email, request=request, successful=False)
+                _record_auth("auth.login_failed", f"Failed sign-in for {email}", email)
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
         record_login_attempt(email=email, request=request, successful=True)
         # Successful auth resets the rolling failed-attempt window so a user
         # who fumbled their password isn't left near the lockout threshold.
         clear_failed_attempts(email)
+        _record_auth(
+            "auth.login", "Signed in", email,
+            actor=serializer.user, session_id=serializer.session_id,
+        )
         return Response(serializer.validated_data, status=status.HTTP_200_OK)
 
 
@@ -63,6 +84,7 @@ class LogoutView(APIView):
         serializer = LogoutSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         serializer.save()
+        _record_auth("auth.logout", "Signed out", request.user.email, actor=request.user)
         return Response(status=status.HTTP_205_RESET_CONTENT)
 
 
@@ -156,6 +178,7 @@ class PasswordResetRequestView(APIView):
             user = User.objects.get(email=email, is_active=True)
             token_obj = PasswordResetToken.create_for_user(user)
             send_password_reset_email.delay(user.id, token_obj.token)
+            _record_auth("auth.password_reset_request", f"Password reset link requested for {email}", email)
         except User.DoesNotExist:
             pass  # Silent — don't reveal whether email exists
 
@@ -219,5 +242,6 @@ class PasswordResetConfirmView(APIView):
         # Blacklist all outstanding JWT refresh tokens for this user.
         _blacklist_all_refresh_tokens(user)
 
+        _record_auth("auth.password_reset", "Reset password from an emailed link", user.email, actor=user)
         return Response({"detail": "Password updated successfully."})
 

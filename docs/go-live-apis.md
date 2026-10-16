@@ -100,32 +100,38 @@ nothing on a schedule.
    |---|---|---|
    | `rent-reminders` | SMS N days before each tenant's due day | daily 08:00 |
    | `arrears-reminders` | SMS on/after due day when unpaid | daily 09:00 |
-   | `monthly-arrears` | Raise **this** month's rent (residential) | 1st of month 06:30 |
-   | `monthly-statements` | Email **this** month's statement PDF (residential) | 1st of month 07:00 |
    | `monthly-arrears` | Raise **next** month's rent (commercial) | 25th of month 06:30 |
-   | `monthly-statements` | Email **next** month's statement PDF (commercial) | 25th of month 07:00 |
+   | `monthly-statements` | Send **next** month's statement (commercial) | 25th of month 07:00 |
+   | `monthly-arrears` | Raise **next** month's rent (residential) | 28th of month 06:30 |
+   | `monthly-statements` | Send **next** month's statement (residential) | 28th of month 07:00 |
+   | `monthly-arrears` | Catch-up for both | 1st of month 06:30 |
+   | `monthly-statements` | Catch-up for both | 1st of month 07:00 |
    | `recalculate-statuses` | Refresh unit paid/unpaid/arrears status | daily 01:00 |
    | `daily-reconciliation` | Email the unmatched-credit summary | daily 18:00 |
 
-   The monthly pair fires on **two days**, because the roster is on two cycles.
-   A residential tenant is billed on the 1st for the month just begun; a
-   commercial one on the 25th for the month ahead, so the arcade's VAT invoice
-   arrives before the month it covers. Rent falls due on the **5th of the month
-   billed** either way.
+   Every tenant is invoiced **a month ahead**: the invoice carries next month's
+   rent and this month's water, and rent falls due on the **5th of the month
+   billed**. Commercial tenants are invoiced on the **25th** (so the arcade's VAT
+   invoice arrives before the month it covers), residential tenants on the
+   **28th**. The 1st repeats both as a catch-up.
 
-   Both days must be scheduled. Each run covers whichever tenants that day's
-   cycle applies to and skips the rest as already-sent, so dropping one day
-   silently stops billing that half of the portfolio — and each run is also the
-   other's catch-up, since `monthly-arrears` bills every month a tenant is short
-   of. The 25th is `STATEMENT_RUN_DAY` in Django settings (default 25) — move it
-   and you must move the scheduler's cron lines to match, or the commercial jobs
-   fire on a day that bills the month already in progress.
+   Both invoice days must be scheduled. Each run covers whichever tenants that
+   day applies to and skips the rest as already-sent, so dropping one day leaves
+   that half of the portfolio uninvoiced until the 1st — `monthly-arrears` bills
+   every month a tenant is short of, so any later run catches up. The 25th is
+   `STATEMENT_RUN_DAY` and the 28th `RESIDENTIAL_RUN_DAY` in Django settings —
+   move either and you must move the scheduler's cron lines to match.
+
+   Water readings for the month must be entered **before** that tenant's invoice
+   day. A metered unit with no reading is still invoiced (rent only) and listed
+   under `missing_water` in the run's response; its water goes on the next
+   invoice.
 
    `monthly-statements` runs half an hour *after* `monthly-arrears`, which is
    what raises the rent — a statement sent before it states a balance with the
    stated month missing. It takes an optional `?period=YYYY-MM` to re-issue a
    month **for everybody** — without it each tenant is stated the month their own
-   cycle is on. It only writes to tenants who have an email address on file, and
+   invoice day has reached. It only writes to tenants who have an email address on file, and
    sends each tenant at most one statement per month, so it is safe to re-run.
    The response's `periods` names which months the run actually covered.
 

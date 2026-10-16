@@ -68,6 +68,7 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "apps.accounts.middleware.SecurityHeadersMiddleware",
+    "apps.accounts.middleware.AuditContextMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -134,6 +135,19 @@ REST_FRAMEWORK = {
     "DEFAULT_RENDERER_CLASSES": (
         "rest_framework.renderers.JSONRenderer",
     ),
+    # Every date this product takes is typed by someone in Nairobi, and in
+    # Kenya a date is written day-first. DRF ships ISO-8601 alone, so
+    # "01-10-2026" for 1 October came back as "Date has wrong format. Use one
+    # of these formats instead: YYYY-MM-DD." — which is what the landlord saw
+    # when he tried to register a tenant, and it stops the registration dead.
+    #
+    # ISO stays first so the frontend's <input type="date"> (which always
+    # submits YYYY-MM-DD) is unaffected. The two added formats are both errors
+    # today, so nothing that currently succeeds changes meaning — this only
+    # widens what is accepted. Day-first is the only reading either can have
+    # here; an American "10-01-2026" for 1 October is not a shape any caller
+    # of this system produces.
+    "DATE_INPUT_FORMATS": ["iso-8601", "%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y"],
 }
 
 SIMPLE_JWT = {
@@ -151,6 +165,13 @@ LANGUAGE_CODE = "en-us"
 TIME_ZONE = "Africa/Nairobi"
 USE_I18N = True
 USE_TZ = True
+
+# Django's own forms — the admin, in practice — read their date formats from
+# the active locale, and "en" is month-first. That did something worse than
+# reject a Kenyan date: it accepted "01/10/2026" and silently stored 10
+# January. `config.formats` overrides the locale so day-first is what the
+# admin both parses and prints. See config/formats/en/formats.py.
+FORMAT_MODULE_PATH = "config.formats"
 
 # ---------------------------------------------------------------------------
 # Static / Media
@@ -190,6 +211,14 @@ MPESA_ACCOUNT_PREFIX = config("MPESA_ACCOUNT_PREFIX", default="90290")
 # ---------------------------------------------------------------------------
 # Notifications
 # ---------------------------------------------------------------------------
+# Hard kill switch for ALL outbound SMS (tenant, admin, manual, test command).
+# Off unless explicitly set to true: when false, send_sms() returns before any
+# call to Africa's Talking, whatever AT_API_KEY holds.
+SMS_ENABLED = config("SMS_ENABLED", default=False, cast=bool)
+# Hard kill switch for ALL email to tenants (receipts, statements, notices,
+# manual sends). Off unless explicitly set to true. Admin alerts and password
+# resets are not tenant email and are unaffected.
+TENANT_EMAIL_ENABLED = config("TENANT_EMAIL_ENABLED", default=False, cast=bool)
 AT_API_KEY = config("AT_API_KEY", default="")
 AT_USERNAME = config("AT_USERNAME", default="sandbox")
 AT_SENDER_ID = config("AT_SENDER_ID", default="")
@@ -220,15 +249,17 @@ AT_TOPUP_ACCOUNT = config("AT_TOPUP_ACCOUNT", default="wilkemedge")
 # date is within this many days.
 RENT_REMINDER_LEAD_DAYS = config("RENT_REMINDER_LEAD_DAYS", default=3, cast=int)
 
-# Day of the month the billing cycle rolls forward on. From this day the system
-# raises and states the FOLLOWING month: the 25th of August bills and emails
-# September, which is what tenants asked for — the statement arrives before the
-# month it covers, not after it has started. See apps/payments/billing_calendar.py.
+# Days of the month the invoice for the FOLLOWING month is generated and sent.
+# Commercial lettings on STATEMENT_RUN_DAY (the 25th), residential on
+# RESIDENTIAL_RUN_DAY (the 28th): 25 and 28 September invoice October's rent
+# with September's water, due 5 October. See apps/payments/billing_calendar.py.
+# Both are clamped to 1..28 so they fall in every month.
 #
-# The external scheduler must fire monthly-arrears and monthly-statements on the
-# same day (.github/workflows/scheduled-jobs.yml); changing this alone only moves
-# what the jobs compute, not when they run.
+# The external scheduler must fire monthly-arrears and monthly-statements on
+# the same days (.github/workflows/scheduled-jobs.yml); changing a setting alone
+# only moves what the jobs compute, not when they run.
 STATEMENT_RUN_DAY = config("STATEMENT_RUN_DAY", default=25, cast=int)
+RESIDENTIAL_RUN_DAY = config("RESIDENTIAL_RUN_DAY", default=28, cast=int)
 
 # Email — SMTP (Gmail by default; swap host/port for any other SMTP provider)
 EMAIL_BACKEND = config(
@@ -285,6 +316,11 @@ ALLOW_INSECURE_COOP_IPN = config("ALLOW_INSECURE_COOP_IPN", default=False, cast=
 # send it) and internal admin/director alerts (they are how you check the data
 # is right while tenants stay silent).
 TENANT_NOTIFICATIONS_ENABLED = config("TENANT_NOTIFICATIONS_ENABLED", default=True, cast=bool)
+# The monthly statement run texts each tenant their statement summary as well as
+# emailing the PDF. Turn this off to stop only the SMS — e.g. while the Africa's
+# Talking wallet is empty — without stopping the statement emails. Manual sends
+# from the dashboard are email-only and unaffected.
+STATEMENT_SMS_ENABLED = config("STATEMENT_SMS_ENABLED", default=True, cast=bool)
 # Master switch for INTERNAL staff alerts: unmatched credits, the daily
 # reconciliation summary, and reversal authorisation requests. Set false for a
 # quiet testing window. Note this silences the reversal request too — the

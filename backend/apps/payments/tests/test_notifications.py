@@ -115,6 +115,22 @@ class TestSendSmsSkippedWithoutApiKey:
         assert "AT_API_KEY not set" in caplog.text
 
 
+class TestSmsKillSwitch:
+    @patch("httpx.post")
+    def test_no_request_when_sms_disabled_even_with_api_key(self, mock_post, settings, caplog):
+        import logging
+
+        settings.SMS_ENABLED = False
+        settings.AT_API_KEY = "live-key"
+        settings.AT_USERNAME = "wilkem"
+
+        from apps.payments.notifications import send_sms
+        with caplog.at_level(logging.WARNING):
+            assert send_sms("0712345678", "Hi") is None
+        mock_post.assert_not_called()
+        assert "SMS_ENABLED is off" in caplog.text
+
+
 class TestToIntlPhone:
     @pytest.mark.parametrize(
         "raw,expected",

@@ -4,19 +4,19 @@ Celery tasks for the payments app.
 Tasks:
   send_payment_confirmation  — SMS + email after every payment
   recalculate_all_statuses   — nightly unit status sweep
-  generate_monthly_arrears   — 1st + 25th: create arrears records
+  generate_monthly_arrears   — 25th + 28th (+ 1st catch-up): create arrears records
   send_rent_reminders        — daily: SMS N days before each tenant's due day
   send_arrears_reminders     — daily: SMS on/after due day when rent unpaid
-  send_monthly_statements    — 1st + 25th: emailed rent statement PDF per tenant
+  send_monthly_statements    — 25th + 28th (+ 1st catch-up): statement PDF + summary SMS per tenant
   poll_bank_statement        — hourly fallback for banks without webhooks
 
-The two monthly jobs run on two days, because the roster is on two cycles: the
-1st raises and states the month just begun for residential tenants, and the
-25th raises and states the month AHEAD for commercial ones, whose VAT invoice
-has to arrive before the month it covers. Both jobs read each tenant's month
-from ``billing_calendar.tenant_billing_period`` rather than deciding for
-themselves — see that module for what else depends on the cycle. Rent falls due
-on the 5th of the month billed either way.
+Every tenant is invoiced a month ahead, and the two monthly jobs run on two
+days because the two kinds of letting are invoiced on different ones: the 25th
+for commercial tenants and the 28th for residential ones. Either way the invoice
+carries next month's rent and this month's water, and the rent falls due on the
+5th. The 1st runs both jobs again as a catch-up. Both jobs read each tenant's
+month from ``billing_calendar.tenant_billing_period`` rather than deciding for
+themselves — see that module for what else depends on it.
 
 All tasks use bind=True + max_retries=3 with exponential backoff.
 """
@@ -82,7 +82,7 @@ def _notify_tenant_payment(tenant, amount, reference: str, payment_date) -> None
     msg = payment_sms_message(tenant.full_name, amount, unit_label, reference, statement)
     send_sms(tenant.phone, msg)
 
-    if tenant.email:
+    if tenant.email and getattr(settings, "TENANT_EMAIL_ENABLED", False):
         html = payment_statement_email_html(tenant.full_name, amount, reference, statement)
         attachments = []
         pdf = render_to_pdf("payments/statement_pdf.html", statement)
@@ -387,8 +387,20 @@ def recalculate_all_statuses() -> None:
     """
     Nightly at 00:30 EAT. Recalculate every occupied unit's status
     based on current-month payments to catch anything missed intraday.
+
+    A tenant who has given notice still holds the unit until they move out —
+    the same "current tenant" every other occupancy check uses. This sweep used
+    to look for ACTIVE alone, so the first night after notice was given it
+    marked the unit vacant: MCF12 read Vacant from 22 Sept 2026 while Sidai was
+    still in it and still being billed. A unit it has wrongly vacated is
+    re-examined too, or that mistake would never be undone.
+
+    The other units of a combined space hold no tenancy of their own; they
+    mirror their head and are kept in step with it here rather than vacated.
     """
     from decimal import Decimal
+
+    from django.db.models import Exists, OuterRef, Q
 
     from apps.buildings.models import Unit, UnitStatus
     from apps.buildings.services import recalculate_unit_status
@@ -396,17 +408,28 @@ def recalculate_all_statuses() -> None:
 
     from .services import expected_vat_for, rent_payments_for
 
+    current = [TenantStatus.ACTIVE, TenantStatus.NOTICE_GIVEN]
     now = timezone.now()
-    occupied = Unit.objects.exclude(status=UnitStatus.VACANT).select_related("building")
+    has_tenant = Tenant.objects.filter(unit=OuterRef("pk"), status__in=current)
+    heads = (
+        Unit.objects.filter(combined_into__isnull=True)
+        .filter(~Q(status=UnitStatus.VACANT) | Exists(has_tenant))
+        .select_related("building")
+    )
     updated = 0
 
-    for unit in occupied:
-        tenant = Tenant.objects.filter(unit=unit, status=TenantStatus.ACTIVE).first()
+    for unit in heads:
+        tenant = Tenant.objects.filter(unit=unit, status__in=current).first()
         if not tenant:
             unit.status = UnitStatus.VACANT
             unit.save(update_fields=["status", "updated_at"])
             updated += 1
             continue
+        if unit.status == UnitStatus.VACANT:
+            # recalculate_unit_status will not touch a vacant unit; a unit with
+            # a current tenant is occupied before it is anything else.
+            unit.status = UnitStatus.OCCUPIED_UNPAID
+            unit.save(update_fields=["status", "updated_at"])
 
         # Only non-void RENT settles rent, and a commercial tenant's obligation
         # includes the VAT they actually pay — same basis as _update_arrears.
@@ -417,6 +440,12 @@ def recalculate_all_statuses() -> None:
 
         recalculate_unit_status(unit, total_paid, obligation=obligation)
         updated += 1
+
+    # Unit.save mirrors a head's status onto its space only when the head's
+    # status changes; a member that drifted while the head stood still is
+    # brought back here.
+    for head in Unit.objects.filter(combined_units__isnull=False).distinct():
+        head.combined_units.exclude(status=head.status).update(status=head.status)
 
     logger.info("recalculate_all_statuses: updated %d units", updated)
 
@@ -442,23 +471,51 @@ def billable_active_tenants(*select_related: str):
 def billing_floor() -> tuple[int, int] | None:
     """The first month the books charge rent for — the month after cutover.
 
-    The changeover posted one ``opening_ar`` journal entry per tenant carrying
-    everything owed up to that date, so rent accrues from the month after it.
-    Without this floor, catching up would walk back to each tenant's move-in and
-    re-bill years that the opening balance already settled.
+    Each tenant's opening position carries everything owed up to the changeover,
+    so rent accrues from the month after it. Without this floor, catching up
+    would walk back to each tenant's move-in and re-bill years that the opening
+    balance already settled.
 
-    None when no opening entries exist (a fresh install), in which case each
-    tenant is simply billed from their move-in month.
+    The cutover is the earliest month of anybody's opening position: an Arrears
+    row marked ``OPENING_MARKER`` or an earlier row of the same tenant (the
+    go-live load's June rows — see ``ledger.posting._is_opening``). The go-live
+    journal entries (``opening_ar``, ``opening_deposit``) are read too, so a
+    database whose opening rows were never marked still finds its cutover.
+
+    None when there is no opening position at all (a fresh install), in which
+    case each tenant is simply billed from their move-in month.
     """
+    from django.db.models import Exists, OuterRef, Q
+
     from apps.ledger.models import JournalEntry
 
-    cutover = (
-        JournalEntry.objects.filter(source_type="opening_ar")
+    from .models import Arrears
+    from .monthly_ledger import OPENING_MARKER
+
+    marked_later = Arrears.objects.filter(
+        Q(period_year__gt=OuterRef("period_year"))
+        | Q(period_year=OuterRef("period_year"), period_month__gte=OuterRef("period_month")),
+        tenant_id=OuterRef("tenant_id"),
+        waive_notes__contains=OPENING_MARKER,
+    )
+    candidates = []
+    first_opening_row = (
+        Arrears.objects.filter(Exists(marked_later))
+        .order_by("period_year", "period_month")
+        .values_list("period_year", "period_month")
+        .first()
+    )
+    if first_opening_row:
+        candidates.append(first_opening_row)
+    go_live = (
+        JournalEntry.objects.filter(source_type__in=("opening_ar", "opening_deposit"))
         .order_by("date")
         .values_list("date", flat=True)
         .first()
     )
-    return next_period(cutover.year, cutover.month) if cutover else None
+    if go_live:
+        candidates.append((go_live.year, go_live.month))
+    return next_period(*min(candidates)) if candidates else None
 
 
 def first_billable_period(tenant, floor) -> tuple[int, int] | None:
@@ -488,21 +545,20 @@ def generate_monthly_arrears() -> int:
     """
     Creates the Arrears records every active tenant is missing.
 
-    Runs on the 1st and again on the 25th, ahead of each statement run, and
-    raises whichever month each tenant's own cycle is on:
+    Runs on the 25th and the 28th, ahead of each statement run, and raises
+    whichever month each tenant's own run day has reached:
 
-      * A RESIDENTIAL tenant is billed on the 1st for the month just begun, and
-        pays by the 5th. The 25th run raises nothing new for them — their month
-        was raised three weeks earlier and the next one is not theirs yet.
-      * A COMMERCIAL tenant is billed on the 25th for the month AHEAD, so the
-        VAT invoice that goes out the same morning states a September the
-        ledger has actually charged. The 1st run is then their catch-up: a
-        statement cannot state a month that has not been raised, so a failed
-        25th has to be repaired before the statement run that follows it.
+      * A COMMERCIAL tenant is billed on the 25th for the month ahead — 25
+        September raises October — so the VAT invoice that goes out the same
+        morning states an October the ledger has actually charged.
+      * A RESIDENTIAL tenant is billed on the 28th for the month ahead. The
+        25th run raises nothing new for them; their next month is not due to
+        be raised for three more days.
 
-    Each run is also a catch-up for the other, and for itself: the task bills
-    every month a tenant is short of, so a missed trigger is a delay rather
-    than a write-off.
+    It runs again on the 1st as a catch-up: a statement cannot state a month
+    that has not been raised, so a failed 25th or 28th has to be repaired
+    before the rent falls due on the 5th. Every run bills every month a tenant
+    is short of, so a missed trigger is a delay rather than a write-off.
 
     A period raised in advance is charged, not overdue. Nothing that reports
     debt counts it: the rent roll, the aging table and the unit-status sweep all
@@ -527,6 +583,9 @@ def generate_monthly_arrears() -> int:
     actually happened.
     """
 
+    from django.db import transaction
+
+    from .credits import apply_account_credits
     from .models import Arrears
     from .services import apply_available_credit, expected_vat_for
 
@@ -561,9 +620,23 @@ def generate_monthly_arrears() -> int:
                 is_cleared=False,
             )
             created += 1
-            # Oldest period first, so banked credit pays down the earliest debt.
+            # Oldest period first, so banked credit pays down the earliest debt:
+            # overpaid rent first, then the tenant's numbered credits (Add
+            # Credit) that are not on hold.
             before = arrears.credit_applied
             apply_available_credit(arrears)
+            try:
+                # A credit that cannot post must not stop the month being
+                # raised for everyone else; it is logged and stays available
+                # for the next run or for the owner to apply.
+                with transaction.atomic():
+                    apply_account_credits(arrears)
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "generate_monthly_arrears: could not apply account credit to arrears #%s",
+                    arrears.pk,
+                )
+            arrears.refresh_from_db()
             if arrears.credit_applied != before:
                 credited += 1
 
@@ -755,18 +828,24 @@ def send_monthly_statements(period_iso: str | None = None) -> dict:
     """
     Email every active tenant their rent statement with the PDF attached.
 
-    Runs on the 1st and again on the 25th, and each tenant is emailed the month
-    THEIR cycle is on: a residential tenant gets September on 1 September, the
-    day it was raised and four days before it falls due; a commercial tenant
-    gets September on 25 August, so the VAT invoice arrives before the month it
-    covers. `billing_calendar.tenant_billing_period` works out which.
+    Runs on the 25th and the 28th, and each tenant is sent the month THEIR run
+    day has reached: a commercial tenant gets October on 25 September and a
+    residential tenant gets October on 28 September, each with September's
+    water and each due 5 October. `billing_calendar.tenant_billing_period`
+    works out which.
 
-    One run therefore serves both cycles and neither run sends twice, because
-    the dedupe key is the month STATED. On 25 August a residential tenant is
-    still on August, which went out on the 1st, so they are skipped; on
-    1 September a commercial tenant is on September, which went out on 25
-    August, so they are skipped. Nobody has to reason about who a given day's
-    run is "for".
+    One run therefore serves both kinds of letting and no run sends twice,
+    because the dedupe key is the month STATED. On 25 September a residential
+    tenant is still on September, which went out on 28 August, so they are
+    skipped; on 28 September a commercial tenant is on October, which went out
+    on the 25th, so they are skipped. The catch-up run on the 1st finds
+    everyone already sent unless one of those days failed. Nobody has to
+    reason about who a given day's run is "for".
+
+    A tenant whose meter has been read before but has no reading for the
+    month their invoice carries water for is still sent the invoice — rent
+    cannot wait on a meter — and is listed under ``missing_water`` so the
+    office can enter the reading. It then appears on the following invoice.
 
     Schedule this *after* `monthly-arrears` on the same morning: that job is
     what raises the month's rent, and a statement sent before it has run states
@@ -781,64 +860,108 @@ def send_monthly_statements(period_iso: str | None = None) -> dict:
     has no address on file yet, and writing a failure row for each of them every
     month would bury the real failures.
 
+    Every tenant with a phone number is also texted the statement summary —
+    including the many with no email, for whom the SMS is the only copy. The SMS
+    has its own dedupe key, so one that failed is retried on a re-run even when
+    the email already went. STATEMENT_SMS_ENABLED switches the SMS off on its
+    own, without stopping the email.
+
     Returns per-outcome counts, which the cron endpoint echoes in its response so
     the scheduler's log says what actually happened.
     """
-
+    from .billing_calendar import previous_period
+    from .meter_service import missing_usage_reading
     from .models import NotificationStatus, TenantNotification
     from .statement_delivery import (
         open_mail_connection,
         send_tenant_statement,
+        send_tenant_statement_sms,
         statement_dedupe_key,
+        statement_sms_dedupe_key,
     )
 
     as_at, forced_period = _statement_target(period_iso)
     counts = {
         "sent": 0, "failed": 0, "skipped": 0, "no_email": 0,
+        "sms_sent": 0, "sms_failed": 0, "sms_skipped": 0, "no_phone": 0,
         "as_at": as_at.isoformat(),
-        # Which months this run covered, and how many tenants each. A single
-        # "period" cannot describe a mixed roster: the 1 September run states
-        # September for the houses and skips the arcade, which is already on
-        # September from 25 August.
+        # Which months this run emailed, and how many tenants each. A single
+        # "period" cannot describe a mixed roster: the 25 September run states
+        # October for the arcade and September (already sent) for the houses.
         "periods": {},
+        # Units invoiced without the water reading their invoice was due to
+        # carry. The invoice still goes; the reading is owed.
+        "missing_water": [],
     }
+
+    def _already_sent(key):
+        return TenantNotification.objects.filter(
+            dedupe_key=key, status=NotificationStatus.SENT
+        ).exists()
 
     tenants = billable_active_tenants("unit", "unit__building")
     with open_mail_connection() as mail:
         for tenant in tenants:
-            if not tenant.email or not tenant.unit_id:
+            if not tenant.unit_id:
                 counts["no_email"] += 1
+                counts["no_phone"] += 1
                 continue
 
             period = forced_period or tenant_billing_period(tenant, as_at)
-            label = f"{period[0]:04d}-{period[1]:02d}"
-            counts["periods"][label] = counts["periods"].get(label, 0) + 1
+            email_key = statement_dedupe_key(tenant.id, period_start(period))
+            sms_key = statement_sms_dedupe_key(tenant.id, period_start(period))
+            if (
+                # Once per invoice: a tenant already reached on either
+                # channel was flagged by the run that reached them.
+                not (_already_sent(email_key) or _already_sent(sms_key))
+                and missing_usage_reading(tenant, previous_period(*period))
+            ):
+                counts["missing_water"].append(tenant.unit.label)
 
-            # Dedupe on the month the statement is *about*, not the day it was
-            # drawn. Keyed on the send date, the residential run on 1 September
-            # and the commercial run on 25 August would both land in the month
-            # they fired in, and the two cycles would collide.
-            key = statement_dedupe_key(tenant.id, period_start(period))
-            already_sent = TenantNotification.objects.filter(
-                dedupe_key=key, status=NotificationStatus.SENT
-            ).exists()
-            if already_sent:
-                counts["skipped"] += 1
-                continue
-
-            notification = send_tenant_statement(
-                tenant, statement_date=as_at, period=period, dedupe_key=key,
-                connection=mail,
-            )
-            if notification.status == NotificationStatus.SENT:
-                counts["sent"] += 1
+            if not tenant.email:
+                counts["no_email"] += 1
             else:
-                counts["failed"] += 1
+                label = f"{period[0]:04d}-{period[1]:02d}"
+                counts["periods"][label] = counts["periods"].get(label, 0) + 1
+
+                # Dedupe on the month the statement is *about*, not the day it
+                # was drawn. Keyed on the send date, the residential run on 1
+                # September and the commercial run on 25 August would both land
+                # in the month they fired in, and the two cycles would collide.
+                key = email_key
+                if _already_sent(key):
+                    counts["skipped"] += 1
+                else:
+                    notification = send_tenant_statement(
+                        tenant, statement_date=as_at, period=period, dedupe_key=key,
+                        connection=mail,
+                    )
+                    if notification.status == NotificationStatus.SENT:
+                        counts["sent"] += 1
+                    else:
+                        counts["failed"] += 1
+
+            if not tenant.phone:
+                counts["no_phone"] += 1
+                continue
+            if _already_sent(sms_key):
+                counts["sms_skipped"] += 1
+                continue
+            sms = send_tenant_statement_sms(
+                tenant, statement_date=as_at, period=period, dedupe_key=sms_key,
+            )
+            if sms.status == NotificationStatus.SENT:
+                counts["sms_sent"] += 1
+            else:
+                counts["sms_failed"] += 1
 
     logger.info(
-        "send_monthly_statements (as at %s): %d sent %s, %d failed, "
-        "%d already sent, %d with no email on file",
+        "send_monthly_statements (as at %s): email %d sent %s, %d failed, "
+        "%d already sent, %d with no email; SMS %d sent, %d failed, "
+        "%d already sent, %d with no phone; %d missing a water reading %s",
         as_at, counts["sent"], counts["periods"] or "{}", counts["failed"],
-        counts["skipped"], counts["no_email"],
+        counts["skipped"], counts["no_email"], counts["sms_sent"],
+        counts["sms_failed"], counts["sms_skipped"], counts["no_phone"],
+        len(counts["missing_water"]), counts["missing_water"],
     )
     return counts

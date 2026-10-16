@@ -1,4 +1,6 @@
 """Auth serializers."""
+import uuid
+
 from django.contrib.auth import authenticate, get_user_model
 from rest_framework import serializers
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -31,6 +33,12 @@ class LoginSerializer(serializers.Serializer):
             )
 
         refresh = RefreshToken.for_user(user)
+        # One id per sign-in. simplejwt copies custom claims onto every access
+        # token and keeps them through refresh rotation, so every request made
+        # in this sitting carries it and the activity log can group them.
+        self.session_id = uuid.uuid4().hex
+        refresh["sid"] = self.session_id
+        self.user = user
         return {
             "access": str(refresh.access_token),
             "refresh": str(refresh),

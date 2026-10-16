@@ -64,12 +64,27 @@ class User(AbstractUser):
         return self.is_superuser or self.role in ROLES_FORGIVE_MONEY
 
 
-class FinancialAuditLog(models.Model):
-    """Append-only record of every money-affecting action and who took it.
+class AuditKind(models.TextChoices):
+    #: A business action described in words by the code that took it
+    #: ("Voided payment KES 12,000 — duplicate").
+    EVENT = "event", "Action"
+    #: A field-level change captured automatically on a tracked record. Several
+    #: of these often sit under one EVENT from the same request.
+    CHANGE = "change", "Record change"
+    #: Sign-in, sign-out, failed sign-in, password reset.
+    AUTH = "auth", "Sign-in"
+    #: Someone tried to change something their role does not allow.
+    DENIED = "denied", "Refused"
 
-    Payments, arrears and journal entries carry no history of their own, so a
-    corrected amount or a written-off debt used to leave no trace of who did it
-    or what the figure was before. Every such action writes one row here.
+
+class AuditLog(models.Model):
+    """Append-only record of what was done in the system, by whom, and from where.
+
+    It began as the financial audit log (payments, arrears, credits) and keeps
+    that table, so every row written since then is still here. It now also
+    holds automatic field-level changes to tenants, units, buildings, expenses,
+    water charges and users; sign-ins; refused actions; and the server commands
+    that touch data. The director reads it on the Activity page.
 
     Append-only by policy: nothing in the codebase updates or deletes a row,
     and the admin registration is read-only.
@@ -80,23 +95,52 @@ class FinancialAuditLog(models.Model):
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name="financial_actions",
+        related_name="audit_actions",
         help_text="Who performed the action. Null for system/automated actions.",
     )
-    action = models.CharField(
-        max_length=40,
-        help_text="Dotted action name, e.g. 'payment.void', 'arrears.waive'.",
+    # Snapshots, so the row still says who it was after the user is renamed,
+    # re-roled or deleted.
+    actor_label = models.CharField(max_length=150, blank=True)
+    actor_role = models.CharField(max_length=12, blank=True)
+
+    kind = models.CharField(
+        max_length=8, choices=AuditKind.choices, default=AuditKind.EVENT, db_index=True
     )
-    object_type = models.CharField(max_length=30, help_text="Model acted on, e.g. 'payment'.")
+    action = models.CharField(
+        max_length=60,
+        help_text="Dotted action name, e.g. 'payment.void', 'unit.update'.",
+    )
+    object_type = models.CharField(max_length=40, help_text="Model acted on, e.g. 'payment'.")
     object_id = models.PositiveIntegerField(null=True, blank=True)
+    object_label = models.CharField(
+        max_length=150, blank=True, help_text="What the object was called at the time, e.g. 'MCF01'."
+    )
     summary = models.CharField(max_length=255, help_text="Human-readable one-line description.")
     old_values = models.JSONField(default=dict, blank=True)
     new_values = models.JSONField(default=dict, blank=True)
+    is_financial = models.BooleanField(
+        default=False, help_text="Moves or changes money, rent, deposits or charges."
+    )
+
+    source = models.CharField(max_length=10, default="system", db_index=True)
+    source_detail = models.CharField(
+        max_length=120, blank=True, help_text="Command name, scheduled job, or request path."
+    )
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.CharField(max_length=255, blank=True)
+    session_id = models.CharField(
+        max_length=32, blank=True, db_index=True,
+        help_text="One per sign-in; every action taken under that sign-in shares it.",
+    )
+    request_id = models.CharField(
+        max_length=32, blank=True, db_index=True,
+        help_text="Rows written by the same request or command share this.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         db_table = "accounts_financial_audit_log"
-        ordering = ["-created_at"]
+        ordering = ["-created_at", "-id"]
         indexes = [
             models.Index(fields=["object_type", "object_id"]),
             models.Index(fields=["action", "-created_at"]),
@@ -104,7 +148,7 @@ class FinancialAuditLog(models.Model):
         ]
 
     def __str__(self) -> str:
-        return f"{self.created_at:%Y-%m-%d %H:%M} {self.action} by {self.actor or 'system'}"
+        return f"{self.created_at:%Y-%m-%d %H:%M} {self.action} by {self.actor_label or self.actor or 'system'}"
 
 
 class LoginAttempt(models.Model):

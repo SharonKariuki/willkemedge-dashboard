@@ -110,6 +110,16 @@ class Building(models.Model):
     bank_account = models.CharField(max_length=40, blank=True)
     bank_account_name = models.CharField(max_length=120, blank=True)
 
+    # The cover photo on the building's card. Kept in the database rather than
+    # on disk: the Render service has no persistent disk, so a file written to
+    # MEDIA_ROOT would be gone after the next deploy. The browser shrinks the
+    # picture before upload (a few hundred KB), and list queries defer this
+    # column so the buildings page never loads it. No photo means the card
+    # shows a stock placeholder instead.
+    photo = models.BinaryField(null=True, blank=True, editable=False)
+    photo_content_type = models.CharField(max_length=20, blank=True, editable=False)
+    photo_updated_at = models.DateTimeField(null=True, blank=True, editable=False)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -178,6 +188,17 @@ class Unit(models.Model):
             "the unit label and building name."
         ),
     )
+    # A commercial tenant can take several units in a building and pay for
+    # them as one space — Sidai's hospital across MCG05/MCG06, Mavin across
+    # MCG08/MCG09. The units need not be next to each other or on one floor.
+    # One unit is the head: the tenancy, the paybill account and the rent all
+    # hang off it. The others point here and follow its status, so a combined
+    # space is never half let. Changed only through apps.buildings.spaces.
+    combined_into = models.ForeignKey(
+        "self", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="combined_units",
+        help_text="The head unit of the combined space this unit is part of.",
+    )
     notes = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -191,6 +212,12 @@ class Unit(models.Model):
             # payment reference like '90290#DON1A' maps to exactly one unit on any
             # channel — no ambiguity for the matcher to guess at.
             models.UniqueConstraint(Upper("label"), name="unique_unit_label_global"),
+            # adjust-rent rewrites this across a whole building at once; a
+            # negative rent inverts every obligation derived from it.
+            models.CheckConstraint(
+                condition=models.Q(monthly_rent__gte=0),
+                name="unit_monthly_rent_non_negative",
+            ),
         ]
 
     def __str__(self) -> str:
@@ -199,6 +226,24 @@ class Unit(models.Model):
     def save(self, *args, **kwargs):
         self.label = (self.label or "").strip()
         super().save(*args, **kwargs)
+        # Every status change on a head — move-in, a payment, move-out,
+        # maintenance — goes through save(), so this one line keeps the rest of
+        # the space in step without each of those paths knowing about it.
+        update_fields = kwargs.get("update_fields")
+        if self.combined_into_id is None and (update_fields is None or "status" in update_fields):
+            self.combined_units.exclude(status=self.status).update(status=self.status)
+
+    @property
+    def space_units(self) -> list["Unit"]:
+        """Every unit in this unit's space, head first; just itself if not combined."""
+        head = self.combined_into or self
+        # .all() rather than order_by() so a prefetched list is reused.
+        return [head, *sorted(head.combined_units.all(), key=lambda u: u.label)]
+
+    @property
+    def space_label(self) -> str:
+        """'MCG05 + MCG06' for a combined space, else the plain label."""
+        return " + ".join(u.label for u in self.space_units)
 
     def clean(self):
         super().clean()

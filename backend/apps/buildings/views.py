@@ -1,13 +1,19 @@
 """Building, Unit and MaintenanceRequest API views."""
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
-from django.db.models import Count, Q, Sum
+from django.db.models import Count, Prefetch, Q, Sum
+from django.http import HttpResponse
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from apps.expenses.models import Expense, ExpenseCategory
+from apps.accounts import audit
+from apps.accounts.permissions import CanRecordMoney
 
+from . import photos, spaces
+from .maintenance import sync_maintenance_expense
 from .models import (
     OCCUPIED_UNIT_STATUSES,
     Building,
@@ -19,6 +25,7 @@ from .serializers import (
     BuildingDetailSerializer,
     BuildingSerializer,
     MaintenanceRequestSerializer,
+    ReconfigureSpaceSerializer,
     UnitSerializer,
     UnitStatusSummarySerializer,
 )
@@ -28,12 +35,20 @@ class BuildingViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        return Building.objects.annotate(
+        qs = Building.objects.annotate(
             unit_count=Count("units"),
             occupied_count=Count(
                 "units", filter=Q(units__status__in=OCCUPIED_UNIT_STATUSES)
             ),
-        ).order_by("name")
+        ).defer("photo").order_by("name")
+        if self.action == "retrieve":
+            # The detail payload serialises every unit with its combined space.
+            qs = qs.prefetch_related(Prefetch(
+                "units",
+                queryset=Unit.objects.select_related("combined_into")
+                .prefetch_related("combined_units", "combined_into__combined_units"),
+            ))
+        return qs
 
     def get_serializer_class(self):
         if self.action in ("retrieve", "bulk_create_units"):
@@ -61,6 +76,37 @@ class BuildingViewSet(viewsets.ModelViewSet):
 
         refreshed = self.get_queryset().get(pk=building.pk)
         return Response(BuildingDetailSerializer(refreshed, context={"request": request}).data, status=status.HTTP_201_CREATED)
+
+    @action(
+        detail=True, methods=["get", "put", "delete"], url_path="photo",
+        parser_classes=[MultiPartParser, FormParser],
+    )
+    def photo(self, request, pk=None):
+        """GET/PUT/DELETE /api/buildings/{id}/photo/ — the building's cover photo.
+
+        PUT takes a multipart ``photo`` file. GET returns the image bytes, or 404
+        when there is none and the card should show its placeholder.
+        """
+        building = self.get_object()
+        if request.method == "GET":
+            data = Building.objects.filter(pk=building.pk).values_list("photo", flat=True).first()
+            if not data or not building.photo_content_type:
+                return Response(status=status.HTTP_404_NOT_FOUND)
+            response = HttpResponse(bytes(data), content_type=building.photo_content_type)
+            response["Cache-Control"] = "private, max-age=86400"
+            response["X-Content-Type-Options"] = "nosniff"
+            return response
+        if request.method == "DELETE":
+            photos.clear_photo(building)
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        upload = request.FILES.get("photo")
+        if upload is None:
+            return Response({"detail": "Attach a photo."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            photos.set_photo(building, upload)
+        except DjangoValidationError as exc:
+            return Response({"detail": " ".join(exc.messages)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(BuildingSerializer(self.get_queryset().get(pk=building.pk)).data)
 
     @action(detail=True, methods=["post"], url_path="adjust-rent")
     def adjust_rent(self, request, pk=None):
@@ -111,8 +157,6 @@ class UnitViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        from django.db.models import Prefetch
-
         from apps.tenants.models import Tenant, TenantStatus
 
         active_tenants = Tenant.objects.filter(
@@ -120,9 +164,12 @@ class UnitViewSet(viewsets.ModelViewSet):
         ).order_by("-move_in_date")
 
         qs = (
-            Unit.objects.select_related("building")
+            Unit.objects.select_related("building", "combined_into")
             .prefetch_related(
-                Prefetch("tenants", queryset=active_tenants, to_attr="active_tenants")
+                Prefetch("tenants", queryset=active_tenants, to_attr="active_tenants"),
+                Prefetch("combined_into__tenants", queryset=active_tenants, to_attr="active_tenants"),
+                "combined_units",
+                "combined_into__combined_units",
             )
             .order_by("building__name", "floor", "label")
         )
@@ -156,6 +203,32 @@ class UnitViewSet(viewsets.ModelViewSet):
         }
         return Response(UnitStatusSummarySerializer(data).data)
 
+    @action(
+        detail=True, methods=["post"], url_path="reconfigure-space",
+        permission_classes=[CanRecordMoney],
+    )
+    def reconfigure_space(self, request, pk=None):
+        """POST /api/units/{head}/reconfigure-space/ — combine commercial units.
+
+        Body: ``add`` / ``remove`` (unit ids) and optionally ``monthly_rent``,
+        the agreed base rent for the space afterwards. Record-money roles only:
+        the change moves what the tenant is billed.
+        """
+        head = self.get_object()
+        ser = ReconfigureSpaceSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        try:
+            spaces.reconfigure_space(
+                head,
+                add=ser.validated_data["add"],
+                remove=ser.validated_data["remove"],
+                monthly_rent=ser.validated_data.get("monthly_rent"),
+                actor=request.user,
+            )
+        except DjangoValidationError as exc:
+            return Response({"detail": " ".join(exc.messages)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(UnitSerializer(self.get_queryset().get(pk=head.pk)).data)
+
     @action(detail=True, methods=["patch"], url_path="set-status")
     def set_status(self, request, pk=None):
         """PATCH /api/units/{id}/set-status/ — manually set status (e.g. under_maintenance)."""
@@ -163,8 +236,24 @@ class UnitViewSet(viewsets.ModelViewSet):
         new_status = request.data.get("status")
         if new_status not in dict(UnitStatus.choices):
             return Response({"detail": "Invalid status."}, status=status.HTTP_400_BAD_REQUEST)
+        old_status = unit.status
         unit.status = new_status
         unit.save(update_fields=["status", "updated_at"])
+        if old_status != new_status:
+            # Status is otherwise derived from payments and not auto-audited;
+            # setting it by hand (e.g. under maintenance) is a decision.
+            labels = dict(UnitStatus.choices)
+            audit.record(
+                action="unit.set_status",
+                object_type="unit",
+                object_id=unit.pk,
+                object_label=unit.label,
+                summary=f"Set unit {unit.label} to {labels[new_status]} (was {labels.get(old_status, old_status)})",
+                old_values={"status": old_status},
+                new_values={"status": new_status},
+                actor=request.user,
+                is_financial=False,
+            )
         return Response(UnitSerializer(unit).data)
 
 
@@ -189,28 +278,7 @@ class MaintenanceRequestViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         with transaction.atomic():
             instance = serializer.save()
-            # Auto-sync cost to Expenses tab if cost > 0
-            if instance.cost and instance.cost > 0:
-                cat, _ = ExpenseCategory.objects.get_or_create(
-                    name="Maintenance & Repairs",
-                    defaults={"description": "Auto-created from maintenance requests"},
-                )
-                expense = Expense.objects.create(
-                    date=instance.reported_date,
-                    building=instance.unit.building,
-                    # The work order is always for one unit, so the cost it
-                    # generates is booked to that unit, not just the building.
-                    unit=instance.unit,
-                    category=cat,
-                    amount=instance.cost,
-                    description=f"Maintenance: {instance.description[:200]}",
-                    reference=f"MNT-{instance.pk}",
-                    period_month=instance.reported_date.month,
-                    period_year=instance.reported_date.year,
-                    notes=f"Auto-created from maintenance request #{instance.pk}",
-                )
-                instance.expense = expense
-                instance.save(update_fields=["expense"])
+            sync_maintenance_expense(instance)
             # Set unit status to under_maintenance
             unit = instance.unit
             if unit.status == UnitStatus.VACANT:
@@ -227,7 +295,4 @@ class MaintenanceRequestViewSet(viewsets.ModelViewSet):
                 if not has_active and instance.unit.status == UnitStatus.UNDER_MAINTENANCE:
                     instance.unit.status = UnitStatus.VACANT
                     instance.unit.save(update_fields=["status"])
-            # Sync cost to linked expense if it changed
-            if instance.expense and instance.cost != instance.expense.amount:
-                instance.expense.amount = instance.cost
-                instance.expense.save(update_fields=["amount"])
+            sync_maintenance_expense(instance)

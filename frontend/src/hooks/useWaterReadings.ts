@@ -17,7 +17,13 @@ export interface UtilityCharge {
   units: string | null;
   amount: string;
   notes: string;
+  charge_type: ChargeTypeValue;
+  charge_type_display: string;
+  expense_category: number | null;
+  expense_category_name: string;
 }
+
+export type ChargeTypeValue = "utility" | "late_fee" | "parking" | "damage";
 
 export interface PreviousReading {
   tenant: number;

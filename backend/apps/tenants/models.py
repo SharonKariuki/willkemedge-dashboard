@@ -33,7 +33,11 @@ class Tenant(models.Model):
     # Identity
     first_name = models.CharField(max_length=100)
     last_name = models.CharField(max_length=100)
-    id_number = models.CharField(max_length=30, unique=True)
+    # A row is one tenancy, not one person: the unit, dates, payments and
+    # arrears all hang off it. So the same ID recurs when somebody moves out and
+    # later takes a unit again, and uniqueness is only enforced among current
+    # tenancies — see ``Meta.constraints``.
+    id_number = models.CharField(max_length=30, db_index=True)
     kra_pin = models.CharField(
         max_length=20, blank=True, validators=[kra_pin_validator],
         help_text="KRA PIN shown on rent statements (e.g. 'A007523148T'). Optional.",
@@ -148,6 +152,35 @@ class Tenant(models.Model):
         db_table = "tenants_tenant"
         # Active tenants first, then by move-in date descending
         ordering = ["-status", "-move_in_date"]
+        constraints = [
+            # One current tenancy per ID. A moved-out row keeps its ID as a
+            # historical record, which must not stop the person moving in again.
+            models.UniqueConstraint(
+                fields=["id_number"],
+                condition=models.Q(status__in=["active", "notice_given"]),
+                name="tenant_id_number_unique_while_current",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(monthly_rent__gte=0),
+                name="tenant_monthly_rent_non_negative",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(deposit_paid__gte=0),
+                name="tenant_deposit_paid_non_negative",
+            ),
+            # The reminder run builds date(year, month, due_day); a zero raises
+            # and takes the run down for every tenant.
+            models.CheckConstraint(
+                condition=models.Q(due_day__gte=1) & models.Q(due_day__lte=31),
+                name="tenant_due_day_valid",
+            ),
+            # The move-out view multiplies deposit_paid by this.
+            models.CheckConstraint(
+                condition=models.Q(deposit_refund_percentage__gte=0)
+                & models.Q(deposit_refund_percentage__lte=100),
+                name="tenant_deposit_refund_percentage_valid",
+            ),
+        ]
 
     def __str__(self) -> str:
         return f"{self.first_name} {self.last_name} ({self.unit})"

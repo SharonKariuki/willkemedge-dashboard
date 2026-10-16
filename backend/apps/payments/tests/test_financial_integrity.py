@@ -23,7 +23,7 @@ from django.contrib.auth import get_user_model
 from django.core.management import call_command
 from rest_framework.test import APIClient
 
-from apps.accounts.models import FinancialAuditLog, Role
+from apps.accounts.models import AuditLog, Role
 from apps.buildings.models import Building, Unit, UnitClassification, UnitStatus
 from apps.payments.models import Arrears, Payment, PaymentType
 from apps.payments.services import (
@@ -557,7 +557,7 @@ class TestH7AuditTrail:
 
         payment = Payment.objects.get(tenant=t)
         assert payment.created_by_id == user.pk
-        assert FinancialAuditLog.objects.filter(
+        assert AuditLog.objects.filter(
             action="payment.create", object_id=payment.pk, actor=user
         ).exists()
 
@@ -567,7 +567,7 @@ class TestH7AuditTrail:
         ar = _arrear(t, 6, 2026, Decimal("10000"))
         api.post(f"/api/arrears/{ar.pk}/waive/", {"notes": "goodwill"}, format="json")
 
-        log = FinancialAuditLog.objects.get(action="arrears.waive", object_id=ar.pk)
+        log = AuditLog.objects.get(action="arrears.waive", object_id=ar.pk)
         assert log.actor_id == user.pk
         assert log.old_values["balance"] == "10000.00"
         assert "goodwill" in log.summary
@@ -581,7 +581,7 @@ class TestH7AuditTrail:
         )
         api.post(f"/api/payments/{p.pk}/void/", {"reason": "keyed twice"}, format="json")
 
-        log = FinancialAuditLog.objects.get(action="payment.void", object_id=p.pk)
+        log = AuditLog.objects.get(action="payment.void", object_id=p.pk)
         assert log.actor_id == user.pk
         assert "keyed twice" in log.summary
         p.refresh_from_db()

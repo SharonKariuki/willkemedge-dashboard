@@ -1,215 +1,122 @@
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
 
-export function useMonthlyCollection(month?: number, year?: number) {
-  const now = new Date();
-  const m = month ?? now.getMonth() + 1;
-  const y = year ?? now.getFullYear();
-  return useQuery({
-    queryKey: ["reports", "monthly", m, y],
+/**
+ * Filters a report understands. Blank values are dropped before the request,
+ * so "All buildings" is simply no `building` parameter.
+ */
+export type ReportParams = Record<string, string | number | null | undefined>;
+
+function clean(params: ReportParams): Record<string, string | number> {
+  const out: Record<string, string | number> = {};
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== null && value !== undefined && value !== "") out[key] = value;
+  }
+  return out;
+}
+
+/**
+ * Every report reads live figures. A report is never served from cache when
+ * it is opened or the window regains focus, so a payment recorded a moment
+ * ago is in the next view. While a new month or building loads, the previous
+ * figures stay on screen instead of flashing a skeleton — but not when the
+ * report is about a different thing (another tenant, another accounting tab),
+ * where showing the old one even briefly would be wrong.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function useReport<T = any>(
+  path: string,
+  params: ReportParams = {},
+  enabled = true,
+  keepPrevious = true,
+) {
+  const query = clean(params);
+  return useQuery<T>({
+    queryKey: ["reports", path, query],
     queryFn: async () => {
-      const { data } = await api.get("/reports/monthly-collection/", { params: { month: m, year: y } });
-      return data;
+      const { data } = await api.get(path, { params: query });
+      return data as T;
     },
+    enabled,
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
+    // While a report is on screen it keeps itself current: payments arrive
+    // from the bank feed without anyone touching this tab.
+    refetchInterval: 60_000,
+    placeholderData: keepPrevious ? keepPreviousData : undefined,
   });
 }
 
-export function useAnnualIncome(year?: number) {
-  const y = year ?? new Date().getFullYear();
-  return useQuery({
-    queryKey: ["reports", "annual", y],
-    queryFn: async () => {
-      const { data } = await api.get("/reports/annual-income/", { params: { year: y } });
-      return data;
-    },
-  });
+export function useMonthlyCollection(month: number, year: number, filters: ReportParams = {}) {
+  return useReport("/reports/monthly-collection/", { month, year, ...filters });
 }
 
-export function useArrearsReport() {
-  return useQuery({
-    queryKey: ["reports", "arrears"],
-    queryFn: async () => {
-      const { data } = await api.get("/reports/arrears/");
-      return data;
-    },
-  });
+export function useAnnualIncome(year: number, filters: ReportParams = {}) {
+  return useReport("/reports/annual-income/", { year, ...filters });
 }
 
-export function useTenantHistory(tenantId: number | string | null) {
-  return useQuery({
-    queryKey: ["reports", "tenant-history", tenantId],
-    queryFn: async () => {
-      const { data } = await api.get(`/reports/tenant-history/${tenantId}/`);
-      return data;
-    },
-    enabled: !!tenantId,
-  });
+export function useArrearsReport(filters: ReportParams = {}) {
+  return useReport("/reports/arrears/", filters);
 }
 
-export function useOccupancyReport() {
-  return useQuery({
-    queryKey: ["reports", "occupancy"],
-    queryFn: async () => {
-      const { data } = await api.get("/reports/occupancy/");
-      return data;
-    },
-  });
+export function useTenantHistory(tenantId: number | string | null, months = 12) {
+  return useReport(`/reports/tenant-history/${tenantId}/`, { months }, !!tenantId, false);
 }
 
-export function useMoveLog() {
-  return useQuery({
-    queryKey: ["reports", "move-log"],
-    queryFn: async () => {
-      const { data } = await api.get("/reports/move-log/");
-      return data;
-    },
-  });
+export function useOccupancyReport(filters: ReportParams = {}) {
+  return useReport("/reports/occupancy/", filters);
 }
 
-function withBuilding<T extends Record<string, unknown>>(params: T, building?: number | null): T {
-  if (typeof building === "number") return { ...params, building } as T;
-  return params;
+export function useMoveLog(filters: ReportParams = {}) {
+  return useReport("/reports/move-log/", filters);
 }
 
 export function useProfitLoss(month: number, year: number, building?: number | null) {
-  return useQuery({
-    queryKey: ["reports", "profit-loss", "monthly", month, year, building ?? null],
-    queryFn: async () => {
-      const { data } = await api.get("/reports/profit-loss/", {
-        params: withBuilding({ month, year, mode: "monthly" }, building),
-      });
-      return data;
-    },
-  });
+  return useReport("/reports/profit-loss/", { month, year, mode: "monthly", building });
 }
 
 export function useProfitLossAnnual(year: number, building?: number | null) {
-  return useQuery({
-    queryKey: ["reports", "profit-loss", "annual", year, building ?? null],
-    queryFn: async () => {
-      const { data } = await api.get("/reports/profit-loss/", {
-        params: withBuilding({ year, mode: "annual" }, building),
-      });
-      return data;
-    },
-  });
+  return useReport("/reports/profit-loss/", { year, mode: "annual", building });
 }
 
 export function useTrialBalance(month: number, year: number, building?: number | null) {
-  return useQuery({
-    queryKey: ["reports", "trial-balance", month, year, building ?? null],
-    queryFn: async () => {
-      const { data } = await api.get("/reports/trial-balance/", {
-        params: withBuilding({ month, year }, building),
-      });
-      return data;
-    },
-  });
+  return useReport("/reports/trial-balance/", { month, year, building });
 }
 
 export function useExpenseBreakdown(month: number, year: number, building?: number | null) {
-  return useQuery({
-    queryKey: ["reports", "expense-breakdown", month, year, building ?? null],
-    queryFn: async () => {
-      const { data } = await api.get("/reports/expense-breakdown/", {
-        params: withBuilding({ month, year }, building),
-      });
-      return data;
-    },
-  });
+  return useReport("/reports/expense-breakdown/", { month, year, building });
 }
 
-export function useReportsAccounting(tab: string, month: number, year: number) {
-  return useQuery({
-    queryKey: ["reports", "accounting", tab, month, year],
-    queryFn: async () => {
-      const { data } = await api.get("/reports/accounting/", {
-        params: { tab, month, year },
-      });
-      return data as Record<string, unknown>;
-    },
-  });
+export function useRentBalances(month: number, year: number, filters: ReportParams = {}) {
+  return useReport("/reports/rent-balances/", { month, year, ...filters });
 }
 
-export function useRentBalances(month: number, year: number) {
-  return useQuery({
-    queryKey: ["reports", "rent-balances", month, year],
-    queryFn: async () => {
-      const { data } = await api.get("/reports/rent-balances/", { params: { month, year } });
-      return data;
-    },
-  });
+export function useRentOverpayments(month: number, year: number, filters: ReportParams = {}) {
+  return useReport("/reports/rent-overpayments/", { month, year, ...filters });
 }
 
-export function useRentOverpayments(month: number, year: number) {
-  return useQuery({
-    queryKey: ["reports", "overpayments", month, year],
-    queryFn: async () => {
-      const { data } = await api.get("/reports/rent-overpayments/", { params: { month, year } });
-      return data;
-    },
-  });
+export function useAgingArrears(filters: ReportParams = {}) {
+  return useReport("/reports/aging-arrears/", filters);
 }
 
-export function useAgingArrears() {
-  return useQuery({
-    queryKey: ["reports", "aging-arrears"],
-    queryFn: async () => {
-      const { data } = await api.get("/reports/aging-arrears/");
-      return data;
-    },
-  });
+export function useExpiringLeases(filters: ReportParams = {}) {
+  return useReport("/reports/expiring-leases/", filters);
 }
 
-export function useExpiringLeases() {
-  return useQuery({
-    queryKey: ["reports", "expiring-leases"],
-    queryFn: async () => {
-      const { data } = await api.get("/reports/expiring-leases/");
-      return data;
-    },
-  });
+export function useVacantUnits(filters: ReportParams = {}) {
+  return useReport("/reports/vacant-units/", filters);
 }
 
-export function useVacantUnits() {
-  return useQuery({
-    queryKey: ["reports", "vacant-units"],
-    queryFn: async () => {
-      const { data } = await api.get("/reports/vacant-units/");
-      return data;
-    },
-  });
+export function useUnitStatement(unitId: number | string | null, filters: ReportParams = {}) {
+  return useReport(`/reports/unit-statement/${unitId}/`, filters, !!unitId, false);
 }
 
-export function useUnitStatement(unitId: number | string | null) {
-  return useQuery({
-    queryKey: ["reports", "unit-statement", unitId],
-    queryFn: async () => {
-      const { data } = await api.get(`/reports/unit-statement/${unitId}/`);
-      return data;
-    },
-    enabled: !!unitId,
-  });
+export function useTenantStatement(tenantId: number | string | null, filters: ReportParams = {}) {
+  return useReport(`/reports/tenant-statement/${tenantId}/`, filters, !!tenantId, false);
 }
 
-export function useTenantStatement(tenantId: number | string | null) {
-  return useQuery({
-    queryKey: ["reports", "tenant-statement", tenantId],
-    queryFn: async () => {
-      const { data } = await api.get(`/reports/tenant-statement/${tenantId}/`);
-      return data;
-    },
-    enabled: !!tenantId,
-  });
-}
-
-export function useLandlordStatement(month: number, year: number) {
-  return useQuery({
-    queryKey: ["reports", "landlord-statement", month, year],
-    queryFn: async () => {
-      const { data } = await api.get("/reports/landlord-statement/", { params: { month, year } });
-      return data;
-    },
-  });
+export function useLandlordStatement(month: number, year: number, filters: ReportParams = {}) {
+  return useReport("/reports/landlord-statement/", { month, year, ...filters });
 }

@@ -32,3 +32,8 @@ africastalking>=1.0
 
 # PDF generation (receipts, statements)
 xhtml2pdf>=0.2.17
+
+# Excel and PDF downloads (accounting and report exports); reportlab also
+# arrives with xhtml2pdf but is used directly, so it is pinned here.
+openpyxl>=3.1
+reportlab>=4.0

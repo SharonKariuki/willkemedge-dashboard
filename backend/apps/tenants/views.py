@@ -13,6 +13,7 @@ from apps.buildings.unit_order import unit_sort_key
 
 from .models import Tenant, TenantDocument, TenantStatus
 from .serializers import (
+    MOVE_IN_AGAIN_FIELDS,
     DocumentUploadSerializer,
     KycRejectSerializer,
     MoveOutNoticeSerializer,
@@ -25,7 +26,11 @@ from .serializers import (
     rent_roll_balances,
 )
 from .services import (
+    IDENTITY_FIELDS,
+    DepositAdjustmentError,
     FileValidationError,
+    adjust_deposit_held,
+    carry_over_identity,
     move_in_tenant,
     move_out_tenant,
     record_initial_deposit,
@@ -183,17 +188,41 @@ class TenantViewSet(viewsets.ModelViewSet):
         here to prevent, so a failure to post it must take the registration
         down with it rather than leave the two disagreeing.
         """
+        with transaction.atomic():
+            self._register(serializer)
+
+    def _register(self, serializer):
         data = serializer.validated_data
+        tenant = serializer.save()
+        move_in_tenant(tenant)
+        record_initial_deposit(
+            tenant,
+            received_on=data.get("deposit_date") or tenant.move_in_date,
+            source=data.get("deposit_source") or "cash",
+            reference=data.get("deposit_reference", ""),
+            created_by=self.request.user,
+        )
+        return tenant
+
+    def perform_update(self, serializer):
+        """Save the edit, and book any change the director made to the deposit.
+
+        Only a figure the director actually changed is booked. The form sends
+        ``deposit_paid`` on every save, and a tenant whose card and books
+        already disagree must not have a deposit booked because someone fixed
+        their phone number — ``sync_deposit_bookings`` is for those.
+        """
+        from rest_framework.exceptions import ValidationError
+
+        before = serializer.instance.deposit_paid
+        after = serializer.validated_data.get("deposit_paid", before)
         with transaction.atomic():
             tenant = serializer.save()
-            move_in_tenant(tenant)
-            record_initial_deposit(
-                tenant,
-                received_on=data.get("deposit_date") or tenant.move_in_date,
-                source=data.get("deposit_source") or "cash",
-                reference=data.get("deposit_reference", ""),
-                created_by=self.request.user,
-            )
+            if Decimal(str(after)) != Decimal(str(before)):
+                try:
+                    adjust_deposit_held(tenant, after, actor=self.request.user)
+                except DepositAdjustmentError as exc:
+                    raise ValidationError({"deposit_paid": [str(exc)]}) from exc
 
     @action(detail=False, methods=["get"], url_path="export")
     def export_csv(self, request):
@@ -207,6 +236,8 @@ class TenantViewSet(viewsets.ModelViewSet):
 
         from django.http import HttpResponse
 
+        from apps.common.csv_safety import csv_safe_row
+
         qs = self._walk_order(self.get_queryset())
         balances = rent_roll_balances(qs)
         response = HttpResponse(content_type="text/csv")
@@ -217,10 +248,14 @@ class TenantViewSet(viewsets.ModelViewSet):
             balance = balances.get(t.pk, Decimal("0.00"))
             arrears_balance = getattr(t, "outstanding_balance", None) or 0
             payment_status = "In Arrears" if arrears_balance > 0 else "Paid"
+            # Name, building and unit are typed in by staff, so a spreadsheet
+            # could execute them. The balance is a string from _money and must
+            # stay out of csv_safe, or a credit (-500.00) would become text.
+            name, building, unit = csv_safe_row([t.full_name, t.unit.building.name, t.unit.label])
             writer.writerow([
-                t.full_name,
-                t.unit.building.name,
-                t.unit.label,
+                name,
+                building,
+                unit,
                 _money(balance),
                 payment_status,
                 t.get_status_display(),
@@ -265,6 +300,57 @@ class TenantViewSet(viewsets.ModelViewSet):
                 notes=ser.validated_data.get("notes", ""),
             )
         return Response(TenantDetailSerializer(tenant).data)
+
+    @action(detail=True, methods=["post"], url_path="move-in")
+    def move_in_again(self, request, pk=None):
+        """POST /api/tenants/<id>/move-in/ — a moved-out tenant takes a unit again.
+
+        Any vacant unit: the one they left, another in the same building, or one
+        in another property. The move-out is left exactly as it was and a new
+        tenancy is registered through the same path as a new tenant — the unit
+        must be vacant, it is occupied, and any deposit is booked — with the
+        person's identity and KYC carried over from this tenancy.
+
+        Returns the NEW tenancy (201). Body: ``unit``, ``monthly_rent``,
+        ``move_in_date`` and optionally the deposit / due day / notes fields.
+        """
+        previous = self.get_object()
+        if previous.is_active:
+            return Response(
+                {"detail": "This tenant has not moved out. Move them out first."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        current = (
+            Tenant.objects.filter(
+                id_number=previous.id_number,
+                status__in=[TenantStatus.ACTIVE, TenantStatus.NOTICE_GIVEN],
+            )
+            .select_related("unit")
+            .first()
+        )
+        if current:
+            return Response(
+                {"detail": f"{current.full_name} already has a current tenancy in unit {current.unit.label}."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        data = {field: getattr(previous, field) for field in IDENTITY_FIELDS}
+        data.update({k: request.data[k] for k in MOVE_IN_AGAIN_FIELDS if k in request.data})
+        ser = TenantCreateSerializer(data=data)
+        ser.is_valid(raise_exception=True)
+        move_in_date = ser.validated_data["move_in_date"]
+        if previous.move_out_date and move_in_date < previous.move_out_date:
+            return Response(
+                {"move_in_date": [
+                    f"Cannot be before this tenant moved out on {previous.move_out_date:%d/%m/%Y}."
+                ]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        with transaction.atomic():
+            tenant = self._register(ser)
+            carry_over_identity(previous, tenant)
+        return Response(TenantDetailSerializer(tenant).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["post"], url_path="documents", parser_classes=[MultiPartParser, FormParser])
     def upload_document(self, request, pk=None):
@@ -348,10 +434,14 @@ class TenantViewSet(viewsets.ModelViewSet):
 
         from apps.payments.models import Arrears, Payment
         from apps.payments.monthly_ledger import build_monthly_ledger
+        from apps.tenants.deposits import deposit_held_on_books
         tenant = self.get_object()
+        # Voided payments stay in the list, flagged, so a void (e.g. money
+        # re-pointed to the right unit) is visible on the tenant it came off.
+        # They are still excluded from every total below.
         payments = (
-            Payment.objects.filter(tenant=tenant, voided_at__isnull=True)
-            .order_by("-payment_date")[:24]
+            Payment.objects.filter(tenant=tenant)
+            .order_by("-payment_date", "-id")[:24]
         )
         arrears = Arrears.objects.filter(tenant=tenant, is_cleared=False)
         # Voided payments are excluded from every other balance in the system;
@@ -365,7 +455,8 @@ class TenantViewSet(viewsets.ModelViewSet):
             "total_paid": _money(total_paid),
             "total_arrears": _money(total_arrears),
             # Deposit held — the "Rent Security Deposit" column of the rent roll.
-            "security_deposit": _money(tenant.deposit_paid),
+            # Read off the books, as the statement does, so the two cannot differ.
+            "security_deposit": _money(deposit_held_on_books(tenant)),
             # Month-by-month rent roll; extends itself as billing posts periods.
             "monthly_ledger": build_monthly_ledger(tenant),
             "payments": [
@@ -377,6 +468,9 @@ class TenantViewSet(viewsets.ModelViewSet):
                     "period_year": p.period_year,
                     "source": p.source,
                     "reference": p.reference,
+                    "is_void": p.voided_at is not None,
+                    "voided_at": p.voided_at.isoformat() if p.voided_at else None,
+                    "void_reason": p.void_reason,
                 }
                 for p in payments
             ],
@@ -459,9 +553,9 @@ class TenantViewSet(viewsets.ModelViewSet):
         from apps.payments.statement_service import build_statement
 
         tenant = self.get_object()
-        # The month THIS tenant's cycle is on, so the copy the office downloads
-        # is the same statement they were emailed — on the 1st for a house, on
-        # the 25th before for the arcade — rather than the previous month's.
+        # The month THIS tenant's invoice day has reached, so the copy the
+        # office downloads is the same statement they were sent — from the
+        # 28th for a house, the 25th for the arcade — rather than last month's.
         data = build_statement(tenant, period=tenant_billing_period(tenant))
 
         pdf = render_to_pdf("payments/statement_pdf.html", data)

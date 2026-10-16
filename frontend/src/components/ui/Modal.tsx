@@ -1,5 +1,6 @@
 import { X } from "lucide-react";
 import { useEffect, useRef, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 
 import { cn } from "@/lib/cn";
 
@@ -112,9 +113,17 @@ export function Modal({
 
   const hasHeader = header !== undefined || title !== undefined || eyebrow !== undefined || headerActions !== undefined;
 
-  return (
+  // Portalled to <body>: the page wrapper keeps the `animate-fade-up`
+  // transform after the animation ends, and a transformed ancestor turns
+  // `position: fixed` into "fixed to that element". Rendered in place, the
+  // dialog centred itself on the whole (long) page and opened off-screen.
+  //
+  // Phones get a bottom sheet; from `sm` up it is a centred card. Heights use
+  // dvh where supported so mobile browser chrome cannot push the footer
+  // buttons out of reach.
+  return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6"
+      className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-6"
       role="dialog"
       aria-modal="true"
       aria-label={typeof title === "string" ? title : ariaLabel}
@@ -127,12 +136,14 @@ export function Modal({
       <div
         ref={dialogRef}
         className={cn(
-          "relative flex w-full max-h-[90vh] flex-col overflow-hidden rounded-xl border border-border bg-surface shadow-lg animate-fade-up",
+          "relative flex w-full flex-col overflow-hidden border border-border bg-surface shadow-lg animate-fade-up",
+          "max-h-[92vh] supports-[height:100dvh]:max-h-[92dvh] rounded-t-2xl border-b-0",
+          "sm:max-h-[90vh] sm:supports-[height:100dvh]:max-h-[90dvh] sm:rounded-xl sm:border-b",
           SIZE_CLASSES[size],
         )}
       >
         {hasHeader && (
-          <div className="sticky top-0 z-10 flex items-start justify-between gap-3 border-b border-border bg-surface px-6 py-5">
+          <div className="sticky top-0 z-10 flex items-start justify-between gap-3 border-b border-border bg-surface px-4 py-4 sm:px-6 sm:py-5">
             {header ?? (
               <div className="min-w-0 flex-1">
                 {eyebrow && (
@@ -141,7 +152,7 @@ export function Modal({
                   </p>
                 )}
                 {title && (
-                  <p className="text-xl font-semibold leading-tight text-content">
+                  <p className="text-lg font-semibold leading-tight text-content sm:text-xl">
                     {title}
                   </p>
                 )}
@@ -162,14 +173,15 @@ export function Modal({
           </div>
         )}
 
-        <div className="flex-1 overflow-y-auto px-6 py-6">{children}</div>
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-5 sm:px-6 sm:py-6">{children}</div>
 
         {footer && (
-          <div className="sticky bottom-0 z-10 flex flex-wrap items-center justify-end gap-2.5 border-t border-border bg-surface px-6 py-4">
+          <div className="sticky bottom-0 z-10 flex flex-wrap items-center justify-end gap-2.5 border-t border-border bg-surface px-4 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-6 sm:pb-4">
             {footer}
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

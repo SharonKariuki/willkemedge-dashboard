@@ -3,6 +3,7 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from .coop_ipn import CoopIpnView
+from .credit_views import RefundViewSet, TenantCreditViewSet
 from .cron_views import ScheduledJobTriggerView
 from .notification_views import NotificationViewSet
 from .reconciliation_views import DailyReconciliationTriggerView
@@ -22,6 +23,8 @@ router.register("transactions", TransactionViewSet, basename="transaction")
 # Distinct prefix (not "payments/…") so it doesn't collide with payments/<pk>/.
 router.register("unmatched-credits", UnmatchedCreditViewSet, basename="unmatched-credit")
 router.register("utility-charges", UtilityChargeViewSet, basename="utility-charge")
+router.register("tenant-credits", TenantCreditViewSet, basename="tenant-credit")
+router.register("refunds", RefundViewSet, basename="refund")
 
 app_name = "payments"
 

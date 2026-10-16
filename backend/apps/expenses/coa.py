@@ -141,3 +141,5 @@ PARKING = "4250"
 VAT_PAYABLE = "2600"                # 16% VAT collected on commercial rent
 DEPOSITS_HELD = "2100"
 RENT_RECEIVABLE = "1040"
+OPERATING_BANK = "1020"
+RETAINED_EARNINGS = "3300"          # opening credits owed from before the books began

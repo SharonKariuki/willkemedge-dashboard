@@ -2,12 +2,13 @@ import { MoreHorizontal, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 
+import { useAuth } from "@/hooks/useAuth";
 import { useViewPreferences } from "@/hooks/useViewPreferences";
 import { cn } from "@/lib/cn";
 import { NAV_ITEMS, type ViewKey } from "@/lib/nav";
 
 const PRIMARY_KEYS: ViewKey[] = ["dashboard", "units", "tenants", "payments"];
-const OVERFLOW_KEYS: ViewKey[] = ["buildings", "expenses", "notifications", "reports", "settings"];
+const OVERFLOW_KEYS: ViewKey[] = ["buildings", "expenses", "notifications", "reports", "activity", "settings"];
 
 const byKey = (key: ViewKey) => NAV_ITEMS.find((i) => i.key === key)!;
 
@@ -27,11 +28,14 @@ export default function MobileNav() {
   }, [open]);
 
   const { prefs } = useViewPreferences();
+  const isOwner = Boolean(useAuth().user?.can_forgive_money);
   const visible = (keys: ViewKey[]) =>
-    keys.map(byKey).filter((item) => !item.togglable || prefs[item.key]);
+    keys
+      .map(byKey)
+      .filter((item) => (!item.togglable || prefs[item.key]) && (!item.ownerOnly || isOwner));
 
-  const primaryItems = useMemo(() => visible(PRIMARY_KEYS), [prefs]);
-  const overflowItems = useMemo(() => visible(OVERFLOW_KEYS), [prefs]);
+  const primaryItems = useMemo(() => visible(PRIMARY_KEYS), [prefs, isOwner]);
+  const overflowItems = useMemo(() => visible(OVERFLOW_KEYS), [prefs, isOwner]);
 
   const overflowActive = overflowItems.some((i) => pathname.startsWith(i.to));
 

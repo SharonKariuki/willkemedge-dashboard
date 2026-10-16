@@ -19,24 +19,26 @@ red instead of failing silently.
 
 Schedule (times are EAT; see .github/workflows/scheduled-jobs.yml):
 
-    06:30, 1st of month   monthly-arrears        (residential: THIS month)
-    07:00, 1st of month   monthly-statements     (residential: THIS month)
     06:30, 25th of month  monthly-arrears        (commercial: NEXT month)
     07:00, 25th of month  monthly-statements     (commercial: NEXT month)
+    06:30, 28th of month  monthly-arrears        (residential: NEXT month)
+    07:00, 28th of month  monthly-statements     (residential: NEXT month)
+    06:30, 1st of month   monthly-arrears        (catch-up for both)
+    07:00, 1st of month   monthly-statements     (catch-up for both)
     00:30 daily           recalculate-statuses
     08:00 daily           rent-reminders
     09:00 daily           arrears-reminders
     any time daily        daily-reconciliation
 
-The monthly pair fires on two days because the roster is on two cycles. A house
-is billed on the 1st for the month just begun; the arcade is billed on the 25th
-for the month ahead, so its VAT invoice arrives before that month starts. Rent
-falls due on the 5th of the month billed either way.
+Every tenant is invoiced a month ahead: next month's rent and this month's
+water, due on the 5th. The arcade is invoiced on the 25th, so its VAT invoice
+arrives before the month starts; houses are invoiced on the 28th, with water
+read up to that day. The 1st repeats both as a catch-up.
 `apps/payments/billing_calendar.py` owns the rule and lists what depends on it.
 
-Both days must be scheduled. Each run covers whichever tenants that day's cycle
-applies to and skips the rest as already-sent, so dropping either day silently
-stops billing that half of the portfolio.
+Both invoice days must be scheduled. Each run covers whichever tenants that day
+applies to and skips the rest as already-sent, so dropping either day leaves
+that half of the portfolio uninvoiced until the 1st.
 
 Order matters on both days. `monthly-arrears` is what raises the month's rent,
 and a statement emailed before it has run states a balance with the stated month
@@ -106,6 +108,39 @@ def token_ok(request: Request) -> bool:
     return bool(provided) and hmac.compare_digest(provided, expected)
 
 
+def _record_run(job: str, result) -> None:
+    """Put the two runs that bill tenants on the director's activity log.
+
+    The reminder and status jobs run daily and change nothing worth reading;
+    billing and statements are what a tenant later asks about ("why was I
+    charged?", "I never got my invoice").
+    """
+    from apps.accounts import audit
+
+    if job == "monthly-arrears" and result:
+        audit.record(
+            action="billing.run",
+            object_type="job",
+            object_id=None,
+            object_label=job,
+            summary=f"Monthly billing raised {result} rent charge{'s' if result != 1 else ''}",
+            new_values={"raised": result},
+        )
+    elif job == "monthly-statements" and isinstance(result, dict):
+        sent, sms = result.get("sent", 0), result.get("sms_sent", 0)
+        failed = result.get("failed", 0) + result.get("sms_failed", 0)
+        if sent or sms or failed:
+            audit.record(
+                action="statements.send",
+                object_type="job",
+                object_id=None,
+                object_label=job,
+                summary=f"Monthly statements: {sent} emailed, {sms} by SMS, {failed} failed",
+                new_values={k: result.get(k, 0) for k in ("sent", "sms_sent", "failed", "sms_failed")},
+                is_financial=False,
+            )
+
+
 class ScheduledJobTriggerView(APIView):
     """Token-gated endpoint that runs one scheduled job synchronously."""
 
@@ -138,5 +173,6 @@ class ScheduledJobTriggerView(APIView):
 
         logger.info("Cron trigger running job=%s", job)
         result = task.apply(args=args).get()
+        _record_run(job, result)
 
         return Response({"status": "ok", "job": job, "result": result}, status=200)

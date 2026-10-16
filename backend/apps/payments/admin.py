@@ -24,6 +24,8 @@ from .models import (
     CoopIpnEvent,
     CoopIpnStatus,
     Payment,
+    Refund,
+    TenantCredit,
     TenantNotification,
     UtilityCharge,
 )
@@ -103,12 +105,12 @@ class ArrearsAdmin(admin.ModelAdmin):
 @admin.register(UtilityCharge)
 class UtilityChargeAdmin(admin.ModelAdmin):
     list_display = (
-        "tenant", "label", "posting_date",
+        "tenant", "charge_type", "label", "posting_date",
         "period_month", "period_year", "units", "amount",
     )
-    list_filter = ("label", "period_year", "period_month")
+    list_filter = ("charge_type", "label", "period_year", "period_month")
     search_fields = ("tenant__first_name", "tenant__last_name", "notes")
-    readonly_fields = ("created_at",)
+    readonly_fields = ("created_at", "created_by")
 
 
 # ---------------------------------------------------------------------------
@@ -379,3 +381,35 @@ class TenantNotificationAdmin(admin.ModelAdmin):
         "tenant__first_name", "tenant__last_name", "subject", "body",
     )
     readonly_fields = ("created_at", "sent_at")
+
+
+class _ReadOnlyAdmin(admin.ModelAdmin):
+    """View only. Credits and refunds change through the dashboard's services,
+    which post the ledger entry and the audit row; an admin edit would do
+    neither."""
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(TenantCredit)
+class TenantCreditAdmin(_ReadOnlyAdmin):
+    list_display = (
+        "number", "tenant", "reason", "credit_date", "amount",
+        "amount_applied", "amount_refunded", "on_hold", "status",
+    )
+    list_filter = ("status", "credit_type", "reason", "on_hold")
+    search_fields = ("number", "tenant__first_name", "tenant__last_name", "description", "reference")
+
+
+@admin.register(Refund)
+class RefundAdmin(_ReadOnlyAdmin):
+    list_display = ("number", "tenant", "amount", "method", "reference", "sent_on", "status")
+    list_filter = ("status", "method")
+    search_fields = ("number", "reference", "tenant__first_name", "tenant__last_name")

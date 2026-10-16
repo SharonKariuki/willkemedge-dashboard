@@ -19,6 +19,7 @@ const DEFAULTS: ViewPreferences = {
   accounting: true,
   notifications: true,
   reports: true,
+  activity: true,
   settings: true,
 };
 

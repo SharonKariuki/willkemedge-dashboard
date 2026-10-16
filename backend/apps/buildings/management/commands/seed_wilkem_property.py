@@ -150,6 +150,13 @@ class Command(BaseCommand):
             # Synthetic ID for business tenants — they don't have national IDs.
             # `id_number` is unique, so we suffix with the unit label.
             id_number = f"BIZ-{unit_label}"
+            # The ID is editable from the dashboard, so a re-run cannot find an
+            # existing tenant by it alone — one whose placeholder was replaced
+            # would be seeded a second time onto the same unit.
+            if Tenant.objects.filter(unit=unit).exclude(
+                status=TenantStatus.MOVED_OUT
+            ).exists():
+                continue
             tenant, created = Tenant.objects.get_or_create(
                 id_number=id_number,
                 defaults={

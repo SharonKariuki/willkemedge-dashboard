@@ -2,8 +2,10 @@
 Tests for 16% VAT posting on commercial rent (Barclay F4).
 
 Acceptance criteria:
-  - any rent for a COMMERCIAL (MC) unit computes and posts 16% VAT to the
-    correct COA code (2600 VAT Payable)
+  - rent billed to a COMMERCIAL (MC) unit posts its 16% VAT to 2600 VAT
+    Payable when it is billed — the VAT tax point is the invoice
+  - the receipt that pays it only settles the tenant's account: no VAT leg,
+    or the VAT would be counted twice
   - RESIDENTIAL units are not affected (no VAT leg)
   - entries stay balanced
 """
@@ -53,77 +55,74 @@ def residential_tenant(db):
     return _tenant(db, classification=UnitClassification.RESIDENTIAL, label="DON1A", rent="20000")
 
 
+def _receipt(tenant, amount, ref):
+    return Payment.objects.create(
+        tenant=tenant, amount=Decimal(amount),
+        payment_date="2026-06-05", period_month=6, period_year=2026,
+        source=PaymentSource.MPESA, payment_type=PaymentType.RENT, reference=ref,
+    )
+
+
+def _bill(tenant, rent, vat):
+    return Arrears.objects.create(
+        tenant=tenant, period_month=6, period_year=2026,
+        expected_rent=Decimal(rent), expected_vat=Decimal(vat), amount_paid=Decimal("0"),
+        balance=Decimal(rent) + Decimal(vat), is_cleared=False,
+    )
+
+
 @pytest.mark.django_db
 class TestCommercialRentPayment:
-    def test_vat_split_out_of_gross_receipt(self, commercial_tenant):
-        # Tenant pays 27,840 = 24,000 rent + 3,840 VAT.
-        pmt = Payment.objects.create(
-            tenant=commercial_tenant, amount=Decimal("27840.00"),
-            payment_date="2026-06-05", period_month=6, period_year=2026,
-            source=PaymentSource.MPESA, payment_type=PaymentType.RENT, reference="MC1",
-        )
-        legs = _legs(post_payment(pmt))
-        assert legs["1020"] == (Decimal("27840.00"), Decimal("0.00"))
-        assert legs[COMMERCIAL_INCOME] == (Decimal("0.00"), Decimal("24000.00"))
-        assert legs[VAT_ACCOUNT] == (Decimal("0.00"), Decimal("3840.00"))
+    def test_receipt_settles_the_account_without_a_vat_leg(self, commercial_tenant):
+        # Tenant pays 27,840 = 24,000 rent + 3,840 VAT, both billed already.
+        legs = _legs(post_payment(_receipt(commercial_tenant, "27840.00", "MC1")))
+        assert legs == {
+            "1020": (Decimal("27840.00"), Decimal("0.00")),
+            "1040": (Decimal("0.00"), Decimal("27840.00")),
+        }
 
     def test_entry_balances(self, commercial_tenant):
-        pmt = Payment.objects.create(
-            tenant=commercial_tenant, amount=Decimal("27840.00"),
-            payment_date="2026-06-05", period_month=6, period_year=2026,
-            source=PaymentSource.MPESA, payment_type=PaymentType.RENT, reference="MC2",
-        )
-        entry = post_payment(pmt)
+        entry = post_payment(_receipt(commercial_tenant, "27840.00", "MC2"))
         debits = sum(line.debit for line in entry.lines.all())
         credits = sum(line.credit for line in entry.lines.all())
         assert debits == credits == Decimal("27840.00")
 
-    def test_reversal_mirrors_the_vat_leg(self, commercial_tenant):
-        pmt = Payment.objects.create(
-            tenant=commercial_tenant, amount=Decimal("27840.00"),
-            payment_date="2026-06-05", period_month=6, period_year=2026,
-            source=PaymentSource.MPESA, payment_type=PaymentType.RENT, reference="MC3",
-        )
+    def test_reversal_mirrors_the_receipt(self, commercial_tenant):
+        pmt = _receipt(commercial_tenant, "27840.00", "MC3")
         post_payment(pmt)
         legs = _legs(reverse_payment(pmt))
-        # Debits and credits flip.
-        assert legs[VAT_ACCOUNT] == (Decimal("3840.00"), Decimal("0.00"))
-        assert legs[COMMERCIAL_INCOME] == (Decimal("24000.00"), Decimal("0.00"))
+        assert legs == {
+            "1020": (Decimal("0.00"), Decimal("27840.00")),
+            "1040": (Decimal("27840.00"), Decimal("0.00")),
+        }
 
 
 @pytest.mark.django_db
 class TestCommercialRentBilled:
     def test_arrear_raises_receivable_at_gross_and_credits_vat(self, commercial_tenant):
-        arr = Arrears.objects.create(
-            tenant=commercial_tenant, period_month=6, period_year=2026,
-            expected_rent=Decimal("24000"), amount_paid=Decimal("0"),
-            balance=Decimal("24000"), is_cleared=False,
-        )
-        legs = _legs(post_arrear(arr))
+        legs = _legs(post_arrear(_bill(commercial_tenant, "24000", "3840"), replace=True))
         # Tenant owes rent + VAT, so AR is raised at the gross figure.
         assert legs["1040"] == (Decimal("27840.00"), Decimal("0.00"))
         assert legs[COMMERCIAL_INCOME] == (Decimal("0.00"), Decimal("24000.00"))
         assert legs[VAT_ACCOUNT] == (Decimal("0.00"), Decimal("3840.00"))
 
+    def test_an_unrated_letting_bills_no_vat(self, commercial_tenant):
+        """VAT is read off the charge, as the statement reads it: not every
+        commercial letting is rated."""
+        legs = _legs(post_arrear(_bill(commercial_tenant, "22500", "0"), replace=True))
+        assert VAT_ACCOUNT not in legs
+        assert legs[COMMERCIAL_INCOME] == (Decimal("0.00"), Decimal("22500.00"))
+
 
 @pytest.mark.django_db
 class TestResidentialUnaffected:
     def test_payment_has_no_vat_leg(self, residential_tenant):
-        pmt = Payment.objects.create(
-            tenant=residential_tenant, amount=Decimal("20000.00"),
-            payment_date="2026-06-05", period_month=6, period_year=2026,
-            source=PaymentSource.MPESA, payment_type=PaymentType.RENT, reference="R1",
-        )
-        legs = _legs(post_payment(pmt))
+        legs = _legs(post_payment(_receipt(residential_tenant, "20000.00", "R1")))
         assert VAT_ACCOUNT not in legs
-        assert legs[RESIDENTIAL_INCOME] == (Decimal("0.00"), Decimal("20000.00"))
+        assert legs["1040"] == (Decimal("0.00"), Decimal("20000.00"))
 
     def test_arrear_has_no_vat_leg(self, residential_tenant):
-        arr = Arrears.objects.create(
-            tenant=residential_tenant, period_month=6, period_year=2026,
-            expected_rent=Decimal("20000"), amount_paid=Decimal("0"),
-            balance=Decimal("20000"), is_cleared=False,
-        )
-        legs = _legs(post_arrear(arr))
+        legs = _legs(post_arrear(_bill(residential_tenant, "20000", "0"), replace=True))
         assert VAT_ACCOUNT not in legs
         assert legs["1040"] == (Decimal("20000.00"), Decimal("0.00"))
+        assert legs[RESIDENTIAL_INCOME] == (Decimal("0.00"), Decimal("20000.00"))

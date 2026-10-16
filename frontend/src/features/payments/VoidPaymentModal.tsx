@@ -5,6 +5,7 @@ import toast from "react-hot-toast";
 import { Button, Modal, Skeleton } from "@/components/ui";
 import { type Payment, useVoidPayment, useVoidPreview } from "@/hooks/usePayments";
 import { getErrorMessage } from "@/lib/apiError";
+import { toDayFirst } from "@/lib/dates";
 
 const inputCls =
   "w-full rounded-md bg-surface-raised hairline px-3 py-2.5 text-sm text-ink-900 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-sage-500/40";
@@ -105,7 +106,7 @@ export function VoidPaymentModal({
         </span>
       </p>
       <p className="mt-1 text-xs text-ink-500">
-        {money(payment.amount)} on {payment.payment_date}
+        {money(payment.amount)} on {toDayFirst(payment.payment_date)}
         {payment.reference ? ` · ref ${payment.reference}` : " · no reference"}
       </p>
 

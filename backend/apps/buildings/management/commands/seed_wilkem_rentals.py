@@ -304,6 +304,14 @@ class Command(BaseCommand):
                 if not id_value:
                     id_value = f"RES-{u_label}"
 
+                # The ID is editable from the dashboard, so a re-run cannot find
+                # an existing tenant by it alone — one whose placeholder was
+                # replaced would be seeded a second time onto the same unit.
+                if Tenant.objects.filter(unit=unit).exclude(
+                    status=TenantStatus.MOVED_OUT
+                ).exists():
+                    continue
+
                 _, created = Tenant.objects.get_or_create(
                     id_number=id_value,
                     defaults={

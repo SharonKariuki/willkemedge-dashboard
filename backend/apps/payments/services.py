@@ -197,12 +197,14 @@ def _process_payment_atomic(
 
     # --- Tax split (centralised) ---
     # `amount` is the cash actually received. For commercial units that figure
-    # is VAT-INCLUSIVE (rent + 16% paid as one), so VAT is split OUT of it — the
-    # same treatment the ledger applies — never grossed up on top. Residential
-    # is exempt (net == gross). Payment.amount stays the gross received so the
-    # ledger and arrears (which read it) are consistent.
+    # is VAT-INCLUSIVE (rent + 16% paid as one), so VAT is split OUT of it,
+    # never grossed up on top. Residential is exempt (net == gross). Only rent
+    # carries VAT: a security deposit is refundable money held for the tenant,
+    # not a supply, so its receipt records none — it used to show 16% of every
+    # commercial deposit as VAT. Payment.amount stays the gross received.
     gross = Decimal(str(amount))
-    tax_result = split_tax_inclusive(gross, classification)
+    vat_basis = classification if payment_type in SETTLES_RENT else UnitClassification.RESIDENTIAL
+    tax_result = split_tax_inclusive(gross, vat_basis)
 
     # --- Immutable Payment (stores the gross cash received) ---
     payment = Payment.objects.create(
@@ -224,7 +226,7 @@ def _process_payment_atomic(
         transaction_id=_generate_transaction_id(),
         tenant=tenant,
         payment=payment,
-        unit_classification=tax_result.classification,
+        unit_classification=classification,
         base_amount=tax_result.base_amount,   # net income
         tax_amount=tax_result.tax_amount,     # 16% VAT (0 for residential)
         total_amount=tax_result.total_amount,  # gross received (== payment.amount)
@@ -480,10 +482,17 @@ def available_credit(tenant) -> Decimal:
     """Overpayment a tenant has banked but not yet had applied to a period.
 
     Credit = everything paid/waived beyond each period's obligation, less the
-    credit already carried into other periods. Previously this figure had
-    nowhere to live: `balance` was floored at zero, so a tenant who prepaid
-    three months was billed in full — and dunned — the following month.
+    credit already carried into other periods, less overpaid rent that has been
+    refunded (or set aside for a refund still to be sent). Previously this
+    figure had nowhere to live: `balance` was floored at zero, so a tenant who
+    prepaid three months was billed in full — and dunned — the following month.
+
+    `credit_applied` also carries what the tenant's numbered credits
+    (``TenantCredit``) have settled. That is not overpaid rent being drawn down,
+    so it is taken back out before counting what has been consumed.
     """
+    from .models import REFUND_ACTIVE_STATUSES, CreditApplication, RefundLine
+
     surplus = ZERO
     consumed = ZERO
     for row in Arrears.objects.filter(tenant=tenant).only(
@@ -491,7 +500,13 @@ def available_credit(tenant) -> Decimal:
     ):
         surplus += max(row.covered - row.expected_total, ZERO)
         consumed += row.credit_applied or ZERO
-    return max(surplus - consumed, ZERO)
+    from_credits = CreditApplication.objects.filter(
+        credit__tenant=tenant, reversed_at__isnull=True
+    ).aggregate(t=models.Sum("amount"))["t"] or ZERO
+    refunded = RefundLine.objects.filter(
+        refund__tenant=tenant, credit__isnull=True, refund__status__in=REFUND_ACTIVE_STATUSES
+    ).aggregate(t=models.Sum("amount"))["t"] or ZERO
+    return max(surplus - (consumed - from_credits) - refunded, ZERO)
 
 
 def apply_available_credit(arrears: Arrears) -> Arrears:
