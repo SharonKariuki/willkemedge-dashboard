@@ -140,6 +140,14 @@ class Expense(models.Model):
             models.Index(fields=["building"]),
             models.Index(fields=["unit"]),
         ]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(amount__gt=0), name="expense_amount_positive",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(period_month__gte=1) & models.Q(period_month__lte=12), name="expense_period_month_valid",
+            ),
+        ]
 
     def _pin_building_to_unit(self) -> None:
         """A unit already knows its building — keep the two from disagreeing.
@@ -221,6 +229,14 @@ class ManualIncome(models.Model):
         indexes = [
             models.Index(fields=["period_year", "period_month"]),
             models.Index(fields=["building"]),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(amount__gt=0), name="manual_income_amount_positive",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(period_month__gte=1) & models.Q(period_month__lte=12), name="manual_income_period_month_valid",
+            ),
         ]
 
     def __str__(self) -> str:
