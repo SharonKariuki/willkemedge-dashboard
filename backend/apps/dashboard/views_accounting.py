@@ -171,7 +171,7 @@ class AccountingDashboardView(APIView):
             rows.append({"_style": "total", "name": f"Total {title.lower()}", "amount": total})
         rows.append({"_style": "total", "name": "Net profit" if data["net_profit"] >= 0 else "Net loss",
                      "amount": data["net_profit"]})
-        notes = ["From the general ledger: rent when received, water when billed, VAT excluded."]
+        notes = ["From the general ledger: rent and water when billed, VAT excluded."]
         return data, Sheet("Profit and Loss", cols, rows, self._subtitle(), notes)
 
     # ── Trial balance ───────────────────────────────────────────────────────

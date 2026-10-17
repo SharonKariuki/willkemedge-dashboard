@@ -198,7 +198,7 @@ function PnLView({ data }: { data: AccountingData }) {
         <StatementSection title="Expenses" groups={data.expenses} total={data.total_expenses} />
       </div>
       <p className="text-xs text-ink-500">
-        From the general ledger by transaction date: rent when received, water when billed, VAT excluded.
+        From the general ledger: rent and water when billed, VAT excluded.
       </p>
     </div>
   );
