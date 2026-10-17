@@ -105,12 +105,12 @@ class ArrearsAdmin(admin.ModelAdmin):
 @admin.register(UtilityCharge)
 class UtilityChargeAdmin(admin.ModelAdmin):
     list_display = (
-        "tenant", "label", "posting_date",
+        "tenant", "charge_type", "label", "posting_date",
         "period_month", "period_year", "units", "amount",
     )
-    list_filter = ("label", "period_year", "period_month")
+    list_filter = ("charge_type", "label", "period_year", "period_month")
     search_fields = ("tenant__first_name", "tenant__last_name", "notes")
-    readonly_fields = ("created_at",)
+    readonly_fields = ("created_at", "created_by")
 
 
 # ---------------------------------------------------------------------------

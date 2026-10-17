@@ -197,12 +197,14 @@ def _process_payment_atomic(
 
     # --- Tax split (centralised) ---
     # `amount` is the cash actually received. For commercial units that figure
-    # is VAT-INCLUSIVE (rent + 16% paid as one), so VAT is split OUT of it — the
-    # same treatment the ledger applies — never grossed up on top. Residential
-    # is exempt (net == gross). Payment.amount stays the gross received so the
-    # ledger and arrears (which read it) are consistent.
+    # is VAT-INCLUSIVE (rent + 16% paid as one), so VAT is split OUT of it,
+    # never grossed up on top. Residential is exempt (net == gross). Only rent
+    # carries VAT: a security deposit is refundable money held for the tenant,
+    # not a supply, so its receipt records none — it used to show 16% of every
+    # commercial deposit as VAT. Payment.amount stays the gross received.
     gross = Decimal(str(amount))
-    tax_result = split_tax_inclusive(gross, classification)
+    vat_basis = classification if payment_type in SETTLES_RENT else UnitClassification.RESIDENTIAL
+    tax_result = split_tax_inclusive(gross, vat_basis)
 
     # --- Immutable Payment (stores the gross cash received) ---
     payment = Payment.objects.create(
@@ -224,7 +226,7 @@ def _process_payment_atomic(
         transaction_id=_generate_transaction_id(),
         tenant=tenant,
         payment=payment,
-        unit_classification=tax_result.classification,
+        unit_classification=classification,
         base_amount=tax_result.base_amount,   # net income
         tax_amount=tax_result.tax_amount,     # 16% VAT (0 for residential)
         total_amount=tax_result.total_amount,  # gross received (== payment.amount)

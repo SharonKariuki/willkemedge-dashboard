@@ -17,7 +17,7 @@ from rest_framework.test import APIClient, APITestCase
 
 from apps.buildings.models import Building, Unit, UnitClassification, UnitStatus
 from apps.ledger.models import JournalEntry, JournalLine
-from apps.ledger.posting import post_opening_balances
+from apps.ledger.posting import post_opening_deposit
 from apps.payments.models import Payment, PaymentType
 from apps.payments.services import process_payment
 from apps.payments.statement_service import build_statement
@@ -129,7 +129,7 @@ class EditingTheDepositBooksIt(DepositBookingTestCase):
 
     def test_a_cutover_deposit_cannot_be_reduced_from_the_form(self):
         tenant = self._let("WED25", held="15000")
-        post_opening_balances(tenant, net_balance=0, deposit=D("15000"), date=_dt.date(2026, 7, 1))
+        post_opening_deposit(tenant, deposit=D("15000"), date=_dt.date(2026, 7, 1))
 
         resp = self._edit(tenant, expect=status.HTTP_400_BAD_REQUEST, deposit_paid="10000")
 
@@ -149,7 +149,7 @@ class EditingTheDepositBooksIt(DepositBookingTestCase):
 
     def test_the_payment_history_reads_the_books(self):
         tenant = self._let("WED27", held="15000")
-        post_opening_balances(tenant, net_balance=0, deposit=D("15000"), date=_dt.date(2026, 7, 1))
+        post_opening_deposit(tenant, deposit=D("15000"), date=_dt.date(2026, 7, 1))
 
         resp = self.client.get(f"/api/tenants/{tenant.id}/payment-history/")
 
@@ -180,7 +180,7 @@ class TheStatementCarriesTheAgreedDeposit(DepositBookingTestCase):
 
     def test_a_cutover_deposit_reaches_the_statement(self):
         tenant = self._let("WED32", held="15000")
-        post_opening_balances(tenant, net_balance=0, deposit=D("15000"), date=_dt.date(2026, 7, 1))
+        post_opening_deposit(tenant, deposit=D("15000"), date=_dt.date(2026, 7, 1))
 
         assert build_statement(tenant)["security_deposit"] == "15,000.00"
 
@@ -259,7 +259,7 @@ class SyncDepositBookingsTests(DepositBookingTestCase):
 
     def test_apply_books_only_what_the_card_has_beyond_the_books(self):
         tenant = self._let("WED41", held="15000")
-        post_opening_balances(tenant, net_balance=0, deposit=D("10000"), date=_dt.date(2026, 7, 1))
+        post_opening_deposit(tenant, deposit=D("10000"), date=_dt.date(2026, 7, 1))
 
         self._run("--apply", "--on", "2026-09-01")
 
@@ -271,7 +271,7 @@ class SyncDepositBookingsTests(DepositBookingTestCase):
 
     def test_books_above_the_card_are_reported_not_changed(self):
         tenant = self._let("WED42", held="5000")
-        post_opening_balances(tenant, net_balance=0, deposit=D("15000"), date=_dt.date(2026, 7, 1))
+        post_opening_deposit(tenant, deposit=D("15000"), date=_dt.date(2026, 7, 1))
 
         out = self._run("--apply")
 

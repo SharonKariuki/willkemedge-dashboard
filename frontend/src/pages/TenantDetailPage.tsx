@@ -297,9 +297,14 @@ export default function TenantDetailPage() {
                 <Mail className="h-4 w-4" /> Email Statement
               </Button>
               {canManageCredit && (
-                <Button variant="outline" onClick={() => navigate(`/tenants/${id}/credits/new`)}>
-                  <Plus className="h-4 w-4" /> Add Credit
-                </Button>
+                <>
+                  <Button variant="outline" onClick={() => navigate(`/tenants/${id}/charges/new`)}>
+                    <Plus className="h-4 w-4" /> Add Charge
+                  </Button>
+                  <Button variant="outline" onClick={() => navigate(`/tenants/${id}/credits/new`)}>
+                    <Plus className="h-4 w-4" /> Add Credit
+                  </Button>
+                </>
               )}
               <Button variant="outline" onClick={() => setMode("notice")}><AlertTriangle className="h-4 w-4" /> Notice</Button>
               <Button variant="danger" onClick={() => setMode("moveout")}><LogOut className="h-4 w-4" /> Move Out</Button>
@@ -309,6 +314,12 @@ export default function TenantDetailPage() {
             <>
               {canMoveInAgain && (
                 <Button onClick={() => setMode("movein")}><LogIn className="h-4 w-4" /> Move In Again</Button>
+              )}
+              {/* Damage found at handover is still recharged to a tenant who has left. */}
+              {canManageCredit && tenant.status === "moved_out" && (
+                <Button variant="outline" onClick={() => navigate(`/tenants/${id}/charges/new`)}>
+                  <Plus className="h-4 w-4" /> Add Charge
+                </Button>
               )}
               {/* A tenant who has left can still be owed money back. */}
               {canManageCredit && (

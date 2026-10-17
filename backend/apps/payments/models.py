@@ -126,6 +126,16 @@ class Payment(models.Model):
                 condition=~models.Q(idempotency_key=""),
                 name="unique_payment_idempotency_key_per_tenant",
             ),
+            # Every write path already rejects a non-positive amount; this makes
+            # it structural, so a management command, an admin save or a psql
+            # session cannot book a zero or negative receipt either.
+            models.CheckConstraint(
+                condition=models.Q(amount__gt=0), name="payment_amount_positive",
+            ),
+            # A payment filed to month 13 vanishes from every period report.
+            models.CheckConstraint(
+                condition=models.Q(period_month__gte=1) & models.Q(period_month__lte=12), name="payment_period_month_valid",
+            ),
         ]
 
     def __str__(self) -> str:
@@ -221,6 +231,21 @@ class Arrears(models.Model):
 # UtilityCharge — water / electricity / other monthly usage billed to a tenant
 # ---------------------------------------------------------------------------
 
+class ChargeType(models.TextChoices):
+    """What a non-rent charge is for — decides the account it is booked to.
+
+    Every type maps onto an account already in the auditor-locked chart, so
+    adding one here never needs a new account (see ``charge_account_code``).
+    """
+
+    UTILITY = "utility", "Water, electricity or service charge"
+    LATE_FEE = "late_fee", "Late payment penalty"
+    PARKING = "parking", "Parking"
+    # A cost the landlord paid and the tenant owes back. Booked against the
+    # expense it recovers, the mirror of a "tenant paid for a repair" credit.
+    DAMAGE = "damage", "Damage or repair recharge"
+
+
 class UtilityCharge(models.Model):
     """
     A non-rent charge that appears on the tenant's statement ledger.
@@ -232,7 +257,26 @@ class UtilityCharge(models.Model):
     Meter readings are stored on the charge but deliberately kept off the
     statement: the tenant-facing document shows the consumption and what it
     cost, not the raw dial figures behind it.
+
+    Despite the name it carries every non-rent debit — penalties, parking and
+    damage recharges too, told apart by ``charge_type``. They all sit in the
+    statement's "Other Charges" and the rent roll the same way water does.
     """
+
+    charge_type = models.CharField(
+        max_length=20, choices=ChargeType.choices, default=ChargeType.UTILITY,
+        help_text="What the charge is for; decides the income or expense account.",
+    )
+    expense_category = models.ForeignKey(
+        "expenses.ExpenseCategory", on_delete=models.PROTECT, null=True, blank=True,
+        related_name="tenant_charges",
+        help_text="Damage/repair recharges only: the expense the charge recovers.",
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="+",
+        help_text="Who added the charge by hand. Blank for meter readings and imports.",
+    )
 
     tenant = models.ForeignKey(
         Tenant,
@@ -266,6 +310,22 @@ class UtilityCharge(models.Model):
         ordering = ["-posting_date", "-id"]
         indexes = [
             models.Index(fields=["tenant", "period_year", "period_month"]),
+        ]
+        constraints = [
+            # The meter form and the importer both update_or_create on these
+            # four fields. Without the constraint two concurrent submissions
+            # both find nothing, both insert, and the tenant pays twice.
+            # Metered charges only: hand-made charges (parking, damage, other
+            # costs) may legitimately repeat a label within a month.
+            models.UniqueConstraint(
+                fields=["tenant", "period_year", "period_month", "label"],
+                condition=models.Q(closing_reading__isnull=False),
+                name="unique_metered_charge_per_period",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(period_month__gte=1) & models.Q(period_month__lte=12), name="utility_charge_period_month_valid",
+            ),
+            # No amount rule: a negative UtilityCharge is a credit line.
         ]
 
     def __str__(self) -> str:

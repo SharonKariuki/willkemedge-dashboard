@@ -46,6 +46,10 @@ def arcade(db):
 
 
 def _plan(monkeypatch, *, vacate=(), create=(), channels=()):
+    # The command's real plan names production tenant ids (148-166); left in
+    # place they hit whichever test rows happen to get those ids.
+    for name in ("DEPOSITS", "REALLOCATE", "DROP_CHARGES", "DISCARD_PERIODS"):
+        monkeypatch.setattr(cmd, name, [])
     monkeypatch.setattr(cmd, "VACATE", list(vacate))
     monkeypatch.setattr(cmd, "CREATE_UNITS", list(create))
     monkeypatch.setattr(cmd, "CHANNELS", list(channels))

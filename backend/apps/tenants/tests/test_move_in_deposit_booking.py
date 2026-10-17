@@ -5,7 +5,7 @@ this, registering a tenant wrote that number and stopped — so 1030 (Tenant
 Security Deposit Bank) and 2100 (Tenant Security Deposits Held) never moved, and
 a deposit showed on the tenant's card while being absent from the balance sheet.
 Tenants who predate the cutover only have theirs booked because
-``post_opening_balances`` posted it; anyone registered afterwards had nothing.
+``post_opening_deposit`` posted it; anyone registered afterwards had nothing.
 """
 from decimal import Decimal
 

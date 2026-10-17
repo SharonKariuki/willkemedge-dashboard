@@ -19,6 +19,7 @@ from apps.tenants.models import Tenant
 
 from .models import (
     Arrears,
+    ChargeType,
     CoopIpnEvent,
     CoopIpnStatus,
     Payment,
@@ -31,6 +32,7 @@ from .pdf_service import render_to_pdf
 from .receipt_service import generate_receipt
 from .serializers import (
     ArrearsSerializer,
+    ChargeCreateSerializer,
     CollectionProgressSerializer,
     MeterReadingSerializer,
     PaymentCreateSerializer,
@@ -555,15 +557,77 @@ class UnmatchedCreditViewSet(viewsets.ReadOnlyModelViewSet):
 
 
 class UtilityChargeViewSet(viewsets.ReadOnlyModelViewSet):
-    """Water/utility charges, plus the staff meter-reading entry point.
+    """Non-rent charges, plus the staff meter-reading entry point.
 
     GET  /api/utility-charges/                  — list (filter ?tenant= &month= &year=)
     GET  /api/utility-charges/previous-reading/?tenant=<id>
     POST /api/utility-charges/reading/          — capture a reading, bill the charge
+    GET  /api/utility-charges/options/          — what the Add Charge form offers
+    POST /api/utility-charges/                  — Add Charge (owner only)
     """
 
     serializer_class = UtilityChargeSerializer
     permission_classes = [IsAuthenticated]
+
+    def get_permissions(self):
+        # Adding a debit raises what a tenant owes: the owner's call, the same
+        # privilege as forgiving one. Meter readings stay with staff.
+        if self.action == "create":
+            return [CanForgiveMoney()]
+        return super().get_permissions()
+
+    def create(self, request):
+        from .charges import ChargeError, add_charge
+
+        ser = ChargeCreateSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        data = ser.validated_data
+        try:
+            charge = add_charge(
+                tenant=data["tenant"],
+                charge_type=data["charge_type"],
+                amount=data["amount"],
+                label=data["label"],
+                posting_date=data["posting_date"],
+                period_month=data["period_month"],
+                period_year=data["period_year"],
+                expense_category=data.get("expense_category"),
+                notes=data.get("notes", ""),
+                actor=request.user,
+            )
+        except ChargeError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        charge = self.get_queryset().get(pk=charge.pk)
+        return Response(UtilityChargeSerializer(charge).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=["get"], url_path="options")
+    def charge_options(self, request):
+        """Charge types with the account each books to, and the recoverable expenses."""
+        from apps.expenses.coa import LATE_FEES, PARKING, SERVICE_CHARGE_UTILITIES
+        from apps.expenses.models import Account, ExpenseCategory
+
+        names = dict(Account.objects.filter(
+            code__in=[SERVICE_CHARGE_UTILITIES, LATE_FEES, PARKING],
+        ).values_list("code", "name"))
+        account_for = {
+            ChargeType.UTILITY: SERVICE_CHARGE_UTILITIES,
+            ChargeType.LATE_FEE: LATE_FEES,
+            ChargeType.PARKING: PARKING,
+        }
+        types = []
+        for value, text in ChargeType.choices:
+            code = account_for.get(value)
+            types.append({
+                "value": value,
+                "label": text,
+                "account": f"{code} {names.get(code, '')}".strip() if code else "",
+            })
+        categories = [
+            {"id": c.pk, "name": c.name, "account": f"{c.account.code} {c.account.name}"}
+            for c in ExpenseCategory.objects.select_related("account")
+            .filter(account__isnull=False).order_by("account__code", "name")
+        ]
+        return Response({"charge_types": types, "expense_categories": categories})
 
     def get_queryset(self):
         qs = UtilityCharge.objects.select_related(

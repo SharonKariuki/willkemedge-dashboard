@@ -81,7 +81,12 @@ def generate_receipt(
     unit = tenant.unit
     payment = transaction.payment
 
-    is_business = transaction.unit_classification == UnitClassification.BUSINESS
+    # The VAT layout is for a VAT-bearing receipt: commercial rent. A deposit
+    # from a commercial tenant carries no VAT and reads as a plain total.
+    is_business = (
+        transaction.unit_classification == UnitClassification.BUSINESS
+        and transaction.tax_amount > 0
+    )
 
     return ReceiptData(
         transaction_id=transaction.transaction_id,

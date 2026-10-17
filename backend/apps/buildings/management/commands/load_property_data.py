@@ -35,6 +35,8 @@ from decimal import Decimal, InvalidOperation
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
+from apps.payments.monthly_ledger import OPENING_MARKER
+
 KRA_RE = re.compile(r"^[AP]\d{9}[A-Z]$")
 REQUIRED_COLUMNS = {
     "property_code", "property_name", "unit_code", "monthly_rent",
@@ -218,12 +220,14 @@ class Command(BaseCommand):
                                 "amount_paid": Decimal("0"),
                                 "balance": opening,
                                 "is_cleared": opening <= 0,
+                                # Marks the row as the carried-in balance, not a
+                                # billed month: it posts to opening equity (3300)
+                                # rather than to this month's rent income.
+                                "waive_notes": f"{OPENING_MARKER} at go-live ({as_of:%d %b %Y}).",
                             },
                         )
-                        from apps.ledger.posting import post_opening_balances
-                        post_opening_balances(
-                            tenant, net_balance=opening, deposit=deposit, date=as_of,
-                        )
+                        from apps.ledger.posting import post_opening_deposit
+                        post_opening_deposit(tenant, deposit=deposit, date=as_of)
 
                 self._report(per_property, issues)
 

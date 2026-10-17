@@ -51,6 +51,26 @@ function useLoginAudit() {
 const inputCls =
   "w-full rounded-md border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20";
 
+/** First human-readable message out of a DRF error body.
+ *
+ * `change-password` rejects a weak or reused password with per-field errors
+ * (`{"new_password": ["..."]}`), not a `detail` string, so reading `detail`
+ * alone reported "Failed to change password" and hid the actual reason.
+ */
+function passwordErrorMessage(err: unknown): string {
+  const data = (err as { response?: { data?: unknown } })?.response?.data;
+  if (typeof data === "string") return data;
+  if (data && typeof data === "object") {
+    const body = data as Record<string, unknown>;
+    if (typeof body.detail === "string") return body.detail;
+    for (const value of Object.values(body)) {
+      if (typeof value === "string") return value;
+      if (Array.isArray(value) && typeof value[0] === "string") return value[0];
+    }
+  }
+  return "Failed to change password";
+}
+
 export default function SettingsPage() {
   const { user: rawUser, logout } = useAuth();
   const user = rawUser as StoredUser | null;
@@ -89,8 +109,8 @@ export default function SettingsPage() {
       toast.error("Passwords do not match");
       return;
     }
-    if (pwForm.new_password.length < 8) {
-      toast.error("Password must be at least 8 characters");
+    if (pwForm.new_password.length < 12) {
+      toast.error("Password must be at least 12 characters");
       return;
     }
     setPwSaving(true);
@@ -103,8 +123,7 @@ export default function SettingsPage() {
       setPwEditing(false);
       setPwForm({ current_password: "", new_password: "", confirm_password: "" });
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? "Failed to change password";
-      toast.error(msg);
+      toast.error(passwordErrorMessage(err));
     } finally {
       setPwSaving(false);
     }

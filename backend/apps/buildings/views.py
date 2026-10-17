@@ -11,9 +11,9 @@ from rest_framework.response import Response
 
 from apps.accounts import audit
 from apps.accounts.permissions import CanRecordMoney
-from apps.expenses.models import Expense, ExpenseCategory
 
 from . import photos, spaces
+from .maintenance import sync_maintenance_expense
 from .models import (
     OCCUPIED_UNIT_STATUSES,
     Building,
@@ -278,28 +278,7 @@ class MaintenanceRequestViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         with transaction.atomic():
             instance = serializer.save()
-            # Auto-sync cost to Expenses tab if cost > 0
-            if instance.cost and instance.cost > 0:
-                cat, _ = ExpenseCategory.objects.get_or_create(
-                    name="Maintenance & Repairs",
-                    defaults={"description": "Auto-created from maintenance requests"},
-                )
-                expense = Expense.objects.create(
-                    date=instance.reported_date,
-                    building=instance.unit.building,
-                    # The work order is always for one unit, so the cost it
-                    # generates is booked to that unit, not just the building.
-                    unit=instance.unit,
-                    category=cat,
-                    amount=instance.cost,
-                    description=f"Maintenance: {instance.description[:200]}",
-                    reference=f"MNT-{instance.pk}",
-                    period_month=instance.reported_date.month,
-                    period_year=instance.reported_date.year,
-                    notes=f"Auto-created from maintenance request #{instance.pk}",
-                )
-                instance.expense = expense
-                instance.save(update_fields=["expense"])
+            sync_maintenance_expense(instance)
             # Set unit status to under_maintenance
             unit = instance.unit
             if unit.status == UnitStatus.VACANT:
@@ -316,7 +295,4 @@ class MaintenanceRequestViewSet(viewsets.ModelViewSet):
                 if not has_active and instance.unit.status == UnitStatus.UNDER_MAINTENANCE:
                     instance.unit.status = UnitStatus.VACANT
                     instance.unit.save(update_fields=["status"])
-            # Sync cost to linked expense if it changed
-            if instance.expense and instance.cost != instance.expense.amount:
-                instance.expense.amount = instance.cost
-                instance.expense.save(update_fields=["amount"])
+            sync_maintenance_expense(instance)
