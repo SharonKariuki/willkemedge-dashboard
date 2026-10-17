@@ -71,6 +71,15 @@ def live_payments(tenant):
     return tenant.payments.filter(voided_at__isnull=True)
 
 
+# The database refuses these (CheckConstraints since #309); saying so here
+# turns what was a 500 from the constraint into a 400 naming the field.
+MONEY_AND_DAY_LIMITS = {
+    "monthly_rent": {"min_value": 0},
+    "deposit_paid": {"min_value": 0},
+    "due_day": {"min_value": 1, "max_value": 31},
+}
+
+
 class TenantDocumentSerializer(serializers.ModelSerializer):
     """A KYC document's details. Never a file URL: the bytes are only served by
     the authenticated ``documents/<id>/download/`` action."""
@@ -304,6 +313,7 @@ class TenantCreateSerializer(serializers.ModelSerializer):
             "is_billable",
             "deposit_source", "deposit_date", "deposit_reference",
         ]
+        extra_kwargs = MONEY_AND_DAY_LIMITS
 
     def validate(self, attrs):
         """A deposit cannot be dated before the keys were handed over."""
@@ -367,6 +377,7 @@ class TenantEditSerializer(serializers.ModelSerializer):
             "notes",
 
         ]
+        extra_kwargs = MONEY_AND_DAY_LIMITS
 
     def validate_id_number(self, value):
         """Trimmed, and never blanked — it is the tenant's identity on file."""

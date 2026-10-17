@@ -166,6 +166,16 @@ class Tenant(models.Model):
                 condition=models.Q(status__in=["active", "notice_given"]),
                 name="tenant_id_number_unique_while_current",
             ),
+            # One current tenancy per unit. Nothing else stopped a second
+            # tenant being moved in on top of the first (e.g. after the unit
+            # was hand-set to vacant), which double-bills the unit and splits
+            # its payments between two people. A combined space's tenancy sits
+            # on its head unit, so this covers the whole space.
+            models.UniqueConstraint(
+                fields=["unit"],
+                condition=models.Q(status__in=["active", "notice_given"]),
+                name="tenant_one_current_per_unit",
+            ),
             models.CheckConstraint(
                 condition=models.Q(monthly_rent__gte=0),
                 name="tenant_monthly_rent_non_negative",

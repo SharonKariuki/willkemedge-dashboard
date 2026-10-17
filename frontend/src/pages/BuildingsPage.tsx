@@ -93,7 +93,10 @@ function AdjustRentModal({
       }
     >
       <p className="-mt-1 mb-4 text-sm text-ink-500">
-        Current rent: <span className="font-medium text-ink-900">KES {Number(unit.monthly_rent).toLocaleString()}</span>
+        Listed rent: <span className="font-medium text-ink-900">KES {Number(unit.monthly_rent).toLocaleString()}</span>
+      </p>
+      <p className="-mt-2 mb-4 text-[11px] text-ink-500">
+        The figure a new letting starts from. A current tenant keeps the rent agreed with them; change that on the tenant's page.
       </p>
 
       <label className="mb-1 block text-[11px] font-medium uppercase tracking-[0.14em] text-ink-500">
