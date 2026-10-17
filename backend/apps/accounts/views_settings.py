@@ -19,6 +19,7 @@ class LoginAuditView(APIView):
                 "ip_address": a.ip_address,
                 "user_agent": a.user_agent[:80],
                 "successful": a.successful,
+                "cleared_at": a.cleared_at,
                 "attempted_at": a.attempted_at.isoformat(),
             }
             for a in attempts
