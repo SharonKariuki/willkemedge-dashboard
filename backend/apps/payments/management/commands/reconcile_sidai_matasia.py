@@ -1,6 +1,16 @@
 """
-Split Sidai's 14 Sept 2026 bank credit between its two tenancies.
+Bring Sidai Lonestar Healthcare into line with the 7 Oct 2026 statement.
 
+One command owns Sidai's whole position across its two tenant records, because
+one bank credit pays both and re-allocating it piecemeal is how the Fortcom
+reconciliation went circular. Three things, in order:
+
+  1. the 14 Sept credit, split between the two lettings as the sheets read it;
+  2. MCG06 joins MCG05's space from October, at 86,500 + 20,000 = 106,500;
+  3. October charged as the 7 Oct sheet bills it — MCG05 123,540, MCF12 58,760.
+
+The 14 Sept credit
+------------------
 Sidai Lonestar Healthcare pays for two lettings with one transfer: the ground
 floor (MCG05) and the first-floor office (MCF12, tenant "Sidai Healthcare
 Residential"). The 14 Sept credit of 161,480 was assigned from the unmatched
@@ -26,14 +36,28 @@ MCF12's September VAT was raised at 8,104.80; August's is 8,105 and so is the
 sheet's. It is restated to 8,105 so the receipt clears the month exactly
 rather than leaving 0.20 of credit.
 
-Nothing after 16 Sept is touched. In particular the 14 Oct credit of 126,340
-stays where it is until the October position is settled.
+October
+-------
+The 7 Oct sheet bills MCG05 at 106,500 + VAT — its own 86,500 plus MCG06 at
+20,000, one tenancy over two units — and keeps MCF12 on its own line at 58,760
+while Sidai moves out of it. MCG06 is added to MCG05's combined space through
+``reconfigure_space``, which sets the rent the biller uses from November;
+October was already raised at 86,500 on 25 Sept, so its row is restated here.
+MCF12's October was never raised (the tenant is on notice), so it is raised.
+
+The 14 Oct credit of 126,340 is the sheet's MCG05 figure to the shilling and
+already sits on MCG05's October; it is not touched.
+
+Not done here: MCG05's 2,800 water on the 7 Oct sheet is a meter reading, and
+the September reading for MCG05 is not in the app. It belongs on the meter
+chain, not in a flat charge. MCG08 and MCG09 join the space when a sheet first
+bills them.
 
 DRY-RUN BY DEFAULT. Nothing is written without --apply. Re-running is safe.
 
 Usage:
-    python manage.py reconcile_sidai_sept_receipt
-    python manage.py reconcile_sidai_sept_receipt --apply
+    python manage.py reconcile_sidai_matasia
+    python manage.py reconcile_sidai_matasia --apply
 """
 import datetime as _dt
 from decimal import Decimal
@@ -71,11 +95,30 @@ MCF12_SEP_VAT = D("8105.00")
 # What the 16 Sept sheet says each tenancy owed once the credit landed.
 SHEET_UNPAID = {"MCG05": D("0.00"), "MCF12": D("10000.00")}
 
+OCT = (2026, 10)
+OCT_SHEET_DATE = _dt.date(2026, 10, 7)
+
+# MCG05's combined space from October — (member label, its share of the rent).
+SPACE_MEMBERS = [("MCG06", D("20000.00"))]
+MCG05_OWN_RENT = D("86500.00")
+SPACE_RENT = MCG05_OWN_RENT + sum((r for _l, r in SPACE_MEMBERS), D(0))
+
+# October as the 7 Oct sheet bills it — tenancy key -> (rent, VAT).
+OCTOBER = {
+    "MCG05": (SPACE_RENT, D("17040.00")),
+    "MCF12": (D("50655.00"), D("8105.00")),
+}
+
+# What the 7 Oct sheet says each owed, and what of that this command leaves out.
+OCT_SHEET_UNPAID = {"MCG05": D("126340.00"), "MCF12": D("68760.00")}
+OCT_NOT_HERE = {"MCG05": (D("2800.00"), "water: September meter reading not in the app")}
+
 
 class Command(BaseCommand):
     help = (
-        "Split Sidai's 14 Sept 2026 credit (161,480) between MCG05 (102,720) and "
-        "MCF12 (58,760), per the 16 Sept status sheet. Dry-run unless --apply."
+        "Bring Sidai (MCG05 + MCF12) into line with the 7 Oct 2026 statement: split "
+        "the 14 Sept credit, add MCG06 to MCG05's space, charge October as the sheet "
+        "does. Dry-run unless --apply."
     )
 
     def add_arguments(self, parser):
@@ -108,8 +151,18 @@ class Command(BaseCommand):
         self._head(f"2. {REF} {BANKED:,.2f} — one credit, two tenancies")
         self._recut(tenants)
 
-        self._head("3. Does it foot?")
+        self._head("3. Does September foot? (16 Sept sheet)")
         self._foot(tenants)
+
+        self._head("4. MCG05's space from October")
+        self._combine_space(tenants["MCG05"])
+
+        self._head("5. October charged as the 7 Oct sheet bills it")
+        for key, (rent, vat) in OCTOBER.items():
+            self._set_october(key, tenants[key], rent, vat)
+
+        self._head("6. Does October foot? (7 Oct sheet)")
+        self._foot_october(tenants)
 
         if not self.apply:
             self.stdout.write(self.style.WARNING(
@@ -209,7 +262,7 @@ class Command(BaseCommand):
                     period_month=month, period_year=year, source="bank",
                     reference=REF, idempotency_key=f"{REF}#{key}-{year}-{month:02d}",
                     payment_type="rent",
-                    notes=f"Re-allocated by reconcile_sidai_sept_receipt: {why}.",
+                    notes=f"Re-allocated by reconcile_sidai_matasia: {why}.",
                 )
 
     def _foot(self, tenants):
@@ -231,3 +284,76 @@ class Command(BaseCommand):
                 "The credit is split as the sheet reads it; any difference left is in "
                 "the charges, not this receipt."
             )
+
+    def _combine_space(self, head_tenant):
+        from apps.buildings.models import Unit
+        from apps.buildings.spaces import reconfigure_space
+
+        head = head_tenant.unit
+        labels = [label for label, _r in SPACE_MEMBERS]
+        members = list(Unit.objects.filter(building=head.building, label__in=labels))
+        if len(members) != len(labels):
+            missing = set(labels) - {u.label for u in members}
+            self._skip(f"MCG05: {', '.join(sorted(missing))} not found in {head.building.name}")
+            return
+        add = [u for u in members if u.combined_into_id != head.pk]
+        if not add and head_tenant.monthly_rent == SPACE_RENT:
+            self._skip(f"MCG05: space already {head.space_label} at {SPACE_RENT}")
+            return
+        self._do(
+            f"MCG05: add {', '.join(u.label for u in add) or '(none)'} to the space; "
+            f"rent {head_tenant.monthly_rent} -> {SPACE_RENT}"
+        )
+        if not self.apply:
+            return
+        with transaction.atomic():
+            if add:
+                reconfigure_space(head, add=add, monthly_rent=SPACE_RENT)
+            else:
+                head_tenant.monthly_rent = SPACE_RENT
+                head_tenant.save(update_fields=["monthly_rent", "updated_at"])
+        head_tenant.refresh_from_db()
+
+    def _set_october(self, key, tenant, rent, vat):
+        """Raise or restate October — ``.save()``/``create`` so the ledger posts."""
+        from apps.payments.models import Arrears
+        from apps.payments.services import _update_arrears
+
+        year, month = OCT
+        arr = Arrears.objects.filter(tenant=tenant, period_year=year, period_month=month).first()
+        if arr and (arr.expected_rent, arr.expected_vat) == (rent, vat):
+            self._skip(f"{key}: October already {rent} + {vat} VAT")
+            return
+        was = f"{arr.expected_rent} + {arr.expected_vat} VAT" if arr else "not billed"
+        self._do(f"{key}: October {was} -> {rent} + {vat} VAT = {rent + vat}")
+        if not self.apply:
+            return
+        with transaction.atomic():
+            if arr:
+                arr.expected_rent, arr.expected_vat = rent, vat
+                arr.save(update_fields=["expected_rent", "expected_vat"])
+            else:
+                Arrears.objects.create(
+                    tenant=tenant, period_year=year, period_month=month,
+                    expected_rent=rent, expected_vat=vat, amount_paid=D(0),
+                    balance=rent + vat, is_cleared=False,
+                )
+            _update_arrears(tenant, month, year)
+
+    def _foot_october(self, tenants):
+        from apps.payments.statement_service import build_statement
+
+        for key, tenant in tenants.items():
+            s = build_statement(tenant, statement_date=OCT_SHEET_DATE, as_of=OCT_SHEET_DATE)
+            have = s["total_due_value"]
+            left_out, why = OCT_NOT_HERE.get(key, (D(0), ""))
+            want = OCT_SHEET_UNPAID[key] - left_out
+            line = (
+                f"{key} unpaid at {OCT_SHEET_DATE:%d %b}: app {have:,.2f}, sheet "
+                f"{OCT_SHEET_UNPAID[key]:,.2f}"
+                + (f" less {left_out:,.2f} {why}" if left_out else "")
+            )
+            if have == want:
+                self.stdout.write(self.style.SUCCESS(f"  ties  {line}"))
+            else:
+                self._note(f"{line} — differs by {have - want:,.2f}")
