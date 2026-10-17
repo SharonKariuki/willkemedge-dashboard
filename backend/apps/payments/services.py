@@ -666,9 +666,9 @@ def get_collection_progress(period_month: int, period_year: int) -> dict:
     Previously `expected` was base rent while `collected` swept in deposits and
     late fees, so the percentage reconciled with neither the P&L nor arrears.
     """
-    from apps.tenants.models import Tenant, TenantStatus
+    from apps.tenants.models import CURRENT_STATUSES, Tenant
 
-    active_tenants = Tenant.objects.filter(status=TenantStatus.ACTIVE).select_related("unit")
+    active_tenants = Tenant.objects.filter(status__in=CURRENT_STATUSES).select_related("unit")
     expected = sum(
         (t.monthly_rent + expected_vat_for(t, t.monthly_rent) for t in active_tenants),
         ZERO,

@@ -20,7 +20,7 @@ from apps.buildings.models import (
 from apps.payments.models import Arrears, Payment, PaymentType
 from apps.payments.monthly_ledger import current_balances
 from apps.payments.tax_service import TAX_RATE_BUSINESS
-from apps.tenants.models import Tenant, TenantStatus
+from apps.tenants.models import CURRENT_STATUSES, Tenant, TenantStatus
 
 
 class DashboardSummaryView(APIView):
@@ -45,7 +45,8 @@ class DashboardSummaryView(APIView):
         # A unit under renovation has no tenant — it is neither vacant-available
         # nor occupied, so count only genuinely tenanted units as occupied.
         occupied = Unit.objects.filter(status__in=OCCUPIED_UNIT_STATUSES).count()
-        active_tenants = Tenant.objects.filter(status=TenantStatus.ACTIVE).count()
+        # Tenants on notice still hold their units and owe rent until they leave.
+        active_tenants = Tenant.objects.filter(status__in=CURRENT_STATUSES).count()
 
         # Real-time arrears, read from the rent roll rather than from
         # ``Arrears.balance``. The subledger tracks rent obligations only and is
@@ -54,7 +55,7 @@ class DashboardSummaryView(APIView):
         # excluded rather than netted off: a credit on one tenancy does not pay
         # down what another owes, and netting understated what is collectable.
         active_tenant_ids = list(
-            Tenant.objects.filter(status=TenantStatus.ACTIVE).values_list("id", flat=True)
+            Tenant.objects.filter(status__in=CURRENT_STATUSES).values_list("id", flat=True)
         )
         rent_roll = current_balances(active_tenant_ids, today=timezone.localdate())
         total_arrears = sum(
@@ -67,7 +68,7 @@ class DashboardSummaryView(APIView):
         # up so it shares the VAT-inclusive basis of the cash actually received —
         # otherwise a fully-paying commercial portfolio reads above 100%.
         vat_multiplier = Decimal("1") + TAX_RATE_BUSINESS
-        expected = Tenant.objects.filter(status=TenantStatus.ACTIVE).aggregate(
+        expected = Tenant.objects.filter(status__in=CURRENT_STATUSES).aggregate(
             total=Sum(
                 Case(
                     When(
@@ -222,14 +223,18 @@ class DashboardSummaryView(APIView):
                 "unit_id": u.id,
             })
 
-        # 3. Move-out notices: tenants with move_out_date set in next 30 days
+        # 3. Move-out notices: tenants on notice who leave in the next 30 days.
+        # This used to look for ACTIVE tenants with a move_out_date, but that
+        # date is only set by the move-out itself, which also ends ACTIVE — so
+        # the alert could never fire. Notice records intended_move_out_date.
+        from datetime import timedelta
         move_out_soon = Tenant.objects.filter(
-            status=TenantStatus.ACTIVE,
-            move_out_date__isnull=False,
-            move_out_date__gte=today,
-        ).select_related("unit", "unit__building")[:5]
+            status=TenantStatus.NOTICE_GIVEN,
+            intended_move_out_date__gte=today,
+            intended_move_out_date__lte=today + timedelta(days=30),
+        ).select_related("unit", "unit__building").order_by("intended_move_out_date")[:5]
         for t in move_out_soon:
-            days_left = (t.move_out_date - today).days
+            days_left = (t.intended_move_out_date - today).days
             alerts.append({
                 "type": "move_out",
                 "message": (
@@ -240,7 +245,6 @@ class DashboardSummaryView(APIView):
             })
 
         # 4. Expiring leases: tenants who have been active > 11 months (no move-out set)
-        from datetime import timedelta
         lease_threshold = today - timedelta(days=335)
         expiring = Tenant.objects.filter(
             status=TenantStatus.ACTIVE,
