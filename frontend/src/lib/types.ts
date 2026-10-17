@@ -109,8 +109,11 @@ export interface TenantDocument {
   tenant: number;
   doc_type: DocumentType;
   doc_type_display: string;
-  file: string;
   original_name: string;
+  content_type: string;
+  size: number | null;
+  /** False when an older upload was wiped from the server's disk by a deploy. */
+  available: boolean;
   uploaded_at: string;
 }
 

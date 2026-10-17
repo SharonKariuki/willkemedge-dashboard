@@ -72,12 +72,26 @@ def live_payments(tenant):
 
 
 class TenantDocumentSerializer(serializers.ModelSerializer):
+    """A KYC document's details. Never a file URL: the bytes are only served by
+    the authenticated ``documents/<id>/download/`` action."""
+
     doc_type_display = serializers.CharField(source="get_doc_type_display", read_only=True)
+    # False when a pre-database upload was wiped from disk by a deploy; the
+    # page then asks for the document again.
+    available = serializers.SerializerMethodField()
 
     class Meta:
         model = TenantDocument
-        fields = ["id", "tenant", "doc_type", "doc_type_display", "file", "original_name", "uploaded_at"]
-        read_only_fields = ["tenant", "original_name", "uploaded_at"]
+        fields = [
+            "id", "tenant", "doc_type", "doc_type_display", "original_name",
+            "content_type", "size", "available", "uploaded_at",
+        ]
+        read_only_fields = fields
+
+    def get_available(self, obj) -> bool:
+        if obj.stored_in_db:
+            return True
+        return bool(obj.file) and obj.file.storage.exists(obj.file.name)
 
 
 class TenantListSerializer(serializers.ModelSerializer):
@@ -145,7 +159,7 @@ class TenantDetailSerializer(serializers.ModelSerializer):
     # would be a lie.
     deposit_is_agreed = serializers.SerializerMethodField()
     status_display = serializers.CharField(source="get_status_display", read_only=True)
-    documents = TenantDocumentSerializer(many=True, read_only=True)
+    documents = serializers.SerializerMethodField()
     # Payment analytics
     total_paid = serializers.SerializerMethodField()
     total_arrears = serializers.SerializerMethodField()
@@ -233,6 +247,10 @@ class TenantDetailSerializer(serializers.ModelSerializer):
     def get_deposit_is_agreed(self, obj):
         from apps.tenants.deposits import has_agreed_deposit
         return has_agreed_deposit(obj)
+
+    def get_documents(self, obj):
+        # Defer the bytes: a tenant page lists documents, it never needs them.
+        return TenantDocumentSerializer(obj.documents.defer("data"), many=True).data
 
     def get_total_paid(self, obj):
         from django.db.models import Sum
