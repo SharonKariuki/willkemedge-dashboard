@@ -66,6 +66,9 @@ function CreditRow({
       </TD>
       <TD className="text-ink-500">
         <Badge tone="neutral">{credit.channel || "bank"}</Badge>
+        {credit.void_requeue_count > 0 && (
+          <Badge tone="coral" className="ml-1.5">Returned from void</Badge>
+        )}
       </TD>
       <TD className="max-w-xs">
         <p className="truncate text-[11px] text-ink-500">{credit.narration || "—"}</p>

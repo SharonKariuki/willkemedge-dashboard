@@ -115,6 +115,10 @@ export interface VoidPreview {
   payment: Payment;
   siblings: Payment[];
   total: string;
+  /** Whether the whole bank credit can go back to Reconciliation. */
+  requeueable: boolean;
+  /** Why it can't, when it can't — shown in the dialog. */
+  requeue_blocker: string;
 }
 
 export function useVoidPreview(paymentId: number | null) {
@@ -134,13 +138,19 @@ interface VoidPayload {
   reason: string;
   /** "reference" unwinds the whole credit; "single" just this row. */
   scope: "reference" | "single";
+  /** Send the whole bank credit back to Reconciliation to be reassigned. */
+  requeue?: boolean;
 }
 
 export function useVoidPayment() {
   const qc = useQueryClient();
-  return useMutation<{ voided_count: number }, Error, VoidPayload>({
-    mutationFn: async ({ id, reason, scope }) => {
-      const { data } = await api.post(`/payments/${id}/void/`, { reason, scope });
+  return useMutation<
+    { voided_count: number; requeued_credit?: number },
+    Error,
+    VoidPayload
+  >({
+    mutationFn: async ({ id, reason, scope, requeue = false }) => {
+      const { data } = await api.post(`/payments/${id}/void/`, { reason, scope, requeue });
       return data;
     },
     onSuccess: () => {
@@ -153,6 +163,7 @@ export function useVoidPayment() {
       qc.invalidateQueries({ queryKey: ["reports"] });
       qc.invalidateQueries({ queryKey: ["tenants"] });
       qc.invalidateQueries({ queryKey: ["transactions"] });
+      qc.invalidateQueries({ queryKey: ["unmatched-credits"] });
     },
   });
 }
