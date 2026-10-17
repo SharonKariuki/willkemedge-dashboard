@@ -439,9 +439,11 @@ class TenantViewSet(viewsets.ModelViewSet):
         # Voided payments stay in the list, flagged, so a void (e.g. money
         # re-pointed to the right unit) is visible on the tenant it came off.
         # They are still excluded from every total below.
+        # Every payment, not the latest 24: the tenant page filters this list
+        # by month, and "All months" has to mean all of them.
         payments = (
             Payment.objects.filter(tenant=tenant)
-            .order_by("-payment_date", "-id")[:24]
+            .order_by("-payment_date", "-id")
         )
         arrears = Arrears.objects.filter(tenant=tenant, is_cleared=False)
         # Voided payments are excluded from every other balance in the system;

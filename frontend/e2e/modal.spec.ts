@@ -65,3 +65,14 @@ test("a voided payment stays on the tenant page, marked void", async ({ page }) 
   await expect(page.getByRole("button", { name: /Void payment of KES 3000/ })).toHaveCount(1);
   await expect(await hasNoHorizontalScroll(page)).toBe(true);
 });
+
+test("payment history can be narrowed to one month", async ({ page }) => {
+  await page.goto("/tenants/1?pay=all");
+  await expect(page.getByText("2 payments")).toBeVisible();
+  await page.getByLabel("Payment history period").selectOption("2026-10");
+  await expect(page).toHaveURL(/pay=2026-10/);
+  await expect(page.getByText("2 payments")).toBeVisible();
+  // A month with no payments (reachable by link) says so instead of looking empty.
+  await page.goto("/tenants/1?pay=2026-09");
+  await expect(page.getByText("No payments in this period.", { exact: false })).toBeVisible();
+});

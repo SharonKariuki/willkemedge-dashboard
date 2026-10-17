@@ -37,7 +37,8 @@ import { downloadPdf } from "@/lib/downloadPdf";
 import { isNonNegativeAmountOrBlank, isPositiveAmount } from "@/lib/formValidators";
 import { formatBalanceKES, formatKES } from "@/lib/money";
 import {
-  DEFAULT_RENT_ROLL_FILTER, RENT_ROLL_PRESETS, filterRentRoll, parseRentRollFilter, rowMonthValue,
+  DEFAULT_RENT_ROLL_FILTER, RENT_ROLL_PRESETS, filterByMonth, filterRentRoll, monthOfIsoDate,
+  parseRentRollFilter, rowMonthValue,
 } from "@/lib/rentRollFilter";
 
 const KES = formatKES;
@@ -111,6 +112,16 @@ export default function TenantDetailPage() {
       return params;
     }, { replace: true });
   };
+  // Payment history takes the same filter, in its own `?pay=` param, applied to
+  // the date the money arrived (not the rent period it was booked to).
+  const payFilter = parseRentRollFilter(searchParams.get("pay"));
+  const setPayFilter = (value: string) => {
+    setSearchParams((params) => {
+      if (value === DEFAULT_RENT_ROLL_FILTER) params.delete("pay");
+      else params.set("pay", value);
+      return params;
+    }, { replace: true });
+  };
   // Commercial units carry 16% VAT and the statement bills it as its own
   // column; residential is exempt. Drive it off the ledger rather than the
   // unit's classification so a unit reclassified mid-tenancy still shows the
@@ -138,6 +149,16 @@ export default function TenantDetailPage() {
   const owedNow = Number(thisMonth?.balance ?? 0);
   // Filtering only hides rows: balances and the card above read the full roll.
   const rollRows = filterRentRoll(ledger, rollFilter);
+  const allPayments = history?.payments ?? [];
+  const paymentRows = filterByMonth(allPayments, payFilter, (p) => monthOfIsoDate(p.payment_date));
+  // One option per month money arrived in, newest first (the list is newest first).
+  const paymentMonths = [...new Set(allPayments.map((p) => p.payment_date.slice(0, 7)))].map((value) => ({
+    value,
+    label: new Date(`${value}-01T00:00:00`).toLocaleDateString("en-GB", { month: "short", year: "numeric" }),
+  }));
+  const paymentTotal = paymentRows
+    .filter((p) => !p.is_void)
+    .reduce((sum, p) => sum + Number(p.amount), 0);
   // Derived by the backend from one rule (apps/tenants/deposits.py) so the
   // page, the integrity check and the API cannot drift on what a deposit
   // should be. Older API responses omit them; fall back rather than render NaN.
@@ -584,10 +605,35 @@ export default function TenantDetailPage() {
 
       {/* Payment history */}
       <Card padding="none">
-        <div className="border-b border-hairline px-5 py-4">
-          <h2 className="font-semibold text-content">Payment history</h2>
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-hairline px-5 py-4">
+          <div>
+            <h2 className="font-semibold text-content">Payment history</h2>
+            {allPayments.length > 0 && (
+              <p className="text-xs text-content-muted">
+                {paymentRows.length} {paymentRows.length === 1 ? "payment" : "payments"} · {KES(paymentTotal)} received
+                {paymentRows.some((p) => p.is_void) ? " (voided excluded)" : ""}
+              </p>
+            )}
+          </div>
+          {allPayments.length > 0 && (
+            <select
+              aria-label="Payment history period"
+              value={payFilter}
+              onChange={(e) => setPayFilter(e.target.value)}
+              className="rounded-md border border-border bg-surface py-1.5 pl-3 pr-8 text-sm text-content focus:border-teal-600 focus:outline-none focus:ring-2 focus:ring-ring/25"
+            >
+              {RENT_ROLL_PRESETS.map((p) => (
+                <option key={p.value} value={p.value}>{p.label}</option>
+              ))}
+              <optgroup label="Month paid">
+                {paymentMonths.map((m) => (
+                  <option key={m.value} value={m.value}>{m.label}</option>
+                ))}
+              </optgroup>
+            </select>
+          )}
         </div>
-        {history?.payments.length ? (
+        {paymentRows.length ? (
           <Table minWidth={720}>
             <THead>
               <TR>
@@ -596,7 +642,7 @@ export default function TenantDetailPage() {
               </TR>
             </THead>
             <TBody>
-              {history.payments.map((p) => (
+              {paymentRows.map((p) => (
                 <TR key={p.id}>
                   <TD className="text-content-muted">{toDayFirst(p.payment_date)}</TD>
                   <TD>{p.period_month}/{p.period_year}</TD>
@@ -661,7 +707,11 @@ export default function TenantDetailPage() {
             </TBody>
           </Table>
         ) : (
-          <p className="px-5 py-6 text-sm text-content-muted">No payments recorded yet.</p>
+          <p className="px-5 py-6 text-sm text-content-muted">
+            {allPayments.length
+              ? "No payments in this period. Pick a wider range above."
+              : "No payments recorded yet."}
+          </p>
         )}
       </Card>
 
