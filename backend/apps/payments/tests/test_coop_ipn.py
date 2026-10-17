@@ -326,6 +326,32 @@ class TestCoopIpnProcessing:
         assert CoopIpnEvent.objects.filter(transaction_id="CB_DUP_1").count() == 1
         mock_receipt.assert_called_once()
 
+    @patch("apps.payments.coop_ipn.send_unmatched_credit_alert.delay")
+    @patch("apps.payments.coop_ipn.allocate_payment_fifo")
+    def test_a_booking_failure_is_queued_not_acked_as_duplicate(
+        self, mock_allocate, mock_alert, api_client, tenant,
+    ):
+        """An IntegrityError that is NOT a replay (here: booking the payment
+        breaks a DB rule) must leave the credit in the review queue and alert
+        the admin, instead of vanishing as a 'duplicate'."""
+        from django.db import IntegrityError
+
+        mock_allocate.side_effect = IntegrityError("payment_amount_positive")
+        resp = _post(api_client, _credit(trans_id="CB_FAIL_1", bill_ref="A12"))
+        assert resp.status_code == 200
+        event = CoopIpnEvent.objects.get(transaction_id="CB_FAIL_1")
+        assert event.status == CoopIpnStatus.UNMATCHED
+        assert "assign by hand" in event.detail
+        assert event.amount == Decimal("20000.00")
+        assert Payment.objects.filter(reference="CB_FAIL_1").count() == 0
+        mock_alert.assert_called_once_with(event.id)
+
+        # The bank's retry is then a genuine duplicate: acked, nothing new.
+        mock_allocate.side_effect = None
+        _post(api_client, _credit(trans_id="CB_FAIL_1", bill_ref="A12"))
+        assert CoopIpnEvent.objects.filter(transaction_id="CB_FAIL_1").count() == 1
+        assert Payment.objects.filter(reference="CB_FAIL_1").count() == 0
+
     def test_plain_debit_ignored(self, api_client, tenant):
         # A debit with no reversal marker / prior credit is just ignored.
         payload = _credit(trans_id="CB_DEBIT_1", narration="BANK CHARGE~LEDGER FEE")
