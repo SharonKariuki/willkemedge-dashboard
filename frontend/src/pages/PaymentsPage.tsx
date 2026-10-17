@@ -2,7 +2,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Banknote, Building2, CreditCard, Eye, EyeOff, FileText, Mail, Plus, Smartphone, Undo2, UserPlus, Wallet, X } from "lucide-react";
 
 import { cloneElement, isValidElement, useId, useMemo, useState } from "react";
-import { useForm } from "react-hook-form";
+import { Controller, useForm } from "react-hook-form";
 import toast from "react-hot-toast";
 import { Link } from "react-router-dom";
 import { z } from "zod";
@@ -168,9 +168,13 @@ export default function PaymentsPage() {
   const { data: allTenants } = useTenants();
   const tenantChoices = useMemo(() => toChoices(allTenants), [allTenants]);
 
+  // The record form keeps to active tenancies, as the old dropdown did.
+  const activeChoices = useMemo(() => toChoices(tenants), [tenants]);
+
   const hasTenants = (tenants?.length ?? 0) > 0;
 
   const {
+    control,
     register,
     handleSubmit,
     reset,
@@ -290,18 +294,23 @@ export default function PaymentsPage() {
           ) : (
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <Field label="Tenant *" error={errors.tenant?.message}>
-                <select {...register("tenant")} className={inputCls} disabled={tenantsLoading}>
-                  <option value={0}>
-                    {tenantsLoading ? "Loading tenants…" : "Select tenant…"}
-                  </option>
-                  {tenants?.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.full_name} ({t.unit_label})
-                    </option>
-                  ))}
-                </select>
-              </Field>
+              <div className="sm:col-span-2">
+                <Field label="Tenant *" error={errors.tenant?.message}>
+                  <Controller
+                    control={control}
+                    name="tenant"
+                    render={({ field }) => (
+                      <TenantPicker
+                        choices={activeChoices}
+                        value={field.value || null}
+                        onChange={(id) => field.onChange(id ?? 0)}
+                        disabled={tenantsLoading}
+                        ariaLabel="Tenant"
+                      />
+                    )}
+                  />
+                </Field>
+              </div>
               <Field label="Amount (KES) *" error={errors.amount?.message}>
                 <input {...register("amount")} className={inputCls} />
               </Field>
