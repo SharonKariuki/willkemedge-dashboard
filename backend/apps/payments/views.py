@@ -42,9 +42,13 @@ from .serializers import (
     UtilityChargeSerializer,
 )
 from .services import (
+    CreditNotRequeueable,
     IdempotencyConflict,
     get_collection_progress,
+    live_credit_rows,
     process_payment,
+    requeueable_credit,
+    void_and_requeue_credit,
     void_payment,
 )
 from .tasks import generate_monthly_arrears, send_payment_confirmation
@@ -70,22 +74,6 @@ def _mock_notes(source: str) -> str:
         "bank": "Simulated bank transfer",
         "cash": "Cash paid at the office",
     }.get(source, "Mock payment")
-
-
-def _void_group(payment: Payment):
-    """The live rows one bank credit became.
-
-    Grouped on tenant + reference because that is what a single credit shares
-    after FIFO allocation splits it. A blank reference groups nothing — manual
-    cash entries have no shared key, so each stands alone.
-    """
-    if not payment.reference:
-        return Payment.objects.filter(pk=payment.pk, voided_at__isnull=True)
-    return Payment.objects.filter(
-        tenant_id=payment.tenant_id,
-        reference=payment.reference,
-        voided_at__isnull=True,
-    ).order_by("pk")
 
 
 class PaymentViewSet(viewsets.ModelViewSet):
@@ -185,13 +173,22 @@ class PaymentViewSet(viewsets.ModelViewSet):
         before anything is unwound.
         """
         payment = get_object_or_404(Payment, pk=pk)
-        siblings = list(_void_group(payment).exclude(pk=payment.pk))
+        siblings = list(live_credit_rows(payment).exclude(pk=payment.pk))
+        # Whether the whole credit can go back to Reconciliation instead of
+        # vanishing; when it can't, say why so the dialog can explain.
+        try:
+            requeueable_credit(payment)
+            requeue_blocker = ""
+        except CreditNotRequeueable as exc:
+            requeue_blocker = str(exc)
         return Response({
             "payment": PaymentSerializer(payment).data,
             "siblings": PaymentSerializer(siblings, many=True).data,
             "total": str(
                 sum((p.amount for p in [payment, *siblings]), Decimal("0.00"))
             ),
+            "requeueable": not requeue_blocker,
+            "requeue_blocker": requeue_blocker,
         })
 
     @action(detail=True, methods=["post"], url_path="void", permission_classes=[CanForgiveMoney])
@@ -205,6 +202,11 @@ class PaymentViewSet(viewsets.ModelViewSet):
           * "reference" (default) — every live row the same bank credit was
             split into, which is what a user means by "remove that payment";
           * "single" — this row alone, for correcting one leg of a split.
+
+        `requeue: true` is for money booked to the wrong tenant or unit: the
+        whole bank credit is voided and sent back to the reconciliation queue
+        to be assigned again, rather than leaving someone to re-record it by
+        hand. It always unwinds the whole credit, so it rejects scope "single".
         """
         payment = get_object_or_404(Payment, pk=pk)
         if payment.voided_at:
@@ -224,7 +226,26 @@ class PaymentViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        targets = [payment] if scope == "single" else list(_void_group(payment))
+        if request.data.get("requeue") in (True, "true"):
+            if scope == "single":
+                return Response(
+                    {"detail": "Only a whole bank credit can go back to Reconciliation."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            try:
+                event, targets = void_and_requeue_credit(
+                    payment, actor=request.user, reason=reason
+                )
+            except CreditNotRequeueable as exc:
+                return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+            payment.refresh_from_db()
+            return Response({
+                **PaymentSerializer(payment).data,
+                "voided_count": len(targets),
+                "requeued_credit": event.pk,
+            })
+
+        targets = [payment] if scope == "single" else list(live_credit_rows(payment))
         for target in targets:
             void_payment(target, actor=request.user, reason=reason)
 
@@ -486,6 +507,7 @@ class UnmatchedCreditSerializer(serializers.ModelSerializer):
         fields = [
             "id", "transaction_id", "payment_ref", "account_number", "amount",
             "channel", "narration", "detail", "status", "received_at", "payer_hint",
+            "void_requeue_count",
         ]
 
     def get_payer_hint(self, obj) -> dict:

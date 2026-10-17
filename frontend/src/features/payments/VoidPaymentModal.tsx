@@ -1,4 +1,4 @@
-import { AlertTriangle, Undo2 } from "lucide-react";
+import { AlertTriangle, Scale, Undo2 } from "lucide-react";
 import { useState } from "react";
 import toast from "react-hot-toast";
 
@@ -33,6 +33,11 @@ function PaymentLine({ payment, muted }: { payment: Payment; muted?: boolean }) 
  * Payment rows, and voiding just the clicked row leaves the rest of the money
  * on the tenant's account. So the dialog fetches the group first and shows
  * what will actually be reversed before offering the button.
+ *
+ * It also asks what should happen to the money. A bank credit booked to the
+ * wrong tenant goes back to Reconciliation to be reassigned, so it can't drop
+ * off the books while someone remembers to re-record it. Money that was never
+ * received is simply removed.
  */
 export function VoidPaymentModal({
   payment,
@@ -43,15 +48,18 @@ export function VoidPaymentModal({
 }) {
   const [reason, setReason] = useState("");
   const [scope, setScope] = useState<"reference" | "single">("reference");
+  const [fate, setFate] = useState<"requeue" | "remove">("requeue");
 
   const { data: preview, isLoading, isError } = useVoidPreview(payment.id);
   const voidPayment = useVoidPayment();
 
   const siblings = preview?.siblings ?? [];
   const isSplit = siblings.length > 0;
-  const willVoid = scope === "single" ? 1 : siblings.length + 1;
-  const willTotal =
-    scope === "single" ? payment.amount : (preview?.total ?? payment.amount);
+  // Reassigning always unwinds the whole credit: the queue holds the full amount.
+  const requeue = Boolean(preview?.requeueable) && fate === "requeue";
+  const single = scope === "single" && !requeue;
+  const willVoid = single ? 1 : siblings.length + 1;
+  const willTotal = single ? payment.amount : (preview?.total ?? payment.amount);
 
   const handleVoid = async () => {
     const trimmed = reason.trim();
@@ -63,12 +71,15 @@ export function VoidPaymentModal({
       const result = await voidPayment.mutateAsync({
         id: payment.id,
         reason: trimmed,
-        scope,
+        scope: requeue ? "reference" : scope,
+        requeue,
       });
       toast.success(
-        result.voided_count > 1
-          ? `Voided ${result.voided_count} payments (${money(willTotal)})`
-          : `Voided ${money(willTotal)}`,
+        requeue
+          ? `Voided ${money(willTotal)} — it's back in Reconciliation to reassign`
+          : result.voided_count > 1
+            ? `Voided ${result.voided_count} payments (${money(willTotal)})`
+            : `Voided ${money(willTotal)}`,
       );
       onClose();
     } catch (e) {
@@ -93,8 +104,10 @@ export function VoidPaymentModal({
             loading={voidPayment.isPending}
             disabled={isLoading || isError || !reason.trim()}
           >
-            <Undo2 className="h-4 w-4" />
-            Void {willVoid > 1 ? `${willVoid} payments` : money(willTotal)}
+            {requeue ? <Scale className="h-4 w-4" /> : <Undo2 className="h-4 w-4" />}
+            {requeue
+              ? "Void & send to Reconciliation"
+              : `Void ${willVoid > 1 ? `${willVoid} payments` : money(willTotal)}`}
           </Button>
         </>
       }
@@ -135,39 +148,82 @@ export function VoidPaymentModal({
             ))}
           </ul>
 
-          <fieldset className="mt-3 space-y-1.5 border-t border-ink-200/70 pt-2.5">
-            <legend className="sr-only">How much to void</legend>
-            <label className="flex items-start gap-2 text-xs text-ink-900">
-              <input
-                type="radio"
-                name="void-scope"
-                value="reference"
-                checked={scope === "reference"}
-                onChange={() => setScope("reference")}
-                className="mt-0.5"
-              />
-              <span>
-                Void the whole credit — all {siblings.length + 1} rows,{" "}
-                {money(preview?.total ?? payment.amount)}
-              </span>
-            </label>
-            <label className="flex items-start gap-2 text-xs text-ink-900">
-              <input
-                type="radio"
-                name="void-scope"
-                value="single"
-                checked={scope === "single"}
-                onChange={() => setScope("single")}
-                className="mt-0.5"
-              />
-              <span>
-                Void this row only — {payment.period_month}/{payment.period_year},{" "}
-                {money(payment.amount)}
-              </span>
-            </label>
-          </fieldset>
+          {!requeue && (
+            <fieldset className="mt-3 space-y-1.5 border-t border-ink-200/70 pt-2.5">
+              <legend className="sr-only">How much to void</legend>
+              <label className="flex items-start gap-2 text-xs text-ink-900">
+                <input
+                  type="radio"
+                  name="void-scope"
+                  value="reference"
+                  checked={scope === "reference"}
+                  onChange={() => setScope("reference")}
+                  className="mt-0.5"
+                />
+                <span>
+                  Void the whole credit — all {siblings.length + 1} rows,{" "}
+                  {money(preview?.total ?? payment.amount)}
+                </span>
+              </label>
+              <label className="flex items-start gap-2 text-xs text-ink-900">
+                <input
+                  type="radio"
+                  name="void-scope"
+                  value="single"
+                  checked={scope === "single"}
+                  onChange={() => setScope("single")}
+                  className="mt-0.5"
+                />
+                <span>
+                  Void this row only — {payment.period_month}/{payment.period_year},{" "}
+                  {money(payment.amount)}
+                </span>
+              </label>
+            </fieldset>
+          )}
         </div>
       ) : null}
+
+      {preview?.requeueable && (
+        <fieldset className="mt-4 space-y-2">
+          <legend className="mb-1.5 text-[11px] font-medium uppercase tracking-[0.14em] text-ink-500">
+            What should happen to this money?
+          </legend>
+          <label className="flex items-start gap-2 text-xs text-ink-900">
+            <input
+              type="radio"
+              name="void-money"
+              value="requeue"
+              checked={fate === "requeue"}
+              onChange={() => setFate("requeue")}
+              className="mt-0.5"
+            />
+            <span className="font-medium">
+              Send to Reconciliation to reassign
+              <span className="block text-[11px] font-normal text-ink-500">
+                It was paid to the wrong tenant or unit. The whole credit,{" "}
+                {money(preview.total)}, goes back to the queue.
+              </span>
+            </span>
+          </label>
+          <label className="flex items-start gap-2 text-xs text-ink-900">
+            <input
+              type="radio"
+              name="void-money"
+              value="remove"
+              checked={fate === "remove"}
+              onChange={() => setFate("remove")}
+              className="mt-0.5"
+            />
+            <span className="font-medium">
+              Remove it
+              <span className="block text-[11px] font-normal text-ink-500">
+                The money was never received — a duplicate or a mistaken entry.
+              </span>
+            </span>
+          </label>
+        </fieldset>
+      )}
 
       <label
         htmlFor="void-reason"
@@ -187,8 +243,11 @@ export function VoidPaymentModal({
         Nothing is deleted. The payment is marked void, a mirror-image reversal
         is posted to the ledger and the period&apos;s arrears are re-derived.
         The original row stays on the books for audit, against your name.
-        {" "}If this money belongs to another tenant, record it against them
-        afterwards.
+        {requeue
+          ? " The credit then waits in Reconciliation until it is assigned to the right tenant."
+          : preview && !preview.requeueable
+            ? ` ${preview.requeue_blocker}`
+            : ""}
       </p>
     </Modal>
   );
