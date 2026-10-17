@@ -16,6 +16,10 @@ the parser + matcher against the current database, and:
     candidate tenant — one click to confirm in admin.
   - **No match at all** → leaves the event unchanged.
 
+Credits sent back to the queue by a void are skipped: a person has already
+ruled the matcher's answer wrong for them, and their bill ref still points at
+the tenant they were voided from. They wait for a hand assignment.
+
 Idempotent and safe to re-run.
 
 Usage (Render Shell):
@@ -62,7 +66,9 @@ class Command(BaseCommand):
 
         dry = opts["dry_run"]
         auto = opts["auto_confirm"]
-        events = CoopIpnEvent.objects.filter(status=CoopIpnStatus.UNMATCHED).order_by("received_at")
+        events = CoopIpnEvent.objects.filter(
+            status=CoopIpnStatus.UNMATCHED, void_requeue_count=0
+        ).order_by("received_at")
         total = events.count()
         suffix = ""
         if auto:

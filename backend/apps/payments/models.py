@@ -501,7 +501,9 @@ class CoopIpnEvent(models.Model):
          replayed/refined later (and so a parser change can re-process history).
 
     Records here are an append-only log; they are never mutated except to link
-    the resulting Payment and set the final status during initial processing.
+    the resulting Payment and set the final status during initial processing —
+    and to send a RECORDED credit back to UNMATCHED when its payments are voided
+    for reassignment (see ``services.requeue_voided_credit``).
     """
 
     transaction_id = models.CharField(
@@ -568,6 +570,14 @@ class CoopIpnEvent(models.Model):
         help_text="Director who authorised this reversal (REVERSAL_PENDING → APPLIED).",
     )
     authorized_at = models.DateTimeField(null=True, blank=True)
+    # How many times this credit's payments were voided and the credit sent back
+    # to the queue. Non-zero marks a credit a person already ruled the matcher
+    # wrong on, so `reprocess_unmatched_ipn` must leave it alone, and it gives
+    # each re-booking a fresh idempotency key (see `credit_idempotency_key`).
+    void_requeue_count = models.PositiveSmallIntegerField(
+        default=0,
+        help_text="Times this credit was voided and returned to the reconciliation queue.",
+    )
 
     class Meta:
         db_table = "payments_coop_ipn_event"

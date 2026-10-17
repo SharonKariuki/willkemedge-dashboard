@@ -14,6 +14,8 @@ export interface UnmatchedCredit {
   status: string;
   received_at: string;
   payer_hint: { phone: string; name: string };
+  /** Times this credit was voided and sent back here; non-zero = returned from a void. */
+  void_requeue_count: number;
 }
 
 export interface AssignCreditResult {

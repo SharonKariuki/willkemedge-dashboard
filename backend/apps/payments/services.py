@@ -532,6 +532,127 @@ class CreditAlreadyResolved(Exception):
     """The IPN credit is no longer awaiting reconciliation."""
 
 
+class CreditNotRequeueable(Exception):
+    """Voiding this payment cannot send its money back to the reconciliation queue."""
+
+
+def credit_idempotency_key(event) -> str:
+    """The idempotency key a booking of this bank credit carries.
+
+    The first booking uses the bank's transaction id. A credit voided back into
+    the queue keeps its void rows — and their `<txn>#<n>` keys — for good, and
+    the allocator's replay guard hands back any rows already carrying the key's
+    prefix. Re-booking to the SAME tenant under the bare transaction id would
+    therefore return the void rows and record nothing, so each requeue gets its
+    own generation: `<txn>~r1`, `<txn>~r2`, …
+    """
+    if not event.void_requeue_count:
+        return event.transaction_id
+    return f"{event.transaction_id[:80]}~r{event.void_requeue_count}"
+
+
+def live_credit_rows(payment: Payment):
+    """The live rows one bank credit became.
+
+    Grouped on tenant + reference because that is what a single credit shares
+    after FIFO allocation splits it. A blank reference groups nothing — manual
+    cash entries have no shared key, so each stands alone.
+    """
+    if not payment.reference:
+        return Payment.objects.filter(pk=payment.pk, voided_at__isnull=True)
+    return Payment.objects.filter(
+        tenant_id=payment.tenant_id,
+        reference=payment.reference,
+        voided_at__isnull=True,
+    ).order_by("pk")
+
+
+def requeueable_credit(payment: Payment, *, lock: bool = False):
+    """The bank credit behind `payment`, if voiding it can return the money to the queue.
+
+    Returns (event, rows): the RECORDED Co-op event and every live payment row
+    it became. Raises CreditNotRequeueable, with a reason fit to show the user,
+    when the money cannot go back whole — the queue entry carries the full bank
+    amount, so it must be exactly what is being unwound.
+    """
+    from .models import CoopIpnEvent, CoopIpnStatus
+
+    not_bank = CreditNotRequeueable(
+        "Only payments that came in through the bank feed can be sent to "
+        "Reconciliation. Void it and record it against the right tenant instead."
+    )
+    if not payment.reference:
+        raise not_bank
+    events = CoopIpnEvent.objects.filter(transaction_id=payment.reference)
+    rows = live_credit_rows(payment)
+    if lock:
+        events = events.select_for_update()
+        rows = rows.select_for_update()
+    event = events.first()
+    if event is None:
+        raise not_bank
+    if event.status != CoopIpnStatus.RECORDED:
+        raise CreditNotRequeueable(
+            f"Bank credit {event.transaction_id} is "
+            f"{event.get_status_display().lower()}, not recorded."
+        )
+
+    rows = list(rows)
+    # The event links one representative row; it must be one of these, or this
+    # payment only shares a reference with the credit rather than coming from it.
+    if event.payment_id not in {p.pk for p in rows}:
+        raise not_bank
+    booked = sum((p.amount for p in rows), ZERO)
+    if booked != event.amount:
+        raise CreditNotRequeueable(
+            f"Only KES {booked:,.2f} of the KES {event.amount:,.2f} bank credit is "
+            "still booked — part of it was already voided, so it can't go back "
+            "to Reconciliation whole."
+        )
+    return event, rows
+
+
+@transaction.atomic
+def void_and_requeue_credit(payment: Payment, *, actor=None, reason: str = ""):
+    """Void every row of a bank credit and send the money back to the queue.
+
+    For a credit booked against the wrong tenant or unit. A plain void makes
+    the money disappear until someone remembers to re-record it; this keeps it
+    on the reconciliation queue until it is assigned again. Both happen in one
+    transaction, so the money is never off the books and off the queue at once.
+
+    Returns (event, voided rows). Raises CreditNotRequeueable.
+    """
+    from apps.accounts import audit
+
+    from .models import CoopIpnStatus
+
+    event, rows = requeueable_credit(payment, lock=True)
+    tenant = payment.tenant
+    for row in rows:
+        void_payment(row, actor=actor, reason=reason)
+
+    event.status = CoopIpnStatus.UNMATCHED
+    event.payment = None
+    event.void_requeue_count += 1
+    event.detail = f"Voided from {tenant} by {actor or 'system'}: {reason}"[:255]
+    event.save(update_fields=["status", "payment", "void_requeue_count", "detail"])
+
+    audit.record(
+        actor=actor,
+        action="credit.requeue",
+        object_type="coop_ipn_event",
+        object_id=event.pk,
+        summary=(
+            f"Returned KES {event.amount} ({event.transaction_id}) from {tenant} "
+            f"to Reconciliation — {reason or 'no reason given'}"
+        ),
+        old_values={"status": CoopIpnStatus.RECORDED, "tenant_id": tenant.pk},
+        new_values={"status": CoopIpnStatus.UNMATCHED},
+    )
+    return event, rows
+
+
 @transaction.atomic
 def assign_unmatched_credit(*, event_id: int, tenant, actor=None):
     """Book an UNMATCHED bank credit against a chosen tenant.
@@ -567,10 +688,17 @@ def assign_unmatched_credit(*, event_id: int, tenant, actor=None):
         reference=event.transaction_id,
         notes=f"Manually assigned by {actor or 'system'}; IPN event #{event.pk}",
         # The bank's transaction id makes a re-assignment (or a racing
-        # reprocess) a no-op instead of a second booking.
-        idempotency_key=event.transaction_id,
+        # reprocess) a no-op instead of a second booking. A credit that came
+        # back from a void needs a fresh generation — see credit_idempotency_key.
+        idempotency_key=credit_idempotency_key(event),
         created_by=actor if getattr(actor, "is_authenticated", False) else None,
     )
+    if any(p.voided_at for p in payments):
+        # The replay guard matched rows a void already unwound. Marking the
+        # credit RECORDED against them would drop the money silently.
+        raise CreditAlreadyResolved(
+            f"Bank credit {event.transaction_id} matched voided payments; nothing was booked."
+        )
     event.status = CoopIpnStatus.RECORDED
     event.detail = f"Manually assigned to {tenant} by {actor or 'system'}"
     event.payment = payments[0]

@@ -39,11 +39,20 @@ const payment = (over: Partial<Payment> = {}): Payment => ({
   ...over,
 });
 
-const ok = (siblings: Payment[], total: string) => ({
-  data: { payment: payment(), siblings, total },
+const ok = (
+  siblings: Payment[],
+  total: string,
+  requeue: { requeueable: boolean; requeue_blocker: string } = {
+    requeueable: false,
+    requeue_blocker: "Only payments that came in through the bank feed can be sent to Reconciliation.",
+  },
+) => ({
+  data: { payment: payment(), siblings, total, ...requeue },
   isLoading: false,
   isError: false,
 });
+
+const bankCredit = { requeueable: true, requeue_blocker: "" };
 
 describe("VoidPaymentModal", () => {
   beforeEach(() => {
@@ -77,6 +86,7 @@ describe("VoidPaymentModal", () => {
       id: 1,
       reason: "wrong unit",
       scope: "reference",
+      requeue: false,
     });
   });
 
@@ -94,7 +104,63 @@ describe("VoidPaymentModal", () => {
       id: 1,
       reason: "wrong period",
       scope: "single",
+      requeue: false,
     });
+  });
+
+  it("sends a bank credit back to Reconciliation by default", async () => {
+    preview.mockReturnValue(ok([], "5000.00", bankCredit));
+    render(<VoidPaymentModal payment={payment()} onClose={() => {}} />);
+
+    expect(screen.getByRole("radio", { name: /Send to Reconciliation/ })).toBeChecked();
+
+    await userEvent.type(screen.getByLabelText(/Reason/), "wrong unit");
+    await userEvent.click(
+      screen.getByRole("button", { name: /Void & send to Reconciliation/ }),
+    );
+
+    expect(mutateAsync).toHaveBeenCalledWith({
+      id: 1,
+      reason: "wrong unit",
+      scope: "reference",
+      requeue: true,
+    });
+  });
+
+  it("always reassigns the whole credit, never one leg", async () => {
+    preview.mockReturnValue(
+      ok([payment({ id: 2, period_month: 7, amount: "5000.00" })], "10000.00", bankCredit),
+    );
+    render(<VoidPaymentModal payment={payment()} onClose={() => {}} />);
+
+    expect(screen.queryByRole("radio", { name: /this row only/i })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("radio", { name: /Remove it/ }));
+    expect(screen.getByRole("radio", { name: /this row only/i })).toBeInTheDocument();
+  });
+
+  it("can remove money that was never received", async () => {
+    preview.mockReturnValue(ok([], "5000.00", bankCredit));
+    render(<VoidPaymentModal payment={payment()} onClose={() => {}} />);
+
+    await userEvent.click(screen.getByRole("radio", { name: /Remove it/ }));
+    await userEvent.type(screen.getByLabelText(/Reason/), "duplicate entry");
+    await userEvent.click(screen.getByRole("button", { name: /^Void KES/ }));
+
+    expect(mutateAsync).toHaveBeenCalledWith({
+      id: 1,
+      reason: "duplicate entry",
+      scope: "reference",
+      requeue: false,
+    });
+  });
+
+  it("explains why a manual entry can't go to Reconciliation", () => {
+    preview.mockReturnValue(ok([], "5000.00"));
+    render(<VoidPaymentModal payment={payment()} onClose={() => {}} />);
+
+    expect(screen.queryByRole("radio", { name: /Send to Reconciliation/ })).not.toBeInTheDocument();
+    expect(screen.getByText(/came in through the bank feed/)).toBeInTheDocument();
   });
 
   it("refuses to void blind when the group could not be loaded", async () => {
