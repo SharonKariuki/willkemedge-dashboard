@@ -290,8 +290,8 @@ class MaintenanceRequestViewSet(viewsets.ModelViewSet):
             instance = serializer.save()
             # If marked done, revert unit to vacant if no active tenant
             if instance.status == "done":
-                from apps.tenants.models import TenantStatus
-                has_active = instance.unit.tenants.filter(status=TenantStatus.ACTIVE).exists()
+                from apps.tenants.models import CURRENT_STATUSES
+                has_active = instance.unit.tenants.filter(status__in=CURRENT_STATUSES).exists()
                 if not has_active and instance.unit.status == UnitStatus.UNDER_MAINTENANCE:
                     instance.unit.status = UnitStatus.VACANT
                     instance.unit.save(update_fields=["status"])

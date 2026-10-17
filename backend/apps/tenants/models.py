@@ -15,6 +15,12 @@ class TenantStatus(models.TextChoices):
     ARCHIVED = "archived", "Archived"
 
 
+#: A tenant who has given notice still holds the unit, owes rent and pays it
+#: until they move out. Anything that means "the current tenant" — billing,
+#: payment matching, reminders, statements, the dashboard — uses both.
+CURRENT_STATUSES = (TenantStatus.ACTIVE, TenantStatus.NOTICE_GIVEN)
+
+
 class KycStatus(models.TextChoices):
     NOT_STARTED = "not_started", "Not Started"
     PENDING = "pending", "Pending Review"

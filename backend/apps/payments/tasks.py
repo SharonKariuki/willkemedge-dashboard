@@ -451,20 +451,26 @@ def recalculate_all_statuses() -> None:
 
 
 def billable_active_tenants(*select_related: str):
-    """Active tenants who are actually charged rent.
+    """Current tenants who are actually charged rent.
 
     The monthly rent run, both reminder jobs and the statement run all walk
-    ACTIVE tenants. A caretaker housed rent-free as part of their job is active
+    these. "Current" includes a tenant who has given notice: they hold the unit
+    and owe rent until they leave. Walking ACTIVE alone stopped billing them the
+    day notice was recorded — no rent raised for their last month, no reminder,
+    no statement — and their payments fell into the unmatched queue. How far a
+    notice tenant is billed is ``last_billable_period``'s job, not this filter's.
+
+    A caretaker housed rent-free as part of their job is active
     and does occupy a unit, so without this filter each of those four jobs would
     treat them as a letting: a 0.00 arrears row raised every month, a reminder
     SMS chasing it, and a statement email for a balance that does not exist.
 
     One definition, four callers — see ``Tenant.is_billable``.
     """
-    from apps.tenants.models import Tenant, TenantStatus
+    from apps.tenants.models import CURRENT_STATUSES, Tenant
 
     return Tenant.objects.filter(
-        status=TenantStatus.ACTIVE, is_billable=True
+        status__in=CURRENT_STATUSES, is_billable=True
     ).select_related(*select_related)
 
 
@@ -530,11 +536,31 @@ def first_billable_period(tenant, floor) -> tuple[int, int] | None:
     return max(bounds) if bounds else None
 
 
+def last_billable_period(tenant) -> tuple[int, int] | None:
+    """The last month this tenant is charged rent for, or None if open-ended.
+
+    A tenant on notice is billed up to and including the month of their
+    intended move-out date: someone leaving on 30 October owes October but must
+    not be invoiced November on the 28th. A part month is billed in full, as it
+    is for a move-in — prorating is the landlord's call, made on the tenant's
+    account, not by the run.
+    """
+    from apps.tenants.models import TenantStatus
+
+    leaving = tenant.intended_move_out_date
+    if tenant.status == TenantStatus.NOTICE_GIVEN and leaving:
+        return (leaving.year, leaving.month)
+    return None
+
+
 def periods_due(tenant, floor, through: tuple[int, int]):
     """Every (year, month) this tenant should have been billed, oldest first."""
     cursor = first_billable_period(tenant, floor)
     if cursor is None:
         return
+    last = last_billable_period(tenant)
+    if last is not None:
+        through = min(through, last)
     while cursor <= through:
         yield cursor
         cursor = next_period(*cursor)
@@ -686,6 +712,11 @@ def send_rent_reminders() -> int:
         due_date = date(today.year, today.month, due_day)
         days_until = (due_date - today).days
         if not 0 <= days_until <= lead_days:
+            continue
+        # Nothing is billed after a notice tenant's move-out month, so there
+        # is no rent to remind them of.
+        last = last_billable_period(tenant)
+        if last is not None and (due_date.year, due_date.month) > last:
             continue
 
         dedupe_key = f"rent_reminder:{tenant.id}:{due_date:%Y-%m}"
@@ -892,6 +923,9 @@ def send_monthly_statements(period_iso: str | None = None) -> dict:
         # Units invoiced without the water reading their invoice was due to
         # carry. The invoice still goes; the reading is owed.
         "missing_water": [],
+        # Tenants on notice whose invoice month is after the month they leave:
+        # nothing is billed for it, so no invoice goes either.
+        "past_move_out": 0,
     }
 
     def _already_sent(key):
@@ -908,6 +942,10 @@ def send_monthly_statements(period_iso: str | None = None) -> dict:
                 continue
 
             period = forced_period or tenant_billing_period(tenant, as_at)
+            last = last_billable_period(tenant)
+            if not forced_period and last is not None and period > last:
+                counts["past_move_out"] += 1
+                continue
             email_key = statement_dedupe_key(tenant.id, period_start(period))
             sms_key = statement_sms_dedupe_key(tenant.id, period_start(period))
             if (

@@ -30,7 +30,7 @@ from apps.buildings.models import (
 from apps.payments.aging import BUCKETS, aging_buckets
 from apps.payments.models import Arrears, Payment, PaymentType
 from apps.payments.monthly_ledger import build_monthly_ledger, current_balances
-from apps.tenants.models import Tenant, TenantStatus
+from apps.tenants.models import CURRENT_STATUSES, Tenant
 
 from .report_data import (
     INCOME_PAYMENT_FILTER,
@@ -49,7 +49,6 @@ from .report_data import (
 # Kept under their old names: the dashboard summary imports them from here.
 __all__ = ["INCOME_PAYMENT_FILTER"]
 
-CURRENT_STATUSES = (TenantStatus.ACTIVE, TenantStatus.NOTICE_GIVEN)
 
 
 def _today():

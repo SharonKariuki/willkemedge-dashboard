@@ -9,7 +9,7 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from apps.tenants.models import Tenant, TenantStatus
+from apps.tenants.models import CURRENT_STATUSES, Tenant
 
 from .models import (
     Arrears,
@@ -198,7 +198,7 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
 
 
 def _resolve_recipients(audience: str, tenant_ids: list[int]):
-    active = Tenant.objects.filter(status=TenantStatus.ACTIVE).select_related(
+    active = Tenant.objects.filter(status__in=CURRENT_STATUSES).select_related(
         "unit", "unit__building"
     )
     if audience == "all_active":
