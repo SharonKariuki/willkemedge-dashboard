@@ -29,6 +29,10 @@ if (!configuredBaseURL && import.meta.env.PROD) {
 
 const baseURL = configuredBaseURL ?? "http://localhost:8000/api";
 
+/** Timeout for the synchronous bulk sends (statements to a property, an SMS
+ *  to many tenants). Matches the server's 180s gunicorn limit. */
+export const BULK_SEND_TIMEOUT_MS = 180_000;
+
 export const api: AxiosInstance = axios.create({
   baseURL,
   withCredentials: false,

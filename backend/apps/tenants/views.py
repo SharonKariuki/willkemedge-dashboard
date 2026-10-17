@@ -646,25 +646,40 @@ class TenantViewSet(viewsets.ModelViewSet):
                 {"detail": "No tenants matched."}, status=status.HTTP_400_BAD_REQUEST
             )
 
+        from apps.payments.models import NotificationChannel
+        from apps.payments.repeat_guard import recently_sent, skipped_entry
+
+        # A retry of a send that timed out in the browser (or a double click)
+        # must not email the same statement twice.
+        already = recently_sent(
+            [t.id for t in tenants], channel=NotificationChannel.EMAIL, template_key="rent_statement",
+        )
+        skipped = [skipped_entry(t) for t in tenants if t.id in already]
+        to_send = [t for t in tenants if t.id not in already]
+
         user = request.user if request.user.is_authenticated else None
-        # One SMTP connection for the whole batch. The handshake, not the PDF,
-        # is what makes a property-wide send slow, and this request is
-        # synchronous — the office is watching a spinner while it runs.
-        with open_mail_connection() as mail:
-            results = [
-                send_tenant_statement(
-                    tenant, automatic=False, created_by=user, connection=mail
-                )
-                for tenant in tenants
-            ]
+        results = []
+        if to_send:
+            # One SMTP connection for the whole batch. The handshake, not the
+            # PDF, is what makes a property-wide send slow, and this request is
+            # synchronous — the office is watching a spinner while it runs.
+            with open_mail_connection() as mail:
+                results = [
+                    send_tenant_statement(
+                        tenant, automatic=False, created_by=user, connection=mail
+                    )
+                    for tenant in to_send
+                ]
         sent = sum(1 for n in results if n.status == "sent")
 
         return Response(
             {
                 "sent": sent,
                 "failed": len(results) - sent,
-                "total": len(results),
+                "skipped": len(skipped),
+                "total": len(results) + len(skipped),
                 "notifications": TenantNotificationSerializer(results, many=True).data,
+                "skipped_tenants": skipped,
             },
             status=status.HTTP_201_CREATED,
         )

@@ -432,12 +432,16 @@ export function EmailStatementsModal({
   const handleSend = async () => {
     try {
       const res = await emailStatements.mutateAsync(tenants.map((t) => t.id));
+      const skipped = res.skipped ?? 0;
+      const repeatNote = skipped > 0 ? ` · ${skipped} already sent in the last 10 minutes, not repeated` : "";
       if (res.sent > 0) {
         toast.success(
-          res.failed > 0
+          (res.failed > 0
             ? `${res.sent} statement${res.sent === 1 ? "" : "s"} sent · ${res.failed} failed`
-            : `${res.sent} statement${res.sent === 1 ? "" : "s"} sent`,
+            : `${res.sent} statement${res.sent === 1 ? "" : "s"} sent`) + repeatNote,
         );
+      } else if (skipped > 0 && res.failed === 0) {
+        toast.success(`Already sent in the last 10 minutes — not repeated (${skipped}).`);
       } else {
         toast.error("No statements could be sent. Check the Notifications page for why.");
       }
