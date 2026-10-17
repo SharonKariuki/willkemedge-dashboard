@@ -46,10 +46,10 @@ class AssignTenantForm(forms.Form):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        from apps.tenants.models import Tenant, TenantStatus
+        from apps.tenants.models import CURRENT_STATUSES, Tenant
         self.fields["tenant"].queryset = (
             Tenant.objects.select_related("unit", "unit__building")
-            .filter(status=TenantStatus.ACTIVE)
+            .filter(status__in=CURRENT_STATUSES)
             .order_by("unit__building__name", "unit__label")
         )
 

@@ -14,7 +14,7 @@ import re
 from django.conf import settings
 
 from apps.buildings.models import Unit, UnitAlias
-from apps.tenants.models import Tenant, TenantStatus
+from apps.tenants.models import CURRENT_STATUSES, Tenant
 
 # Separators a payer might type between the account prefix and house number
 # (e.g. "90290#A12", "90290 A12", "90290-A12").
@@ -134,7 +134,7 @@ def match_tenant(bill_ref: str) -> Tenant | None:
     # hospital across MCG05-MCG08 may quote whichever door it thinks of.
     if unit.combined_into_id:
         unit = unit.combined_into
-    return Tenant.objects.filter(unit=unit, status=TenantStatus.ACTIVE).first()
+    return Tenant.objects.filter(unit=unit, status__in=CURRENT_STATUSES).first()
 
 
 # Tokens that are common in tenant fields but carry no identity (titles,
@@ -174,7 +174,7 @@ def tenant_by_name(sender_name: str) -> Tenant | None:
         return None
 
     candidates: list[tuple[int, Tenant]] = []
-    for tenant in Tenant.objects.filter(status=TenantStatus.ACTIVE).only(
+    for tenant in Tenant.objects.filter(status__in=CURRENT_STATUSES).only(
         "id", "first_name", "last_name", "care_of"
     ):
         haystack = f"{tenant.first_name or ''} {tenant.last_name or ''} {tenant.care_of or ''}"
@@ -210,7 +210,7 @@ def tenant_by_phone(msisdn: str) -> Tenant | None:
     target = normalize_msisdn(msisdn)
     if not target:
         return None
-    for tenant in Tenant.objects.filter(status=TenantStatus.ACTIVE):
+    for tenant in Tenant.objects.filter(status__in=CURRENT_STATUSES):
         if normalize_msisdn(tenant.phone) == target:
             return tenant
     return None

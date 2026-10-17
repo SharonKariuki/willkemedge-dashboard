@@ -474,7 +474,7 @@ def chart_of_accounts(start, end, *, building_id=None) -> dict:
 def budget_vs_actual(start, end, *, building_id=None) -> dict:
     """Budgets set for the months in the period against what the ledger shows."""
     from apps.ledger.models import Budget
-    from apps.tenants.models import Tenant, TenantStatus
+    from apps.tenants.models import CURRENT_STATUSES, Tenant
 
     months = []
     y, m = start.year, start.month
@@ -510,7 +510,7 @@ def budget_vs_actual(start, end, *, building_id=None) -> dict:
             (normal_balance(AccountType.INCOME, *sums.get(code, (ZERO, ZERO))) for code in ("4110", "4120")),
             ZERO,
         )
-        tenants = Tenant.objects.filter(status=TenantStatus.ACTIVE, is_billable=True)
+        tenants = Tenant.objects.filter(status__in=CURRENT_STATUSES, is_billable=True)
         if building_id:
             tenants = tenants.filter(unit__building_id=building_id)
         expected = _money(tenants.aggregate(t=Sum("monthly_rent"))["t"]) * len(months)
