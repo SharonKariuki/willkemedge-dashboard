@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { filterRentRoll, parseRentRollFilter, rowMonthValue } from "./rentRollFilter";
+import {
+  filterByMonth, filterRentRoll, monthOfIsoDate, parseRentRollFilter, rowMonthValue,
+} from "./rentRollFilter";
 
 const row = (period_year: number, period_month: number) => ({ period_year, period_month });
 
@@ -43,5 +45,28 @@ describe("filterRentRoll", () => {
 
   it("'all' returns the roll untouched", () => {
     expect(filterRentRoll(ROWS, "all", TODAY)).toBe(ROWS);
+  });
+});
+
+describe("filterByMonth — payment history, by the date money arrived", () => {
+  // A payment received in October but booked to the July rent period.
+  const PAYMENTS = [
+    { id: 1, payment_date: "2026-10-03", period_year: 2026, period_month: 7 },
+    { id: 2, payment_date: "2026-09-26", period_year: 2026, period_month: 7 },
+    { id: 3, payment_date: "2026-05-11", period_year: 2026, period_month: 5 },
+  ];
+  const byDate = (p: { payment_date: string }) => monthOfIsoDate(p.payment_date);
+  const ids = (rows: { id: number }[]) => rows.map((r) => r.id);
+  const OCT = new Date(2026, 9, 17);
+
+  it("windows on the payment date, not the rent period", () => {
+    expect(ids(filterByMonth(PAYMENTS, "1m", byDate, OCT))).toEqual([1]);
+    expect(ids(filterByMonth(PAYMENTS, "3m", byDate, OCT))).toEqual([1, 2]);
+  });
+
+  it("picks one month, and 'all' keeps everything", () => {
+    expect(ids(filterByMonth(PAYMENTS, "2026-09", byDate, OCT))).toEqual([2]);
+    expect(ids(filterByMonth(PAYMENTS, "2026-07", byDate, OCT))).toEqual([]);
+    expect(ids(filterByMonth(PAYMENTS, "all", byDate, OCT))).toEqual([1, 2, 3]);
   });
 });

@@ -58,9 +58,31 @@ export function filterRentRoll<T extends RollRow>(
   filter: RentRollFilter,
   today: Date = new Date(),
 ): T[] {
+  return filterByMonth(rows, filter, (r) => r, today);
+}
+
+/**
+ * The same filter over any rows, with `monthOf` saying which month a row
+ * belongs to — e.g. the payment history, filtered by the date money arrived
+ * rather than the rent period it was booked to.
+ */
+export function filterByMonth<T>(
+  rows: T[],
+  filter: RentRollFilter,
+  monthOf: (row: T) => RollRow,
+  today: Date = new Date(),
+): T[] {
   if (filter === "all") return rows;
-  if (MONTH_RE.test(filter)) return rows.filter((r) => rowMonthValue(r) === filter);
+  if (MONTH_RE.test(filter)) return rows.filter((r) => rowMonthValue(monthOf(r)) === filter);
   const months = PRESET_MONTHS[filter] ?? PRESET_MONTHS[DEFAULT_RENT_ROLL_FILTER];
   const from = monthKey(today.getFullYear(), today.getMonth() + 1) - (months - 1);
-  return rows.filter((r) => monthKey(r.period_year, r.period_month) >= from);
+  return rows.filter((r) => {
+    const m = monthOf(r);
+    return monthKey(m.period_year, m.period_month) >= from;
+  });
+}
+
+/** The calendar month of an ISO date (`2026-10-03` → October 2026). */
+export function monthOfIsoDate(iso: string): RollRow {
+  return { period_year: Number(iso.slice(0, 4)), period_month: Number(iso.slice(5, 7)) };
 }
