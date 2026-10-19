@@ -142,7 +142,12 @@ export interface TenantListItem {
   is_billable: boolean;
 }
 
+/** How far ahead the rent run raises a letting. Quarterly raises the three
+ *  months of a calendar quarter together, before it starts (Ignite, MCG07). */
+export type BillingFrequency = "monthly" | "quarterly";
+
 export interface TenantDetail extends TenantListItem {
+  billing_frequency?: BillingFrequency;
   id_number: string;
   kra_pin: string;
   email: string;

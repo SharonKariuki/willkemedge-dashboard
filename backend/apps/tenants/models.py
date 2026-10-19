@@ -21,6 +21,11 @@ class TenantStatus(models.TextChoices):
 CURRENT_STATUSES = (TenantStatus.ACTIVE, TenantStatus.NOTICE_GIVEN)
 
 
+class BillingFrequency(models.TextChoices):
+    MONTHLY = "monthly", "Monthly"
+    QUARTERLY = "quarterly", "Quarterly (calendar quarters, in advance)"
+
+
 class KycStatus(models.TextChoices):
     NOT_STARTED = "not_started", "Not Started"
     PENDING = "pending", "Pending Review"
@@ -101,6 +106,18 @@ class Tenant(models.Model):
             "Portfolio policy is the 5th and every tenant is on it — "
             "change this only for a letting genuinely agreed otherwise."
         ),
+    )
+
+    # How far ahead the rent run raises this letting. Monthly is the portfolio
+    # default. A quarterly letting (Ignite, MCG07) is invoiced a calendar
+    # quarter at a time — Oct–Dec on the run before October — but the books
+    # still hold one Arrears row per month, so VAT, the accrual ledger and the
+    # roll-forward are unchanged. See billing_calendar.billed_from.
+    billing_frequency = models.CharField(
+        max_length=10,
+        choices=BillingFrequency.choices,
+        default=BillingFrequency.MONTHLY,
+        help_text="Quarterly raises the three months of a calendar quarter together, before it starts.",
     )
 
     # A tenancy that is on the books but is not charged rent. The caretakers who

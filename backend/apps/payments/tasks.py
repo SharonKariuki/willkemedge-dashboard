@@ -27,6 +27,7 @@ from django.db import models
 from django.utils import timezone
 
 from .billing_calendar import (
+    billed_through,
     next_period,
     parse_period,
     period_end,
@@ -566,6 +567,70 @@ def periods_due(tenant, floor, through: tuple[int, int]):
         cursor = next_period(*cursor)
 
 
+def raise_due_periods(tenant, *, today=None, floor=None) -> tuple[int, int]:
+    """Raise every month this tenant is short of. Returns (raised, drew on credit).
+
+    The body of :func:`generate_monthly_arrears`, one tenant at a time, so a
+    command that changes how one letting is billed can bring just that letting
+    up to date rather than running the whole roster.
+    """
+    from django.db import transaction
+
+    from .credits import apply_account_credits
+    from .models import Arrears
+    from .services import apply_available_credit, expected_vat_for
+
+    today = today or timezone.localdate()
+    floor = floor if floor is not None else billing_floor()
+    created = 0
+    credited = 0
+
+    # Per tenant, not per run: the two cycles are a month apart, so the same
+    # 25 August run raises September for the arcade and stops at August for
+    # everybody else. A quarterly letting runs on to the end of its quarter.
+    through = billed_through(tenant, today)
+    have = set(
+        Arrears.objects.filter(tenant=tenant)
+        .values_list("period_year", "period_month")
+    )
+    expected_vat = expected_vat_for(tenant, tenant.monthly_rent)
+
+    for year, month in periods_due(tenant, floor, through):
+        if (year, month) in have:
+            continue
+        arrears = Arrears.objects.create(
+            tenant=tenant,
+            period_month=month,
+            period_year=year,
+            expected_rent=tenant.monthly_rent,
+            expected_vat=expected_vat,
+            amount_paid=0,
+            balance=tenant.monthly_rent + expected_vat,
+            is_cleared=False,
+        )
+        created += 1
+        # Oldest period first, so banked credit pays down the earliest debt:
+        # overpaid rent first, then the tenant's numbered credits (Add
+        # Credit) that are not on hold.
+        before = arrears.credit_applied
+        apply_available_credit(arrears)
+        try:
+            # A credit that cannot post must not stop the month being
+            # raised for everyone else; it is logged and stays available
+            # for the next run or for the owner to apply.
+            with transaction.atomic():
+                apply_account_credits(arrears)
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "generate_monthly_arrears: could not apply account credit to arrears #%s",
+                arrears.pk,
+            )
+        arrears.refresh_from_db()
+        if arrears.credit_applied != before:
+            credited += 1
+    return created, credited
+
+
 @shared_task
 def generate_monthly_arrears() -> int:
     """
@@ -609,62 +674,14 @@ def generate_monthly_arrears() -> int:
     actually happened.
     """
 
-    from django.db import transaction
-
-    from .credits import apply_account_credits
-    from .models import Arrears
-    from .services import apply_available_credit, expected_vat_for
-
     today = timezone.localdate()
     floor = billing_floor()
-    active = billable_active_tenants("unit")
     created = 0
     credited = 0
-
-    for tenant in active:
-        # Per tenant, not per run: the two cycles are a month apart, so the
-        # same 25 August run raises September for the arcade and stops at
-        # August for everybody else.
-        through = tenant_billing_period(tenant, today)
-        have = set(
-            Arrears.objects.filter(tenant=tenant)
-            .values_list("period_year", "period_month")
-        )
-        expected_vat = expected_vat_for(tenant, tenant.monthly_rent)
-
-        for year, month in periods_due(tenant, floor, through):
-            if (year, month) in have:
-                continue
-            arrears = Arrears.objects.create(
-                tenant=tenant,
-                period_month=month,
-                period_year=year,
-                expected_rent=tenant.monthly_rent,
-                expected_vat=expected_vat,
-                amount_paid=0,
-                balance=tenant.monthly_rent + expected_vat,
-                is_cleared=False,
-            )
-            created += 1
-            # Oldest period first, so banked credit pays down the earliest debt:
-            # overpaid rent first, then the tenant's numbered credits (Add
-            # Credit) that are not on hold.
-            before = arrears.credit_applied
-            apply_available_credit(arrears)
-            try:
-                # A credit that cannot post must not stop the month being
-                # raised for everyone else; it is logged and stays available
-                # for the next run or for the owner to apply.
-                with transaction.atomic():
-                    apply_account_credits(arrears)
-            except Exception:  # noqa: BLE001
-                logger.exception(
-                    "generate_monthly_arrears: could not apply account credit to arrears #%s",
-                    arrears.pk,
-                )
-            arrears.refresh_from_db()
-            if arrears.credit_applied != before:
-                credited += 1
+    for tenant in billable_active_tenants("unit"):
+        raised, drew = raise_due_periods(tenant, today=today, floor=floor)
+        created += raised
+        credited += drew
 
     logger.info(
         "generate_monthly_arrears: created %d new arrears records (%d drew on credit)",

@@ -140,6 +140,43 @@ def tenant_billing_period(tenant, today: _dt.date | None = None) -> tuple[int, i
     return billing_period(today, run_day=run_day_for(tenant))
 
 
+def is_quarterly(tenant) -> bool:
+    """Whether this letting is invoiced a calendar quarter at a time."""
+    from apps.tenants.models import BillingFrequency
+
+    return getattr(tenant, "billing_frequency", "") == BillingFrequency.QUARTERLY
+
+
+def quarter_bounds(period: tuple[int, int]) -> tuple[tuple[int, int], tuple[int, int]]:
+    """First and last ``(year, month)`` of the calendar quarter ``period`` is in."""
+    year, month = period
+    first = (month - 1) // 3 * 3 + 1
+    return (year, first), (year, first + 2)
+
+
+def billed_from(tenant, period: tuple[int, int]) -> tuple[int, int]:
+    """The period whose invoice carries ``period``'s rent.
+
+    Itself for a monthly letting. For a quarterly one, the first month of its
+    quarter: Ignite's November and December ride on the October invoice, raised
+    on 25 September, so that is the date the statement shows them on and the
+    day from which a statement cut ``as_of`` carries them.
+    """
+    return quarter_bounds(period)[0] if is_quarterly(tenant) else period
+
+
+def billed_through(tenant, today: _dt.date | None = None) -> tuple[int, int]:
+    """The last period the rent run should have raised for this tenant by ``today``.
+
+    :func:`tenant_billing_period` for a monthly letting. A quarterly letting is
+    raised to the end of the quarter that period falls in, so the 25 Sept run
+    raises October, November and December together and the 25 Oct and 25 Nov
+    runs find nothing new to raise.
+    """
+    period = tenant_billing_period(tenant, today)
+    return quarter_bounds(period)[1] if is_quarterly(tenant) else period
+
+
 def invoice_date(tenant, period: tuple[int, int]) -> _dt.date:
     """The day ``period``'s rent is invoiced on — its run day, a month early.
 
