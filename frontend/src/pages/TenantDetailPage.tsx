@@ -62,6 +62,7 @@ const editSchema = z.object({
   emergency_contact: z.string().optional(),
   emergency_phone: z.string().optional(),
   is_billable: z.boolean().optional(),
+  billing_frequency: z.enum(["monthly", "quarterly"]).optional(),
   notes: z.string().optional(),
 }).superRefine((values, ctx) => {
   // Zero rent only means something for an occupancy that is not charged — a
@@ -224,6 +225,7 @@ export default function TenantDetailPage() {
         emergency_phone: tenant.emergency_phone ?? "",
         due_day: tenant.due_day ?? 5,
         is_billable: tenant.is_billable ?? true,
+        billing_frequency: tenant.billing_frequency ?? "monthly",
         notes: tenant.notes ?? "",
       });
     }
@@ -408,6 +410,15 @@ export default function TenantDetailPage() {
                 <input {...editForm.register("agreed_deposit")} className={inputCls} placeholder="Blank = use the rule" />
               </Field>
               <Field label="Rent Due Day (1-31)" error={editForm.formState.errors.due_day?.message}><input type="number" min={1} max={31} {...editForm.register("due_day")} className={inputCls} /></Field>
+              <Field
+                label="Billed"
+                hint="Quarterly raises a calendar quarter's rent together on the run before it starts. Each month is still its own charge."
+              >
+                <select {...editForm.register("billing_frequency")} className={inputCls}>
+                  <option value="monthly">Monthly</option>
+                  <option value="quarterly">Quarterly, in advance</option>
+                </select>
+              </Field>
               <Field label="Deposit refund % (for move-out)" error={editForm.formState.errors.deposit_refund_percentage?.message}>
                 <input type="number" min={0} max={100} {...editForm.register("deposit_refund_percentage")} className={inputCls} />
               </Field>

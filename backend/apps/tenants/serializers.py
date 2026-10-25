@@ -197,7 +197,7 @@ class TenantDetailSerializer(serializers.ModelSerializer):
             "phone", "email", "emergency_contact", "emergency_phone", "care_of",
             "unit", "unit_label", "building_name", "building_id", "unit_classification",
             "space_units", "space_label",
-            "monthly_rent", "deposit_paid", "due_day", "is_billable",
+            "monthly_rent", "deposit_paid", "due_day", "is_billable", "billing_frequency",
             "deposit_months", "expected_deposit", "deposit_shortfall",
             "agreed_deposit", "deposit_is_agreed",
 
@@ -310,7 +310,7 @@ class TenantCreateSerializer(serializers.ModelSerializer):
             "id", "first_name", "last_name", "id_number", "kra_pin", "phone", "email",
             "emergency_contact", "emergency_phone", "unit",
             "monthly_rent", "deposit_paid", "due_day", "move_in_date", "notes",
-            "is_billable",
+            "is_billable", "billing_frequency",
             "deposit_source", "deposit_date", "deposit_reference",
         ]
         extra_kwargs = MONEY_AND_DAY_LIMITS
@@ -372,7 +372,7 @@ class TenantEditSerializer(serializers.ModelSerializer):
             "first_name", "last_name", "id_number", "kra_pin", "phone", "email",
             "emergency_contact", "emergency_phone", "care_of",
             "monthly_rent", "deposit_paid", "agreed_deposit", "due_day",
-            "is_billable",
+            "is_billable", "billing_frequency",
             "deposit_refund_percentage",
             "notes",
 
