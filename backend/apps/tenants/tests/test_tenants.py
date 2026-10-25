@@ -275,8 +275,42 @@ class TenantLifecycleTests(APITestCase):
         resp = self.client.get(f"/api/tenants/{tid}/documents/{doc_id}/download/")
         assert resp.status_code == 200
         assert resp["Content-Disposition"].startswith("attachment")
-        content = b"".join(resp.streaming_content)
-        assert content == b"%PDF-1.4 fake"
+        assert resp["Content-Type"] == "application/pdf"
+        assert resp.content == b"%PDF-1.4 fake"
+
+    def test_document_is_kept_in_the_database_not_on_disk(self):
+        """Render's disk is wiped on deploy, so nothing may be written to it."""
+        from apps.tenants.models import TenantDocument
+
+        tid = self.client.post("/api/tenants/", self._tenant_payload(), format="json").json()["id"]
+        png = SimpleUploadedFile("id.png", b"\x89PNG\r\n\x1a\nrest", content_type="image/png")
+        up = self.client.post(
+            f"/api/tenants/{tid}/documents/", {"file": png, "doc_type": "id_front"}, format="multipart",
+        )
+        assert up.status_code == status.HTTP_201_CREATED
+        body = up.json()
+        assert "file" not in body  # no media URL is ever handed out
+        assert body["available"] is True
+        assert body["content_type"] == "image/png"
+        doc = TenantDocument.objects.get(pk=body["id"])
+        assert not doc.file
+        assert bytes(doc.data) == b"\x89PNG\r\n\x1a\nrest"
+        assert doc.size == len(b"\x89PNG\r\n\x1a\nrest")
+
+    def test_a_document_lost_from_disk_says_so(self):
+        """A pre-move upload whose file a deploy wiped: listed as unavailable,
+        and the download explains what happened instead of crashing."""
+        from apps.tenants.models import TenantDocument
+
+        tid = self.client.post("/api/tenants/", self._tenant_payload(), format="json").json()["id"]
+        doc = TenantDocument.objects.create(
+            tenant_id=tid, doc_type="id_front", file="tenant_docs/gone/id.png", original_name="id.png",
+        )
+        detail = self.client.get(f"/api/tenants/{tid}/").json()
+        assert [d["available"] for d in detail["documents"]] == [False]
+        resp = self.client.get(f"/api/tenants/{tid}/documents/{doc.id}/download/")
+        assert resp.status_code == status.HTTP_410_GONE
+        assert "upload it again" in resp.json()["detail"].lower()
 
     def test_document_download_requires_auth(self):
         create_resp = self.client.post("/api/tenants/", self._tenant_payload(), format="json")

@@ -12,6 +12,7 @@ import { useNotificationTemplates, useSendNotification } from "@/hooks/useNotifi
 import { useEmailStatements, useRejectKyc, useUploadDocument, useVerifyKyc } from "@/hooks/useTenants";
 import { getErrorMessage } from "@/lib/apiError";
 import { cn } from "@/lib/cn";
+import { downloadFile } from "@/lib/downloadPdf";
 import type { KycStatus, TenantDetail, TenantListItem } from "@/lib/types";
 
 export const inputCls =
@@ -137,7 +138,20 @@ export function KycPanel({ tenant }: { tenant: TenantDetail }) {
                 {d.doc_type_display}
                 <span className="text-ink-400">· {d.original_name}</span>
               </span>
-              <a href={d.file} target="_blank" rel="noreferrer" className="text-sage-600 hover:underline">View</a>
+              {d.available ? (
+                <button
+                  type="button"
+                  onClick={() =>
+                    downloadFile(`/tenants/${tenant.id}/documents/${d.id}/download/`, { fallback: d.original_name })
+                      .catch((e) => toast.error(getErrorMessage(e, "Could not download the document.")))
+                  }
+                  className="text-sage-600 hover:underline"
+                >
+                  Download
+                </button>
+              ) : (
+                <span className="text-status-unpaid">File lost in a server update — upload again</span>
+              )}
             </li>
           ))}
         </ul>
