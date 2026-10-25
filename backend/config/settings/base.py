@@ -190,6 +190,15 @@ CORS_ALLOWED_ORIGINS: list[str] = []
 CORS_ALLOW_CREDENTIALS = True
 
 # ---------------------------------------------------------------------------
+# Client IP (login lockout + audit). See apps.accounts.services.get_client_ip.
+# CLIENT_IP_HEADER: a META key set by a proxy that overwrites it, e.g.
+#   HTTP_CF_CONNECTING_IP. TRUSTED_PROXY_HOPS: proxies that append to
+#   X-Forwarded-For. Both unset = the old (spoofable) leftmost entry.
+# ---------------------------------------------------------------------------
+CLIENT_IP_HEADER = config("CLIENT_IP_HEADER", default="")
+TRUSTED_PROXY_HOPS = config("TRUSTED_PROXY_HOPS", default=None, cast=lambda v: None if v in (None, "") else int(v))
+
+# ---------------------------------------------------------------------------
 # Celery
 # ---------------------------------------------------------------------------
 CELERY_BROKER_URL = config("REDIS_URL", default="redis://localhost:6379/0")
