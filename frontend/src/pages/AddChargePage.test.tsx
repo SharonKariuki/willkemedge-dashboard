@@ -69,8 +69,8 @@ describe("AddChargePage", () => {
     renderPage();
     expect(screen.getByRole("heading", { name: "Add Charge" })).toBeInTheDocument();
 
-    await userEvent.selectOptions(screen.getByLabelText(/What is the charge for/), "late_fee");
-    expect(screen.getByLabelText(/Description for the tenant/)).toHaveValue("Late payment penalty");
+    await userEvent.selectOptions(screen.getByLabelText(/Type of charge/), "late_fee");
+    expect(screen.getByLabelText(/Reason for the charge/)).toHaveValue("Late payment penalty");
     await userEvent.type(screen.getByLabelText(/^Amount/), "1500");
     expect(screen.getByText(/Booked to 4200 Late Payment Fees/)).toBeInTheDocument();
 
@@ -89,8 +89,8 @@ describe("AddChargePage", () => {
 
   it("asks which expense a damage recharge recovers", async () => {
     renderPage();
-    await userEvent.selectOptions(screen.getByLabelText(/What is the charge for/), "damage");
-    await userEvent.type(screen.getByLabelText(/Description for the tenant/), "Broken window");
+    await userEvent.selectOptions(screen.getByLabelText(/Type of charge/), "damage");
+    await userEvent.type(screen.getByLabelText(/Reason for the charge/), "Broken window");
     await userEvent.type(screen.getByLabelText(/^Amount/), "3500");
     await userEvent.click(screen.getByRole("button", { name: "Review charge" }));
     expect(screen.getByText(/Choose which expense/)).toBeInTheDocument();
