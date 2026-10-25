@@ -64,10 +64,10 @@ function periodChoices(today: string) {
 }
 
 const schema = z.object({
-  chargeType: z.string().min(1, "Choose what the charge is for."),
+  chargeType: z.string().min(1, "Choose the type of charge."),
   categoryId: z.string(),
-  label: z.string().trim().min(1, "Describe the charge — it is printed on the tenant's statement.")
-    .max(60, "Keep the description to 60 characters."),
+  label: z.string().trim().min(1, "Enter the reason for the charge — it is printed on the tenant's statement.")
+    .max(60, "Keep the reason to 60 characters."),
   amount: z.string().refine((v) => Number(v) > 0, "Enter an amount greater than zero."),
   postingDate: z.string().min(1, "Enter the date of the charge.")
     .refine((v) => v <= todayIso(), "A charge cannot be dated in the future."),
@@ -168,7 +168,11 @@ export default function AddChargePage() {
       <Card variant="glass" padding="md" className="animate-fade-up">
         {step === "form" ? (
           <form onSubmit={form.handleSubmit(review)} className="space-y-4">
-            <Field label="What is the charge for? *" error={form.formState.errors.chargeType?.message}>
+            <Field
+              label="Type of charge *"
+              hint="Decides the account it is booked to. Write the actual reason below."
+              error={form.formState.errors.chargeType?.message}
+            >
               <select
                 {...form.register("chargeType")}
                 onChange={(e) => {
@@ -189,6 +193,20 @@ export default function AddChargePage() {
                 ))}
               </select>
             </Field>
+
+            <Field
+              label="Reason for the charge *"
+              hint="Printed on the tenant's statement — say what it is for, e.g. the month or the item."
+              error={form.formState.errors.label?.message}
+            >
+              <input
+                {...form.register("label")}
+                maxLength={60}
+                className={inputCls}
+                placeholder={type ? PLACEHOLDER[type.value] : "e.g. Garbage collection, September"}
+              />
+            </Field>
+
             <Note>
               Water from a meter reading goes on the{" "}
               <Link className="text-teal-700 underline" to="/water">Water</Link> page.
@@ -209,19 +227,6 @@ export default function AddChargePage() {
                 </select>
               </Field>
             )}
-
-            <Field
-              label="Description for the tenant *"
-              hint="Printed on the tenant's statement."
-              error={form.formState.errors.label?.message}
-            >
-              <input
-                {...form.register("label")}
-                maxLength={60}
-                className={inputCls}
-                placeholder={type ? PLACEHOLDER[type.value] : "Choose what the charge is for first"}
-              />
-            </Field>
 
             <div className="grid gap-4 sm:grid-cols-3">
               <Field label="Amount (KES) *" error={form.formState.errors.amount?.message}>
