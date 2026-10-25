@@ -6,7 +6,7 @@ from rest_framework import serializers
 from apps.expenses.models import ExpenseCategory
 from apps.tenants.models import Tenant
 
-from .models import Arrears, ChargeType, Payment, Transaction, UtilityCharge
+from .models import Arrears, ChargeType, Payment, PaymentType, Transaction, UtilityCharge
 
 
 class PaymentSerializer(serializers.ModelSerializer):
@@ -72,6 +72,29 @@ class PaymentCreateSerializer(serializers.ModelSerializer):
         if not 2020 <= value <= 2100:
             raise serializers.ValidationError("Year must be between 2020 and 2100.")
         return value
+
+    def validate(self, attrs):
+        # Rent for a month before the letting's first rent month would invent
+        # that month's rent (see services._update_arrears). A month already on
+        # the books — a legacy row — can still be paid against.
+        tenant = attrs["tenant"]
+        period = (attrs["period_year"], attrs["period_month"])
+        first = tenant.first_rent_period
+        if (
+            attrs.get("payment_type", PaymentType.RENT) == PaymentType.RENT
+            and first
+            and period < first
+            and not Arrears.objects.filter(
+                tenant=tenant, period_year=period[0], period_month=period[1]
+            ).exists()
+        ):
+            raise serializers.ValidationError({
+                "period_month": (
+                    f"{tenant.full_name}'s rent starts {first[1]}/{first[0]}. "
+                    "Book this money to that month, or as a deposit."
+                )
+            })
+        return attrs
 
 
 class ArrearsSerializer(serializers.ModelSerializer):

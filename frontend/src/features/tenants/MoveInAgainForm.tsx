@@ -15,6 +15,8 @@ import { useNavigate } from "react-router-dom";
 import { z } from "zod";
 
 import { Button, DatePicker } from "@/components/ui";
+import { FirstRentMonthField } from "@/features/tenants/FirstRentMonthField";
+import { firstRentMonthForApi } from "@/features/tenants/firstRentMonth";
 import { Field, inputCls } from "@/features/tenants/shared";
 import { useMoveInAgain } from "@/hooks/useTenants";
 import { useUnits } from "@/hooks/useUnits";
@@ -28,10 +30,15 @@ const schema = z
     unit: z.coerce.number().min(1, "Select a unit"),
     monthly_rent: z.string().min(1, "Required").refine(isPositiveAmount, "Enter an amount greater than 0"),
     move_in_date: z.string().min(1, "Required"),
+    first_rent_month: z.string().optional(),
     deposit_paid: z.string().optional().refine(isNonNegativeAmountOrBlank, "Enter a valid amount"),
     deposit_source: z.enum(["cash", "mpesa", "bank", "cheque"]).optional(),
     deposit_reference: z.string().optional(),
-  });
+  })
+  .refine(
+    (v) => !v.first_rent_month || !v.move_in_date || v.first_rent_month >= v.move_in_date.slice(0, 7),
+    { path: ["first_rent_month"], message: "Cannot be before the move-in month" },
+  );
 type FormValues = z.infer<typeof schema>;
 
 export function MoveInAgainForm({ tenant, onCancel }: { tenant: TenantDetail; onCancel: () => void }) {
@@ -49,7 +56,12 @@ export function MoveInAgainForm({ tenant, onCancel }: { tenant: TenantDetail; on
 
   const onSubmit = async (values: FormValues) => {
     try {
-      const created = await moveIn.mutateAsync({ ...values, deposit_paid: values.deposit_paid || "0" });
+      const { first_rent_month, ...rest } = values;
+      const created = await moveIn.mutateAsync({
+        ...rest,
+        deposit_paid: values.deposit_paid || "0",
+        ...(first_rent_month ? { first_rent_month: firstRentMonthForApi(first_rent_month) } : {}),
+      });
       toast.success(`${tenant.full_name} moved into ${created.building_name} · ${created.unit_label}`);
       navigate(`/tenants/${created.id}`);
     } catch (e) {
@@ -90,6 +102,13 @@ export function MoveInAgainForm({ tenant, onCancel }: { tenant: TenantDetail; on
           <input {...register("monthly_rent")} className={inputCls} />
         </Field>
         <DatePicker label="Move-in date *" {...register("move_in_date")} error={errors.move_in_date?.message} />
+        <FirstRentMonthField
+          registration={register("first_rent_month")}
+          moveIn={watch("move_in_date")}
+          value={watch("first_rent_month")}
+          error={errors.first_rent_month?.message}
+          onUse={(month) => setValue("first_rent_month", month, { shouldValidate: true })}
+        />
         <Field label="Deposit paid (KES)" error={errors.deposit_paid?.message}>
           <input {...register("deposit_paid")} className={inputCls} />
         </Field>

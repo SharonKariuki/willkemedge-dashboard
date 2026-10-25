@@ -41,6 +41,17 @@ class IdempotencyConflict(Exception):
         super().__init__(message)
 
 
+class RentBeforeFirstMonth(ValueError):
+    """Rent booked to a month before the tenant's first rent month."""
+
+    def __init__(self, tenant, period: tuple[int, int]):
+        first_year, first_month = tenant.first_rent_period
+        super().__init__(
+            f"{tenant.full_name}'s rent starts {first_month}/{first_year}; "
+            f"rent cannot be booked to {period[1]}/{period[0]}."
+        )
+
+
 def _generate_transaction_id() -> str:
     """Return a unique, traceable transaction ID: TXN-<16 hex chars>."""
     return f"TXN-{uuid.uuid4().hex[:16].upper()}"
@@ -259,6 +270,7 @@ def allocate_payment_fifo(
     idempotency_key: str = "",
     payment_type: str = PaymentType.RENT,
     created_by=None,
+    deposit_amount: Decimal = ZERO,
 ) -> list[Payment]:
     """
     Apply an incoming credit to the tenant's outstanding balances oldest-first.
@@ -305,8 +317,22 @@ def allocate_payment_fifo(
     accounts — Ignite Access (MCG07) paid a 180,000 security deposit that landed
     as commercial rent, declaring 24,827.59 of VAT on a refundable liability,
     and had to be cancelled out by hand with an offsetting 180,000 charge.
+
+    Deposit + rent in one credit
+    ----------------------------
+    A new tenant usually pays the deposit and the first month's rent in one
+    transfer. ``deposit_amount`` books that much of a RENT credit as a DEPOSIT
+    first (chunk ``#0``), and only the rest is allocated as rent. Booked whole
+    as rent, the deposit became an overpayment and the deposit on the books
+    stayed at zero (MR203, MR308, DON2A).
     """
     remaining = Decimal(str(amount))
+    deposit_amount = Decimal(str(deposit_amount or 0))
+    if deposit_amount < 0 or deposit_amount > remaining:
+        raise ValueError(
+            f"The deposit part (KES {deposit_amount:,.2f}) must be between 0 and "
+            f"the amount received (KES {remaining:,.2f})."
+        )
     created: list[Payment] = []
 
     # Cap so `<key>#<n>` always fits Payment.idempotency_key (max_length=100).
@@ -334,6 +360,21 @@ def allocate_payment_fifo(
             )
         ]
 
+    if deposit_amount > 0:
+        created.append(
+            process_payment(
+                tenant=tenant, amount=deposit_amount, payment_date=payment_date,
+                period_month=payment_date.month, period_year=payment_date.year,
+                source=source, reference=reference, notes=notes,
+                payment_type=PaymentType.DEPOSIT,
+                idempotency_key=f"{base_key}#0" if base_key else "",
+                created_by=created_by,
+            )
+        )
+        remaining -= deposit_amount
+        if remaining <= 0:
+            return created
+
     # select_for_update locks the outstanding arrears rows for the life of this
     # atomic block, so two credits arriving for the same tenant concurrently are
     # serialised: the second waits, then re-reads the balances the first left
@@ -360,11 +401,19 @@ def allocate_payment_fifo(
 
     if remaining > 0:
         # Leftover beyond known arrears applies to the period the payment is for,
-        # i.e. the posting-date month (NOT the server clock — see review C2).
+        # i.e. the posting-date month (NOT the server clock — see review C2) —
+        # unless that is before the tenant's first rent month. A new tenant who
+        # pays on 15 October for a tenancy that starts paying in November is
+        # paying November: booking it to October conjured an October rent
+        # obligation out of nothing (MR203, DON2A).
+        year, month = max(
+            (payment_date.year, payment_date.month),
+            tenant.first_rent_period or (payment_date.year, payment_date.month),
+        )
         created.append(
             process_payment(
                 tenant=tenant, amount=remaining, payment_date=payment_date,
-                period_month=payment_date.month, period_year=payment_date.year,
+                period_month=month, period_year=year,
                 source=source, reference=reference, notes=notes,
                 idempotency_key=f"{base_key}#{len(created)}" if base_key else "",
                 created_by=created_by,
@@ -429,7 +478,13 @@ def _update_arrears(tenant, period_month: int, period_year: int) -> Arrears:
     if existing is None:
         # No row yet: money arrived for a period no billing run ever raised
         # (back-dated capture, or a tenant paying ahead). The tenant's current
-        # rent is the only obligation we can infer.
+        # rent is the only obligation we can infer — but never for a month
+        # before the letting started paying rent, which nothing could have
+        # charged. The allocator already moves early money forward; this stops
+        # a hand-entered period doing what the allocator no longer does.
+        first = tenant.first_rent_period
+        if first and (period_year, period_month) < first:
+            raise RentBeforeFirstMonth(tenant, (period_year, period_month))
         expected_rent = tenant.monthly_rent
         expected_vat = expected_vat_for(tenant, expected_rent)
         existing = {}
@@ -654,7 +709,7 @@ def void_and_requeue_credit(payment: Payment, *, actor=None, reason: str = ""):
 
 
 @transaction.atomic
-def assign_unmatched_credit(*, event_id: int, tenant, actor=None):
+def assign_unmatched_credit(*, event_id: int, tenant, actor=None, deposit_amount=None):
     """Book an UNMATCHED bank credit against a chosen tenant.
 
     Single implementation shared by the API viewset, the admin action and any
@@ -663,10 +718,16 @@ def assign_unmatched_credit(*, event_id: int, tenant, actor=None):
     two admins reconciling the same credit could book it twice, and neither copy
     passed an idempotency key to the allocator.
 
+    ``deposit_amount`` is how much of the credit is the tenant's deposit; the
+    rest is rent. Left as None it is the default — deposit first for a new
+    letting, nothing for anyone else (``default_deposit_part``). Whoever
+    assigns can set it to split the money another way.
+
     Returns (event, payments). Raises CreditAlreadyResolved if another operator
     got there first.
     """
     from apps.accounts import audit
+    from apps.tenants.deposits import default_deposit_part, raise_card_to_books
 
     from .coop_ipn import _parse_narration, _posting_date
     from .models import CoopIpnEvent, CoopIpnStatus
@@ -680,6 +741,9 @@ def assign_unmatched_credit(*, event_id: int, tenant, actor=None):
 
     pay_date = _posting_date(event.raw_payload or {})
     channel = _parse_narration(event.narration).get("channel", event.channel or "bank")
+    if deposit_amount is None:
+        deposit_amount = default_deposit_part(tenant, event.amount)
+    deposit_amount = Decimal(str(deposit_amount))
     payments = allocate_payment_fifo(
         tenant=tenant,
         amount=event.amount,
@@ -692,6 +756,7 @@ def assign_unmatched_credit(*, event_id: int, tenant, actor=None):
         # back from a void needs a fresh generation — see credit_idempotency_key.
         idempotency_key=credit_idempotency_key(event),
         created_by=actor if getattr(actor, "is_authenticated", False) else None,
+        deposit_amount=deposit_amount,
     )
     if any(p.voided_at for p in payments):
         # The replay guard matched rows a void already unwound. Marking the
@@ -699,19 +764,28 @@ def assign_unmatched_credit(*, event_id: int, tenant, actor=None):
         raise CreditAlreadyResolved(
             f"Bank credit {event.transaction_id} matched voided payments; nothing was booked."
         )
+    if deposit_amount > 0:
+        raise_card_to_books(tenant)
     event.status = CoopIpnStatus.RECORDED
     event.detail = f"Manually assigned to {tenant} by {actor or 'system'}"
     event.payment = payments[0]
     event.save(update_fields=["status", "detail", "payment"])
 
+    split = (
+        f" — deposit KES {deposit_amount:,.2f}, rent KES {event.amount - deposit_amount:,.2f}"
+        if deposit_amount > 0 else ""
+    )
     audit.record(
         actor=actor,
         action="credit.assign",
         object_type="coop_ipn_event",
         object_id=event.pk,
-        summary=f"Assigned KES {event.amount} ({event.transaction_id}) to {tenant}",
+        summary=f"Assigned KES {event.amount} ({event.transaction_id}) to {tenant}{split}",
         old_values={"status": CoopIpnStatus.UNMATCHED},
-        new_values={"status": CoopIpnStatus.RECORDED, "tenant_id": tenant.pk},
+        new_values={
+            "status": CoopIpnStatus.RECORDED, "tenant_id": tenant.pk,
+            "deposit_amount": str(deposit_amount),
+        },
     )
     return event, payments
 
