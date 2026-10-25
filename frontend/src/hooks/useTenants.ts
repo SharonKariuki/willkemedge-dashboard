@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { api, BULK_SEND_TIMEOUT_MS } from "@/lib/api";
 import type { TenantDetail, TenantListItem } from "@/lib/types";
 
 export interface TenantFilters {
@@ -221,6 +221,9 @@ export interface StatementEmailResult {
   sent: number;
   failed: number;
   total: number;
+  /** Tenants left out because they got the same message in the last 10 minutes. */
+  skipped?: number;
+  skipped_tenants?: { tenant: number; tenant_name: string; reason: string }[];
   notifications: {
     id: number;
     tenant: number;
@@ -251,9 +254,12 @@ export function useEmailStatements() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (tenantIds: number[]) => {
+      // A whole property renders a PDF and sends an email per tenant in one
+      // request; the default 10s timeout reported "failed" while the server
+      // kept sending, and the retry emailed everyone twice.
       const { data } = await api.post("/tenants/email-statements/", {
         tenant_ids: tenantIds,
-      });
+      }, { timeout: BULK_SEND_TIMEOUT_MS });
       return data as StatementEmailResult;
     },
     onSuccess: () => {

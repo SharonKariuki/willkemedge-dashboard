@@ -109,8 +109,11 @@ export interface TenantDocument {
   tenant: number;
   doc_type: DocumentType;
   doc_type_display: string;
-  file: string;
   original_name: string;
+  content_type: string;
+  size: number | null;
+  /** False when an older upload was wiped from the server's disk by a deploy. */
+  available: boolean;
   uploaded_at: string;
 }
 
@@ -142,7 +145,12 @@ export interface TenantListItem {
   is_billable: boolean;
 }
 
+/** How far ahead the rent run raises a letting. Quarterly raises the three
+ *  months of a calendar quarter together, before it starts (Ignite, MCG07). */
+export type BillingFrequency = "monthly" | "quarterly";
+
 export interface TenantDetail extends TenantListItem {
+  billing_frequency?: BillingFrequency;
   id_number: string;
   kra_pin: string;
   email: string;

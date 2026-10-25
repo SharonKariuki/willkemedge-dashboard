@@ -71,13 +71,36 @@ def live_payments(tenant):
     return tenant.payments.filter(voided_at__isnull=True)
 
 
+# The database refuses these (CheckConstraints since #309); saying so here
+# turns what was a 500 from the constraint into a 400 naming the field.
+MONEY_AND_DAY_LIMITS = {
+    "monthly_rent": {"min_value": 0},
+    "deposit_paid": {"min_value": 0},
+    "due_day": {"min_value": 1, "max_value": 31},
+}
+
+
 class TenantDocumentSerializer(serializers.ModelSerializer):
+    """A KYC document's details. Never a file URL: the bytes are only served by
+    the authenticated ``documents/<id>/download/`` action."""
+
     doc_type_display = serializers.CharField(source="get_doc_type_display", read_only=True)
+    # False when a pre-database upload was wiped from disk by a deploy; the
+    # page then asks for the document again.
+    available = serializers.SerializerMethodField()
 
     class Meta:
         model = TenantDocument
-        fields = ["id", "tenant", "doc_type", "doc_type_display", "file", "original_name", "uploaded_at"]
-        read_only_fields = ["tenant", "original_name", "uploaded_at"]
+        fields = [
+            "id", "tenant", "doc_type", "doc_type_display", "original_name",
+            "content_type", "size", "available", "uploaded_at",
+        ]
+        read_only_fields = fields
+
+    def get_available(self, obj) -> bool:
+        if obj.stored_in_db:
+            return True
+        return bool(obj.file) and obj.file.storage.exists(obj.file.name)
 
 
 class TenantListSerializer(serializers.ModelSerializer):
@@ -145,7 +168,7 @@ class TenantDetailSerializer(serializers.ModelSerializer):
     # would be a lie.
     deposit_is_agreed = serializers.SerializerMethodField()
     status_display = serializers.CharField(source="get_status_display", read_only=True)
-    documents = TenantDocumentSerializer(many=True, read_only=True)
+    documents = serializers.SerializerMethodField()
     # Payment analytics
     total_paid = serializers.SerializerMethodField()
     total_arrears = serializers.SerializerMethodField()
@@ -174,7 +197,7 @@ class TenantDetailSerializer(serializers.ModelSerializer):
             "phone", "email", "emergency_contact", "emergency_phone", "care_of",
             "unit", "unit_label", "building_name", "building_id", "unit_classification",
             "space_units", "space_label",
-            "monthly_rent", "deposit_paid", "due_day", "is_billable",
+            "monthly_rent", "deposit_paid", "due_day", "is_billable", "billing_frequency",
             "deposit_months", "expected_deposit", "deposit_shortfall",
             "agreed_deposit", "deposit_is_agreed",
 
@@ -234,6 +257,10 @@ class TenantDetailSerializer(serializers.ModelSerializer):
         from apps.tenants.deposits import has_agreed_deposit
         return has_agreed_deposit(obj)
 
+    def get_documents(self, obj):
+        # Defer the bytes: a tenant page lists documents, it never needs them.
+        return TenantDocumentSerializer(obj.documents.defer("data"), many=True).data
+
     def get_total_paid(self, obj):
         from django.db.models import Sum
         result = live_payments(obj).aggregate(total=Sum("amount"))["total"]
@@ -283,9 +310,10 @@ class TenantCreateSerializer(serializers.ModelSerializer):
             "id", "first_name", "last_name", "id_number", "kra_pin", "phone", "email",
             "emergency_contact", "emergency_phone", "unit",
             "monthly_rent", "deposit_paid", "due_day", "move_in_date", "notes",
-            "is_billable",
+            "is_billable", "billing_frequency",
             "deposit_source", "deposit_date", "deposit_reference",
         ]
+        extra_kwargs = MONEY_AND_DAY_LIMITS
 
     def validate(self, attrs):
         """A deposit cannot be dated before the keys were handed over."""
@@ -344,11 +372,12 @@ class TenantEditSerializer(serializers.ModelSerializer):
             "first_name", "last_name", "id_number", "kra_pin", "phone", "email",
             "emergency_contact", "emergency_phone", "care_of",
             "monthly_rent", "deposit_paid", "agreed_deposit", "due_day",
-            "is_billable",
+            "is_billable", "billing_frequency",
             "deposit_refund_percentage",
             "notes",
 
         ]
+        extra_kwargs = MONEY_AND_DAY_LIMITS
 
     def validate_id_number(self, value):
         """Trimmed, and never blanked — it is the tenant's identity on file."""

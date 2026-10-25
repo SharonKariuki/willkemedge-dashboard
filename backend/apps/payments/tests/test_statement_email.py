@@ -302,15 +302,41 @@ class TestStatementEmailApi:
         assert res.data["failed"] == 1
         assert res.data["total"] == 2
 
-    def test_bulk_send_is_not_deduped(self, auth_client, building):
-        """The office re-sends on request; a manual send must never be swallowed
-        as a duplicate of the monthly run."""
+    def test_bulk_send_is_not_deduped_against_the_monthly_run(self, auth_client, building):
+        """A manual send must never be swallowed as a duplicate of the monthly
+        run: the office re-sends on request."""
+        tenant = _make_tenant(building)
+        with patch("apps.payments.notifications.send_email", return_value=True) as send:
+            send_monthly_statements(AS_AT.isoformat())
+            res = auth_client.post("/api/tenants/email-statements/",
+                                   {"tenant_ids": [tenant.id]}, format="json")
+
+        assert send.call_count == 2
+        assert res.data["sent"] == 1 and res.data["skipped"] == 0
+
+    def test_a_repeated_bulk_send_skips_tenants_just_sent(self, auth_client, building):
+        """The browser used to time out mid-batch while the server kept
+        sending; the office clicked again and everyone got it twice."""
+        first = _make_tenant(building, id_number="T1")
+        with patch("apps.payments.notifications.send_email", return_value=True) as send:
+            auth_client.post("/api/tenants/email-statements/",
+                             {"tenant_ids": [first.id]}, format="json")
+            second = _make_tenant(building, id_number="T2", email="two@example.com")
+            res = auth_client.post("/api/tenants/email-statements/",
+                                   {"tenant_ids": [first.id, second.id]}, format="json")
+
+        assert send.call_count == 2  # first once, second once
+        assert res.data["sent"] == 1
+        assert res.data["skipped"] == 1
+        assert res.data["total"] == 2
+        assert [s["tenant"] for s in res.data["skipped_tenants"]] == [first.id]
+
+    def test_the_single_tenant_button_always_resends(self, auth_client, building):
         tenant = _make_tenant(building)
         with patch("apps.payments.notifications.send_email", return_value=True) as send:
             auth_client.post("/api/tenants/email-statements/",
                              {"tenant_ids": [tenant.id]}, format="json")
-            auth_client.post("/api/tenants/email-statements/",
-                             {"tenant_ids": [tenant.id]}, format="json")
+            auth_client.post(f"/api/tenants/{tenant.id}/email-statement/")
 
         assert send.call_count == 2
 

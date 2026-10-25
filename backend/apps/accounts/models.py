@@ -159,6 +159,9 @@ class LoginAttempt(models.Model):
     user_agent = models.CharField(max_length=512, blank=True)
     successful = models.BooleanField(default=False)
     attempted_at = models.DateTimeField(auto_now_add=True)
+    # Set on a failed attempt when a later correct sign-in resets the lockout
+    # count. The row is kept: it is the record of the guessing.
+    cleared_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = "accounts_login_attempt"

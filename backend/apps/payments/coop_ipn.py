@@ -410,8 +410,33 @@ class CoopIpnView(APIView):
                         # One receipt for the full deposit (not per chunk).
                         receipt_args = (tenant.id, str(amount), trans_id, d.isoformat())
                 event.save()
-        except IntegrityError:
-            logger.info("Co-op IPN: duplicate TransactionId %s — acknowledged", trans_id)
+        except IntegrityError as exc:
+            # The block rolled back, event row included. A duplicate delivery is
+            # the expected cause, but booking the payment can break a database
+            # rule too (e.g. a non-positive amount); acking that as "duplicate"
+            # dropped a real bank credit with no record and no alert. So check:
+            # is the TransactionId actually already ours?
+            if CoopIpnEvent.objects.filter(transaction_id=trans_id).exists():
+                logger.info("Co-op IPN: duplicate TransactionId %s — acknowledged", trans_id)
+                return Response(IPN_OK)
+            logger.exception("Co-op IPN: could not book %s — queued for review", trans_id)
+            try:
+                event = CoopIpnEvent.objects.create(
+                    transaction_id=trans_id,
+                    payment_ref=str(payload.get("PaymentRef", "")).strip(),
+                    account_number=acct,
+                    amount=amount,
+                    event_type=event_type,
+                    channel=parsed["channel"],
+                    narration=narration,
+                    raw_payload=payload,
+                    status=CoopIpnStatus.UNMATCHED,
+                    detail=f"Could not be booked automatically ({type(exc).__name__}) — assign by hand",
+                )
+            except IntegrityError:
+                # A concurrent retry claimed it between our check and now.
+                return Response(IPN_OK)
+            _safe_enqueue(send_unmatched_credit_alert, event.id)
             return Response(IPN_OK)
 
         # --- post-commit side effects & monitoring ---

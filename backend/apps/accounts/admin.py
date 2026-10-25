@@ -39,7 +39,7 @@ class AuditLogAdmin(admin.ModelAdmin):
 
 @admin.register(LoginAttempt)
 class LoginAttemptAdmin(admin.ModelAdmin):
-    list_display = ("email", "ip_address", "successful", "attempted_at")
+    list_display = ("email", "ip_address", "successful", "attempted_at", "cleared_at")
     list_filter = ("successful", "attempted_at")
     search_fields = ("email", "ip_address")
-    readonly_fields = ("email", "ip_address", "user_agent", "successful", "attempted_at")
+    readonly_fields = ("email", "ip_address", "user_agent", "successful", "attempted_at", "cleared_at")

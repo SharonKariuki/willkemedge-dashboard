@@ -34,6 +34,7 @@ from .services import (
     move_in_tenant,
     move_out_tenant,
     record_initial_deposit,
+    sniff_content_type,
     validate_upload,
 )
 
@@ -362,13 +363,15 @@ class TenantViewSet(viewsets.ModelViewSet):
             safe_name = validate_upload(uploaded_file)
         except FileValidationError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-        # Store under a sanitized name so the path can't be manipulated, and
-        # keep a sanitized original_name (never the raw client value).
-        uploaded_file.name = safe_name
+        # Kept in the database, not on disk: Render's disk is wiped on every
+        # deploy. Only the sanitized name is stored, never the raw client value.
+        content = uploaded_file.read()
         doc = TenantDocument.objects.create(
             tenant=tenant,
             doc_type=ser.validated_data["doc_type"],
-            file=uploaded_file,
+            data=content,
+            content_type=sniff_content_type(content[:16]) or "application/octet-stream",
+            size=len(content),
             original_name=safe_name,
         )
         # Auto-advance KYC to "pending review" once the minimum identity data is on file.
@@ -400,32 +403,35 @@ class TenantViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["get"], url_path="documents/list")
     def list_documents(self, request, pk=None):
         tenant = self.get_object()
-        docs = tenant.documents.all()
+        docs = tenant.documents.defer("data")
         return Response(TenantDocumentSerializer(docs, many=True).data)
 
     @action(detail=True, methods=["get"], url_path=r"documents/(?P<doc_id>[0-9]+)/download")
     def download_document(self, request, pk=None, doc_id=None):
         """GET /api/tenants/<id>/documents/<doc_id>/download/ — stream a KYC document.
 
-        Authenticated-only (IsAuthenticated on the viewset). We serve the file
-        through FileResponse rather than relying on static/media serving so the
-        document is never reachable via a guessable URL.
+        Authenticated-only (IsAuthenticated on the viewset). The bytes come
+        from the database (or a legacy file on disk), never from static/media
+        serving, so a document is never reachable via a guessable URL.
         """
-        from django.http import FileResponse, Http404
+        from django.http import Http404, HttpResponse
 
         tenant = self.get_object()
         try:
             doc = tenant.documents.get(pk=doc_id)
         except TenantDocument.DoesNotExist as exc:
             raise Http404("Document not found.") from exc
-        if not doc.file:
-            raise Http404("Document file is missing.")
+        content = doc.read_bytes()
+        if content is None:
+            return Response(
+                {"detail": "This document's file was lost in a server update. Upload it again."},
+                status=status.HTTP_410_GONE,
+            )
         # original_name is already sanitized on upload.
-        return FileResponse(
-            doc.file.open("rb"),
-            as_attachment=True,
-            filename=doc.original_name or "document",
-        )
+        response = HttpResponse(content, content_type=doc.content_type or "application/octet-stream")
+        response["Content-Disposition"] = f'attachment; filename="{doc.original_name or "document"}"'
+        response["X-Content-Type-Options"] = "nosniff"
+        return response
 
     @action(detail=True, methods=["get"], url_path="payment-history")
     def payment_history(self, request, pk=None):
@@ -646,25 +652,40 @@ class TenantViewSet(viewsets.ModelViewSet):
                 {"detail": "No tenants matched."}, status=status.HTTP_400_BAD_REQUEST
             )
 
+        from apps.payments.models import NotificationChannel
+        from apps.payments.repeat_guard import recently_sent, skipped_entry
+
+        # A retry of a send that timed out in the browser (or a double click)
+        # must not email the same statement twice.
+        already = recently_sent(
+            [t.id for t in tenants], channel=NotificationChannel.EMAIL, template_key="rent_statement",
+        )
+        skipped = [skipped_entry(t) for t in tenants if t.id in already]
+        to_send = [t for t in tenants if t.id not in already]
+
         user = request.user if request.user.is_authenticated else None
-        # One SMTP connection for the whole batch. The handshake, not the PDF,
-        # is what makes a property-wide send slow, and this request is
-        # synchronous — the office is watching a spinner while it runs.
-        with open_mail_connection() as mail:
-            results = [
-                send_tenant_statement(
-                    tenant, automatic=False, created_by=user, connection=mail
-                )
-                for tenant in tenants
-            ]
+        results = []
+        if to_send:
+            # One SMTP connection for the whole batch. The handshake, not the
+            # PDF, is what makes a property-wide send slow, and this request is
+            # synchronous — the office is watching a spinner while it runs.
+            with open_mail_connection() as mail:
+                results = [
+                    send_tenant_statement(
+                        tenant, automatic=False, created_by=user, connection=mail
+                    )
+                    for tenant in to_send
+                ]
         sent = sum(1 for n in results if n.status == "sent")
 
         return Response(
             {
                 "sent": sent,
                 "failed": len(results) - sent,
-                "total": len(results),
+                "skipped": len(skipped),
+                "total": len(results) + len(skipped),
                 "notifications": TenantNotificationSerializer(results, many=True).data,
+                "skipped_tenants": skipped,
             },
             status=status.HTTP_201_CREATED,
         )

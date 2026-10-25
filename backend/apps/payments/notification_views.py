@@ -16,9 +16,10 @@ from .models import (
     NotificationChannel,
     TenantNotification,
 )
-from .notification_services import dispatch_notification
+from .notification_services import dispatch_notification, resolve_placeholders
 from .notification_templates import TEMPLATES
 from .notifications import fetch_sms_balance
+from .repeat_guard import recent_bodies, skipped_entry
 
 
 class TenantNotificationSerializer(serializers.ModelSerializer):
@@ -168,8 +169,15 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        results = []
+        # A retry of a send that timed out in the browser (or a double click)
+        # must not message the same tenants twice: skip anyone who got this
+        # exact text on this channel in the last few minutes.
+        recent = recent_bodies([t.id for t in recipients], channel=data["channel"])
+        results, skipped = [], []
         for tenant in recipients:
+            if (tenant.id, resolve_placeholders(data["body"], tenant)) in recent:
+                skipped.append(skipped_entry(tenant))
+                continue
             notification = TenantNotification.objects.create(
                 tenant=tenant,
                 channel=data["channel"],
@@ -190,8 +198,10 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
             {
                 "sent": sent,
                 "failed": failed,
-                "total": len(results),
+                "skipped": len(skipped),
+                "total": len(results) + len(skipped),
                 "notifications": TenantNotificationSerializer(results, many=True).data,
+                "skipped_tenants": skipped,
             },
             status=status.HTTP_201_CREATED,
         )

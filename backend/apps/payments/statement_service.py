@@ -204,10 +204,11 @@ def _raised_on(tenant, year: int, month: int) -> _dt.date:
     the period, which is why an October charge shown on 28 September does not
     fall into September's brought-forward figure.
     """
-    from .billing_calendar import invoice_date
+    from .billing_calendar import billed_from, invoice_date
 
     try:
-        raised = invoice_date(tenant, (year, month))
+        # A quarterly letting's later months ride on the quarter's invoice.
+        raised = invoice_date(tenant, billed_from(tenant, (year, month)))
     except ValueError:
         return _dt.date(year, max(1, min(12, month)), 1)
     move_in = getattr(tenant, "move_in_date", None)
@@ -277,8 +278,12 @@ def _build_ledger(
             continue
         # ``as_of`` cuts on the period, not on the date shown: a statement drawn
         # on 1 October must carry October's rent, which is dated 28 September,
-        # and one cut at 30 September must not.
-        if as_of and period > as_of:
+        # and one cut at 30 September must not. A quarterly letting cuts on the
+        # period its invoice states, so 7 October carries all of Oct–Dec.
+        from .billing_calendar import billed_from
+
+        cut_year, cut_month = billed_from(tenant, (arr.period_year, arr.period_month))
+        if as_of and _dt.date(cut_year, cut_month, 1) > as_of:
             continue
         posting = _raised_on(tenant, arr.period_year, arr.period_month)
         base = _money(arr.expected_rent)
@@ -535,23 +540,49 @@ def build_statement(
         | current_q.filter(period_year=period_year, period_month__lte=period_month)
     ).order_by("-period_year", "-period_month").first()
 
+    # The months the summary box states as "current": the one row above, or for
+    # a quarterly letting every month of that row's quarter, which went out on
+    # one invoice. Brought-forward, payments received and the credits below all
+    # cut at the start of this block, so the box still foots to the ledger.
+    from .billing_calendar import is_quarterly, quarter_bounds
+
+    current_rows = [current] if current is not None else []
+    if current is not None and is_quarterly(tenant):
+        (fy, fm), (ly, lm) = quarter_bounds((current.period_year, current.period_month))
+        current_rows = list(
+            Arrears.objects.filter(
+                tenant=tenant, period_year=fy, period_month__gte=fm, period_month__lte=lm,
+            ).order_by("period_month")
+        )
+    first_row, last_row = (current_rows[0], current_rows[-1]) if current_rows else (None, None)
+
     period_start = (
-        _dt.date(current.period_year, current.period_month, 1) if current is not None else None
+        _dt.date(first_row.period_year, first_row.period_month, 1) if first_row is not None else None
+    )
+    period_end = (
+        _dt.date(last_row.period_year, last_row.period_month,
+                 calendar.monthrange(last_row.period_year, last_row.period_month)[1])
+        if last_row is not None else None
     )
     rows, balance, arrears_bf = _build_ledger(
         tenant, as_of=as_of, period_start=period_start
     )
 
-    if current is not None:
-        current_base = _money(current.expected_rent)
-        current_period_label = _month_name(current.period_month, current.period_year)
+    if current_rows:
+        current_base = _money(sum((r.expected_rent for r in current_rows), ZERO))
+        current_period_label = _month_name(first_row.period_month, first_row.period_year)
+        if last_row is not first_row:
+            current_period_label = (
+                f"{_dt.date(2000, first_row.period_month, 1):%B}–"
+                f"{_month_name(last_row.period_month, last_row.period_year)}"
+            )
     else:
         current_base = ZERO
         current_period_label = _month_name(period_month, period_year)
 
     # Read the VAT actually raised rather than deriving it, for the same reason
     # the ledger rows do: a commercial unit is not necessarily VAT-rated.
-    vat_on_rent = _money(current.expected_vat) if current is not None else ZERO
+    vat_on_rent = _money(sum((r.expected_vat for r in current_rows), ZERO))
     total_due = balance
 
     # Money received against the current period. The summary used to have no
@@ -567,13 +598,13 @@ def build_statement(
     payments_q = Payment.objects.filter(
         tenant=tenant, voided_at__isnull=True
     ).exclude(payment_type=PaymentType.DEPOSIT)
-    if current is not None:
+    if current_rows:
         # The statement and monthly rent roll report cash in the month it was
         # received. ``period_*`` is retained for FIFO arrears allocation and
         # must not make an August receipt disappear into a June/July summary.
+        # A quarterly letting's block is its quarter, so cash anywhere in it.
         payments_q = payments_q.filter(
-            payment_date__year=current.period_year,
-            payment_date__month=current.period_month,
+            payment_date__gte=period_start, payment_date__lte=period_end,
         )
     else:
         payments_q = payments_q.none()

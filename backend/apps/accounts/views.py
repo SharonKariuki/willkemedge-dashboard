@@ -1,4 +1,5 @@
 """Auth views: health, login, logout, current user, password reset."""
+from django.conf import settings
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -6,6 +7,7 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.views import TokenRefreshView
 
 from . import audit
+from .permissions import IsOwner
 from .serializers import (
     ChangePasswordSerializer,
     LoginSerializer,
@@ -15,6 +17,7 @@ from .serializers import (
 )
 from .services import (
     clear_failed_attempts,
+    forwarded_chain,
     get_client_ip,
     is_locked_out,
     record_login_attempt,
@@ -33,6 +36,29 @@ def _record_auth(action: str, summary: str, email: str, *, actor=None, session_i
         is_financial=False,
         session_id=session_id,
     )
+
+
+class ClientIpDebugView(APIView):
+    """GET /api/auth/client-ip/ — owner only. What the proxies in front of the
+    app sent for this request, so CLIENT_IP_HEADER / TRUSTED_PROXY_HOPS can be
+    set from facts rather than guesses. Shows only the caller's own address."""
+
+    permission_classes = [IsOwner]
+
+    def get(self, request):
+        meta = request.META
+        return Response({
+            "resolved_ip": get_client_ip(request),
+            "x_forwarded_for": forwarded_chain(request),
+            "remote_addr": meta.get("REMOTE_ADDR"),
+            "cf_connecting_ip": meta.get("HTTP_CF_CONNECTING_IP"),
+            "true_client_ip": meta.get("HTTP_TRUE_CLIENT_IP"),
+            "x_real_ip": meta.get("HTTP_X_REAL_IP"),
+            "configured": {
+                "CLIENT_IP_HEADER": settings.CLIENT_IP_HEADER,
+                "TRUSTED_PROXY_HOPS": settings.TRUSTED_PROXY_HOPS,
+            },
+        })
 
 
 class HealthView(APIView):

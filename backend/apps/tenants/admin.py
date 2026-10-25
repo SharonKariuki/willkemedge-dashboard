@@ -4,9 +4,17 @@ from .models import Tenant, TenantDocument
 
 
 class DocumentInline(admin.TabularInline):
+    """KYC documents, read-only. Uploads go through the tenant page, which
+    stores them in the database; an admin upload would write to the
+    deploy-wiped disk instead."""
+
     model = TenantDocument
     extra = 0
-    readonly_fields = ("uploaded_at",)
+    fields = ("doc_type", "original_name", "content_type", "size", "uploaded_at")
+    readonly_fields = fields
+
+    def has_add_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(Tenant)

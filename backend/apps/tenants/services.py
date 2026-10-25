@@ -34,7 +34,7 @@ class FileValidationError(Exception):
     pass
 
 
-def _sniff_content_type(head: bytes) -> str | None:
+def sniff_content_type(head: bytes) -> str | None:
     """Return the real MIME type from an uploaded file's leading bytes.
 
     Both the browser-supplied content-type and the filename extension are
@@ -101,7 +101,7 @@ def validate_upload(file) -> str:
     # rewind so the subsequent save writes the whole file.
     head = file.read(16)
     file.seek(0)
-    real_type = _sniff_content_type(head)
+    real_type = sniff_content_type(head)
     if real_type not in ALLOWED_FILE_TYPES:
         raise FileValidationError(
             "File contents do not match an accepted format. "
@@ -359,7 +359,7 @@ def carry_over_identity(previous: Tenant, tenant: Tenant) -> Tenant:
     records, and reusing it would re-attribute that history to the new letting.
 
     The identity documents are the same person's, so their rows are copied
-    across pointing at the same stored files, and a verified KYC stays verified.
+    across with their contents, and a verified KYC stays verified.
     """
     from .models import TenantDocument
 
@@ -375,6 +375,7 @@ def carry_over_identity(previous: Tenant, tenant: Tenant) -> Tenant:
     TenantDocument.objects.bulk_create(
         TenantDocument(
             tenant=tenant, doc_type=doc.doc_type, file=doc.file.name,
+            data=doc.data, content_type=doc.content_type, size=doc.size,
             original_name=doc.original_name,
         )
         for doc in previous.documents.all()

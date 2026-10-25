@@ -153,20 +153,84 @@ class AuthFlowTests(APITestCase):
             email="william@gmail.com", successful=False
         ).count() == LOCKOUT_THRESHOLD - 1
 
-        # ...then a success clears the in-window failures.
+        # ...then a success clears the in-window failures from the count...
         ok = self.client.post(
             self.login_url,
             {"email": "william@gmail.com", "password": self.password},
             format="json",
         )
         assert ok.status_code == status.HTTP_200_OK
-        assert LoginAttempt.objects.filter(
-            email="william@gmail.com", successful=False
-        ).count() == 0
-        # The successful audit row survives.
+        failed = LoginAttempt.objects.filter(email="william@gmail.com", successful=False)
+        # ...but keeps them: they are the audit record of the guessing.
+        assert failed.count() == LOCKOUT_THRESHOLD - 1
+        assert not failed.filter(cleared_at__isnull=True).exists()
         assert LoginAttempt.objects.filter(
             email="william@gmail.com", successful=True
         ).count() == 1
+
+        # One more slip is nowhere near a lockout.
+        self.client.post(
+            self.login_url, {"email": "william@gmail.com", "password": "wrong"}, format="json",
+        )
+        again = self.client.post(
+            self.login_url, {"email": "william@gmail.com", "password": self.password}, format="json",
+        )
+        assert again.status_code == status.HTTP_200_OK
+
+    def _fail_from(self, **headers):
+        for _ in range(LOCKOUT_THRESHOLD):
+            self.client.post(
+                self.login_url, {"email": "william@gmail.com", "password": "wrong"},
+                format="json", **headers,
+            )
+        return self.client.post(
+            self.login_url, {"email": "william@gmail.com", "password": self.password},
+            format="json", **headers,
+        )
+
+    def test_rotating_a_fake_forwarded_for_no_longer_dodges_the_lockout(self):
+        """Render appends to X-Forwarded-For; the leftmost entry is the client's
+        own claim. With the proxy hop configured, faking it changes nothing."""
+        with self.settings(TRUSTED_PROXY_HOPS=1):
+            for i in range(LOCKOUT_THRESHOLD):
+                self.client.post(
+                    self.login_url, {"email": "william@gmail.com", "password": "wrong"},
+                    format="json", HTTP_X_FORWARDED_FOR=f"10.9.9.{i}, 203.0.113.10",
+                )
+            blocked = self.client.post(
+                self.login_url, {"email": "william@gmail.com", "password": self.password},
+                format="json", HTTP_X_FORWARDED_FOR="10.9.9.99, 203.0.113.10",
+            )
+        assert blocked.status_code == status.HTTP_429_TOO_MANY_REQUESTS
+        assert set(LoginAttempt.objects.values_list("ip_address", flat=True)) == {"203.0.113.10"}
+
+    def test_a_trusted_proxy_header_wins_when_configured(self):
+        with self.settings(CLIENT_IP_HEADER="HTTP_CF_CONNECTING_IP"):
+            blocked = self._fail_from(
+                HTTP_CF_CONNECTING_IP="198.51.100.20", HTTP_X_FORWARDED_FOR="1.2.3.4",
+            )
+        assert blocked.status_code == status.HTTP_429_TOO_MANY_REQUESTS
+        assert set(LoginAttempt.objects.values_list("ip_address", flat=True)) == {"198.51.100.20"}
+
+    def test_a_junk_forwarded_for_does_not_break_sign_in(self):
+        """ip_address is an inet column: a garbage header must not 500 the login."""
+        ok = self.client.post(
+            self.login_url, {"email": "william@gmail.com", "password": self.password},
+            format="json", HTTP_X_FORWARDED_FOR="not-an-ip",
+        )
+        assert ok.status_code == status.HTTP_200_OK
+        assert LoginAttempt.objects.get(successful=True).ip_address is None
+
+    def test_client_ip_diagnostic_is_owner_only(self):
+        url = reverse("accounts:client-ip")
+        assert self.client.get(url).status_code == status.HTTP_401_UNAUTHORIZED
+        clerk = User.objects.create_user(username="clerk", email="c@x.com", password="x", role="caretaker")
+        self.client.force_authenticate(clerk)
+        assert self.client.get(url).status_code == status.HTTP_403_FORBIDDEN
+        owner = User.objects.create_user(username="boss", email="b@x.com", password="x", role="owner")
+        self.client.force_authenticate(owner)
+        body = self.client.get(url, HTTP_X_FORWARDED_FOR="1.1.1.1, 203.0.113.5").json()
+        assert body["x_forwarded_for"] == ["1.1.1.1", "203.0.113.5"]
 
     def test_refresh_endpoint_issues_new_access_token(self):
         login_resp = self.client.post(

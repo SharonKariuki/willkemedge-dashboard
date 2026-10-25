@@ -113,26 +113,70 @@ class BuildingViewSet(viewsets.ModelViewSet):
         """
         POST /api/buildings/{id}/adjust-rent/
         Input: {"amount": 1000, "type": "fixed"|"percent"}
-        """
-        building = self.get_object()
-        adj_amount = request.data.get("amount")
-        adj_type = request.data.get("type", "fixed")
 
-        if not adj_amount:
+        Changes each unit's LISTED rent, the figure a new letting starts from.
+        It does not change what current tenants are billed: that is their own
+        Tenant.monthly_rent, agreed per tenancy and changed on the tenant's
+        page. The response says how many current tenancies were left as is.
+        """
+        from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+
+        from apps.tenants.models import CURRENT_STATUSES, Tenant
+
+        building = self.get_object()
+        adj_type = request.data.get("type", "fixed")
+        if adj_type not in ("fixed", "percent"):
+            return Response({"detail": "Type must be fixed or percent."}, status=400)
+        try:
+            adj_amount = Decimal(str(request.data.get("amount", "")).strip())
+        except InvalidOperation:
+            return Response({"detail": "Amount must be a number."}, status=400)
+        if not adj_amount.is_finite() or adj_amount == 0:
             return Response({"detail": "Amount is required."}, status=400)
+        if adj_type == "percent" and not (Decimal("-100") < adj_amount <= Decimal("100")):
+            return Response({"detail": "A percentage change must be above -100% and at most 100%."}, status=400)
+
+        units = list(building.units.all())
+        new_rents = {}
+        for unit in units:
+            old_rent = unit.monthly_rent
+            if adj_type == "percent":
+                new_rent = old_rent * (1 + adj_amount / 100)
+            else:
+                new_rent = old_rent + adj_amount
+            new_rent = new_rent.quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+            if new_rent < 0:
+                return Response(
+                    {"detail": f"That would make {unit.label}'s rent negative (KES {new_rent:,})."},
+                    status=400,
+                )
+            new_rents[unit.pk] = (old_rent, new_rent)
 
         with transaction.atomic():
-            units = building.units.all()
             for unit in units:
-                old_rent = float(unit.monthly_rent)
-                if adj_type == "percent":
-                    new_rent = old_rent * (1 + float(adj_amount) / 100)
-                else:
-                    new_rent = old_rent + float(adj_amount)
-                unit.monthly_rent = round(new_rent, 0)
+                unit.monthly_rent = new_rents[unit.pk][1]
                 unit.save(update_fields=["monthly_rent", "updated_at"])
+            audit.record(
+                action="building.adjust_rent",
+                object_type="building",
+                object_id=building.pk,
+                object_label=building.name,
+                summary=f"Adjusted listed rent of {len(units)} units in {building.name} "
+                        f"by {adj_amount}{'%' if adj_type == 'percent' else ' KES'}",
+                old_values={str(pk): str(v[0]) for pk, v in new_rents.items()},
+                new_values={str(pk): str(v[1]) for pk, v in new_rents.items()},
+                actor=request.user,
+                is_financial=True,
+            )
 
-        return Response({"detail": f"Rent adjusted for {units.count()} units in {building.name}."})
+        current = Tenant.objects.filter(unit__building=building, status__in=CURRENT_STATUSES).count()
+        return Response({
+            "detail": f"Listed rent adjusted for {len(units)} units in {building.name}. "
+                      f"{current} current tenanc{'y' if current == 1 else 'ies'} keep their agreed rent; "
+                      "change those on each tenant's page.",
+            "units": len(units),
+            "current_tenancies_unchanged": current,
+        })
 
     @action(detail=True, methods=["get"], url_path="maintenance-summary")
     def maintenance_summary(self, request, pk=None):
@@ -232,10 +276,33 @@ class UnitViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["patch"], url_path="set-status")
     def set_status(self, request, pk=None):
         """PATCH /api/units/{id}/set-status/ — manually set status (e.g. under_maintenance)."""
+        from apps.tenants.models import CURRENT_STATUSES
+
         unit = self.get_object()
         new_status = request.data.get("status")
         if new_status not in dict(UnitStatus.choices):
             return Response({"detail": "Invalid status."}, status=status.HTTP_400_BAD_REQUEST)
+        # The status has to agree with the tenancy. Marking a let unit vacant
+        # hid the tenant from occupancy and let a second tenant be moved in on
+        # top of them; marking an empty unit occupied invents a tenant.
+        if unit.combined_into_id:
+            return Response(
+                {"detail": f"{unit.label} is part of the space {unit.space_label}; "
+                           f"set the status on {unit.combined_into.label}."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        occupant = unit.tenants.filter(status__in=CURRENT_STATUSES).first()
+        if occupant and new_status in (UnitStatus.VACANT, UnitStatus.UNDER_MAINTENANCE):
+            return Response(
+                {"detail": f"{unit.label} is let to {occupant.full_name}. Move them out first."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not occupant and new_status in OCCUPIED_UNIT_STATUSES:
+            return Response(
+                {"detail": f"{unit.label} has no current tenant, so it can't be marked occupied. "
+                           "Move a tenant in instead."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         old_status = unit.status
         unit.status = new_status
         unit.save(update_fields=["status", "updated_at"])
