@@ -248,6 +248,7 @@ def _build_ledger(
     balance the moment before ``period_start`` — everything the account carries
     into the month the statement is about.
     """
+    from . import books
     from .credits import issued_credits, sent_refunds
     from .models import Arrears, CreditType, Payment, PaymentType, UtilityCharge
 
@@ -270,7 +271,26 @@ def _build_ledger(
     # (shown, sort_order, description, invoice_amount, payment_amount, period)
     events: list[tuple[_dt.date, int, str, Decimal, Decimal, _dt.date]] = []
 
-    for arr in Arrears.objects.filter(tenant=tenant).order_by("period_year", "period_month"):
+    # A restarted account opens on the landlord's balance the day before its
+    # books begin, and nothing from before then is printed (see ``books``).
+    opening = books.opening_for(tenant)
+    if opening is not None and (not as_of or opening.as_of <= as_of):
+        amount = _money(opening.amount)
+        if amount:
+            label = (
+                f"Balance brought forward - "
+                f"{_ledger_period(opening.as_of.month, opening.as_of.year)}"
+            )
+            month_start = opening.as_of.replace(day=1)
+            events.append((
+                opening.as_of, _ORDER_OPENING, label,
+                max(amount, ZERO), max(-amount, ZERO), month_start,
+            ))
+
+    for arr in (
+        Arrears.objects.filter(tenant=tenant).filter(books.arrears_q())
+        .order_by("period_year", "period_month")
+    ):
         try:
             period = _dt.date(arr.period_year, arr.period_month, 1)
         except ValueError:
@@ -327,7 +347,10 @@ def _build_ledger(
                 label = f"{label} ({arr.waive_notes})"
             events.append((posting, _ORDER_WAIVER, label, ZERO, waived, period))
 
-    for util in UtilityCharge.objects.filter(tenant=tenant).order_by("posting_date", "id"):
+    for util in (
+        UtilityCharge.objects.filter(tenant=tenant).filter(books.utilities_q())
+        .order_by("posting_date", "id")
+    ):
         if as_of and util.posting_date > as_of:
             continue
         invoiced = invoiced_with(util)
@@ -371,6 +394,7 @@ def _build_ledger(
     # Voided payments stay out: that money was never really received.
     payments = (
         Payment.objects.filter(tenant=tenant, voided_at__isnull=True)
+        .filter(books.payments_q())
         .order_by("payment_date", "created_at")
     )
     credits: dict[tuple, list[Decimal]] = {}
@@ -402,7 +426,7 @@ def _build_ledger(
     # Applying a credit to a later invoice adds no row: the credit already
     # counted in full when it was issued. Voided credits and refunds stay off,
     # as voided payments do.
-    for credit in issued_credits([tenant.pk]).order_by("credit_date", "id"):
+    for credit in issued_credits([tenant.pk]).filter(books.credits_q()).order_by("credit_date", "id"):
         if as_of and credit.credit_date > as_of:
             continue
         label = "Credit Note" if credit.credit_type == CreditType.CREDIT_NOTE else "Credit"
@@ -417,7 +441,7 @@ def _build_ledger(
                 ZERO, _money(credit.vat_amount), credit.credit_date,
             ))
 
-    for refund in sent_refunds([tenant.pk]).order_by("sent_on", "id"):
+    for refund in sent_refunds([tenant.pk]).filter(books.refunds_q()).order_by("sent_on", "id"):
         if as_of and refund.sent_on > as_of:
             continue
         how = refund.get_method_display()
@@ -524,9 +548,11 @@ def build_statement(
     # "Current month" = the most recent rent obligation on/before the period
     # being billed. A tenant with nothing raised for that month yet falls back
     # to the latest one that was, so the statement still states a real charge.
+    from . import books
     from .models import Arrears
 
     current_q = Arrears.objects.filter(
+        books.arrears_q(),
         tenant=tenant,
         period_year__lte=period_year,
     )
@@ -565,7 +591,7 @@ def build_statement(
     from .models import Payment, PaymentType, UtilityCharge
 
     payments_q = Payment.objects.filter(
-        tenant=tenant, voided_at__isnull=True
+        books.payments_q(), tenant=tenant, voided_at__isnull=True
     ).exclude(payment_type=PaymentType.DEPOSIT)
     if current is not None:
         # The statement and monthly rent roll report cash in the month it was
@@ -589,8 +615,8 @@ def build_statement(
     # Arrears B/F and nothing is counted twice.
     from .credits import issued_credits, sent_refunds
 
-    credits_q = issued_credits([tenant.pk])
-    refunds_q = sent_refunds([tenant.pk])
+    credits_q = issued_credits([tenant.pk]).filter(books.credits_q())
+    refunds_q = sent_refunds([tenant.pk]).filter(books.refunds_q())
     if period_start:
         credits_q = credits_q.filter(credit_date__gte=period_start)
         refunds_q = refunds_q.filter(sent_on__gte=period_start)
@@ -649,7 +675,7 @@ def build_statement(
     #
     #  Credits are split out rather than netted in: a landlord credit is not
     #  negative water, and "Other Charges -2,096" is what the tenant used to see.
-    util_q = UtilityCharge.objects.filter(tenant=tenant)
+    util_q = UtilityCharge.objects.filter(books.utilities_q(), tenant=tenant)
     if as_of:
         util_q = util_q.filter(posting_date__lte=as_of)
     on_this_invoice = [

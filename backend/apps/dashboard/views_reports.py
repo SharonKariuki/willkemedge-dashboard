@@ -27,6 +27,7 @@ from apps.buildings.models import (
     Building,
     UnitStatus,
 )
+from apps.payments import books
 from apps.payments.aging import BUCKETS, aging_buckets
 from apps.payments.models import Arrears, Payment, PaymentType
 from apps.payments.monthly_ledger import build_monthly_ledger, current_balances
@@ -239,7 +240,7 @@ class ArrearsReportView(APIView):
         # The oldest period still open is what "since" means on the report.
         oldest_open = {}
         for a in Arrears.objects.filter(
-            tenant_id__in=[t.id for t in tenants], is_cleared=False
+            books.arrears_q(), tenant_id__in=[t.id for t in tenants], is_cleared=False
         ).order_by("tenant_id", "period_year", "period_month"):
             oldest_open.setdefault(a.tenant_id, a)
 
@@ -301,7 +302,7 @@ def _charged_and_paid(tenants):
     totals = {tid: [ZERO, ZERO, ZERO, ZERO] for tid in ids}
 
     for row in (
-        Arrears.objects.filter(tenant_id__in=ids).filter(upto)
+        Arrears.objects.filter(tenant_id__in=ids).filter(upto).filter(books.arrears_q())
         .values("tenant_id")
         .annotate(rent=Sum("expected_rent"), vat=Sum("expected_vat"), waived=Sum("waived_amount"))
     ):
@@ -310,26 +311,31 @@ def _charged_and_paid(tenants):
         totals[row["tenant_id"]][2] -= money(row["waived"])
 
     for row in (
-        UtilityCharge.objects.filter(tenant_id__in=ids).filter(upto)
+        UtilityCharge.objects.filter(tenant_id__in=ids).filter(upto).filter(books.utilities_q())
         .values("tenant_id").annotate(total=Sum("amount"))
     ):
         totals[row["tenant_id"]][2] += money(row["total"])
 
     for row in (
         Payment.objects.filter(tenant_id__in=ids, payment_date__lt=next_month)
-        .filter(INCOME_PAYMENT_FILTER)
+        .filter(INCOME_PAYMENT_FILTER).filter(books.payments_q())
         .values("tenant_id").annotate(total=Sum("amount"))
     ):
         totals[row["tenant_id"]][3] += money(row["total"])
 
+    # A restarted account's opening figure is carried in as a charge (or, in
+    # credit, a negative one), the way credits and refunds are netted below.
+    for tid, amount in books.opening_amounts(ids, before=next_month).items():
+        totals[tid][2] += money(amount)
+
     # Credits given reduce what was charged; refunds paid back out add to it.
     for row in (
-        issued_credits(ids).filter(credit_date__lt=next_month)
+        issued_credits(ids).filter(credit_date__lt=next_month).filter(books.credits_q())
         .values("tenant_id").annotate(total=Sum("amount"))
     ):
         totals[row["tenant_id"]][2] -= money(row["total"])
     for row in (
-        sent_refunds(ids).filter(sent_on__lt=next_month)
+        sent_refunds(ids).filter(sent_on__lt=next_month).filter(books.refunds_q())
         .values("tenant_id").annotate(total=Sum("amount"))
     ):
         totals[row["tenant_id"]][2] += money(row["total"])

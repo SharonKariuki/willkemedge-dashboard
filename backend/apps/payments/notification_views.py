@@ -11,6 +11,7 @@ from rest_framework.response import Response
 
 from apps.tenants.models import CURRENT_STATUSES, Tenant
 
+from . import books
 from .models import (
     Arrears,
     NotificationChannel,
@@ -204,7 +205,7 @@ def _resolve_recipients(audience: str, tenant_ids: list[int]):
     if audience == "all_active":
         return list(active)
     if audience == "with_arrears":
-        owed_ids = Arrears.objects.filter(is_cleared=False).values_list(
+        owed_ids = Arrears.objects.filter(books.arrears_q(), is_cleared=False).values_list(
             "tenant_id", flat=True
         )
         return list(active.filter(id__in=set(owed_ids)))

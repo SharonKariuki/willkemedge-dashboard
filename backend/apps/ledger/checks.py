@@ -100,13 +100,14 @@ def _sources():
 def _live_ids() -> dict[str, set]:
     """``{source_type: set(ids of every row that still exists)}``."""
     from apps.expenses.models import Expense, ManualIncome
-    from apps.payments.models import Arrears, Payment, UtilityCharge
+    from apps.payments.models import Arrears, OpeningBalance, Payment, UtilityCharge
 
     return {
         st: set(model.objects.values_list("pk", flat=True))
         for st, model in (
             ("payment", Payment), ("expense", Expense), ("manual_income", ManualIncome),
             ("utility_charge", UtilityCharge), ("arrear", Arrears),
+            ("opening_balance", OpeningBalance),
         )
     }
 

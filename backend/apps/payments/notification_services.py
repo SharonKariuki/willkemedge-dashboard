@@ -70,11 +70,12 @@ def _current_balance(tenant: Tenant) -> Decimal:
     """
     from django.db.models import Sum
 
+    from . import books
     from .models import Arrears
     from .monthly_ledger import upto_current_period
 
     total = (
-        Arrears.objects.filter(tenant=tenant, is_cleared=False)
+        Arrears.objects.filter(books.arrears_q(), tenant=tenant, is_cleared=False)
         .filter(upto_current_period(timezone.localdate()))
         .aggregate(total=Sum("balance"))
         .get("total")

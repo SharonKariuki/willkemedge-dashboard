@@ -120,6 +120,14 @@ def rebuild() -> Counter:
                     lambda on, r=r: posting.reverse_refund(r, on=on or r.sent_on),
                 )
 
+        # Last: a restarted account's opening entry is the difference between
+        # the landlord's figure and what the history above left in 1040.
+        from apps.payments.models import OpeningBalance
+
+        for ob in OpeningBalance.objects.select_related("tenant__unit__building"):
+            posting.post_opening_balance(ob)
+            done["opening balances"] += 1
+
         for legacy in ("opening_ar", "credit_application"):
             stale = JournalEntry.objects.filter(source_type=legacy)
             if n := stale.count():

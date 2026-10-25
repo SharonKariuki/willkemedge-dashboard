@@ -32,7 +32,13 @@ def _money(value) -> str:
 def outstanding_balance(tenant):
     """Sum of the tenant's uncleared arrears balances."""
     from django.db.models import Sum
-    return tenant.arrears.filter(is_cleared=False).aggregate(total=Sum("balance"))["total"] or 0
+
+    from apps.payments import books
+
+    return (
+        tenant.arrears.filter(books.arrears_q(), is_cleared=False)
+        .aggregate(total=Sum("balance"))["total"] or 0
+    )
 
 
 def current_rent_roll_balance(tenant):
