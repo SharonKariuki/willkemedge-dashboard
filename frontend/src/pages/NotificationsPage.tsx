@@ -214,10 +214,12 @@ export default function NotificationsPage() {
         body,
         template_key: selectedTemplate || "",
       });
+      const skipped = result.skipped ?? 0;
+      const repeatNote = skipped > 0 ? ` · ${skipped} already had this message in the last 10 minutes, not repeated` : "";
       if (result.failed === 0) {
-        toast.success(`Sent to ${result.sent} tenant${result.sent === 1 ? "" : "s"}`);
+        toast.success(`Sent to ${result.sent} tenant${result.sent === 1 ? "" : "s"}${repeatNote}`);
       } else {
-        toast(`Sent ${result.sent} · ${result.failed} failed`, { icon: "⚠️" });
+        toast(`Sent ${result.sent} · ${result.failed} failed${repeatNote}`, { icon: "⚠️" });
       }
       setSelectedTenantIds([]);
     } catch (e) {

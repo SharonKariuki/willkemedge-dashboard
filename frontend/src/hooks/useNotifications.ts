@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { api } from "@/lib/api";
+import { api, BULK_SEND_TIMEOUT_MS } from "@/lib/api";
 
 export interface NotificationTemplate {
   key: string;
@@ -40,6 +40,9 @@ export interface SendNotificationResult {
   sent: number;
   failed: number;
   total: number;
+  /** Tenants left out because they got the same message in the last 10 minutes. */
+  skipped?: number;
+  skipped_tenants?: { tenant: number; tenant_name: string; reason: string }[];
   notifications: TenantNotification[];
 }
 
@@ -127,7 +130,8 @@ export function useSendNotification() {
   const qc = useQueryClient();
   return useMutation<SendNotificationResult, Error, SendNotificationPayload>({
     mutationFn: async (payload) => {
-      const { data } = await api.post("/notifications/send/", payload);
+      // One request sends to every recipient; see BULK_SEND_TIMEOUT_MS.
+      const { data } = await api.post("/notifications/send/", payload, { timeout: BULK_SEND_TIMEOUT_MS });
       return data;
     },
     onSuccess: () => {

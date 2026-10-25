@@ -23,7 +23,7 @@ from .notifications import at_delivery_error, custom_email_html, send_email, sen
 logger = logging.getLogger(__name__)
 
 
-def _resolve_placeholders(text: str, tenant: Tenant) -> str:
+def resolve_placeholders(text: str, tenant: Tenant) -> str:
     """Replace {placeholders} with values from the tenant's current state."""
     now = timezone.now()
     balance = _current_balance(tenant)
@@ -94,8 +94,8 @@ def dispatch_notification(
     while automatic messaging is paused.
     """
     tenant = notification.tenant
-    rendered_body = _resolve_placeholders(notification.body, tenant)
-    rendered_subject = _resolve_placeholders(notification.subject or "Notice", tenant)
+    rendered_body = resolve_placeholders(notification.body, tenant)
+    rendered_subject = resolve_placeholders(notification.subject or "Notice", tenant)
     notification.body = rendered_body
     notification.subject = rendered_subject
 
