@@ -21,6 +21,8 @@ import {
   Badge, Button, Card, DatePicker, EmptyState, ErrorState, Input,
   PageHeader, Skeleton, Table, TBody, TD, TH, THead, TR,
 } from "@/components/ui";
+import { FirstRentMonthField } from "@/features/tenants/FirstRentMonthField";
+import { firstRentMonthForApi } from "@/features/tenants/firstRentMonth";
 import { EmailStatementsModal, Field, inputCls, KYC_TONE, RemindModal } from "@/features/tenants/shared";
 import { useBuildings } from "@/hooks/useBuildings";
 import { useCreateTenant, useTenants } from "@/hooks/useTenants";
@@ -75,6 +77,7 @@ const createSchema = z
         "Between 1 and 31",
       ),
     move_in_date: z.string().min(1, "Required"),
+    first_rent_month: z.string().optional(),
     is_billable: z.boolean().optional(),
     notes: z.string().optional(),
   })
@@ -94,6 +97,14 @@ const createSchema = z
         code: z.ZodIssueCode.custom,
         path: ["deposit_date"],
         message: "Cannot be before the move-in date",
+      });
+    }
+    if (values.first_rent_month && values.move_in_date
+      && values.first_rent_month < values.move_in_date.slice(0, 7)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["first_rent_month"],
+        message: "Cannot be before the move-in month",
       });
     }
   });
@@ -123,8 +134,8 @@ export function CreateTenantForm({ onClose }: { onClose: () => void }) {
     },
   });
 
-  const [unitId, rent, deposit, isBillable] = watch([
-    "unit", "monthly_rent", "deposit_paid", "is_billable",
+  const [unitId, rent, deposit, isBillable, moveIn, firstRentMonth] = watch([
+    "unit", "monthly_rent", "deposit_paid", "is_billable", "move_in_date", "first_rent_month",
   ]);
   const selectedUnit = vacantUnits?.find((u) => u.id === Number(unitId));
   const expected = expectedDeposit(rent ?? "", selectedUnit?.classification);
@@ -132,11 +143,12 @@ export function CreateTenantForm({ onClose }: { onClose: () => void }) {
   const booksMoney = Number.isFinite(depositAmount) && depositAmount > 0;
 
   const onSubmit = async (values: CreateFormValues) => {
-    const { due_day, ...rest } = values;
+    const { due_day, first_rent_month, ...rest } = values;
     const payload: Record<string, unknown> = { ...rest };
     // Omitted entirely when blank, so the API applies its own default rather
     // than being handed an empty string or a zero.
     if (due_day) payload.due_day = Number(due_day);
+    if (first_rent_month) payload.first_rent_month = firstRentMonthForApi(first_rent_month);
     try {
       await createTenant.mutateAsync(payload);
       toast.success("Tenant registered");
@@ -186,6 +198,13 @@ export function CreateTenantForm({ onClose }: { onClose: () => void }) {
         </Field>
 
         <DatePicker label="Move-in date *" {...register("move_in_date")} error={errors.move_in_date?.message} />
+        <FirstRentMonthField
+          registration={register("first_rent_month")}
+          moveIn={moveIn}
+          value={firstRentMonth}
+          error={errors.first_rent_month?.message}
+          onUse={(month) => setValue("first_rent_month", month, { shouldValidate: true })}
+        />
         <Field label="Emergency contact">
           <input {...register("emergency_contact")} className={inputCls} />
         </Field>

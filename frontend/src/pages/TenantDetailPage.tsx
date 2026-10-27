@@ -21,6 +21,8 @@ import {
 import { CreditsPanel } from "@/features/credits/CreditsPanel";
 import { VoidPaymentModal } from "@/features/payments/VoidPaymentModal";
 import { MoveInAgainForm } from "@/features/tenants/MoveInAgainForm";
+import { FirstRentMonthField } from "@/features/tenants/FirstRentMonthField";
+import { firstRentMonthForApi, firstRentMonthFromApi } from "@/features/tenants/firstRentMonth";
 import { SpacePanel } from "@/features/tenants/SpacePanel";
 import { Field, KycPanel, RemindModal, inputCls } from "@/features/tenants/shared";
 import { useAuth } from "@/hooks/useAuth";
@@ -63,6 +65,7 @@ const editSchema = z.object({
   emergency_phone: z.string().optional(),
   is_billable: z.boolean().optional(),
   billing_frequency: z.enum(["monthly", "quarterly"]).optional(),
+  first_rent_month: z.string().optional(),
   notes: z.string().optional(),
 }).superRefine((values, ctx) => {
   // Zero rent only means something for an occupancy that is not charged — a
@@ -226,6 +229,7 @@ export default function TenantDetailPage() {
         due_day: tenant.due_day ?? 5,
         is_billable: tenant.is_billable ?? true,
         billing_frequency: tenant.billing_frequency ?? "monthly",
+        first_rent_month: firstRentMonthFromApi(tenant.first_rent_month),
         notes: tenant.notes ?? "",
       });
     }
@@ -367,7 +371,11 @@ export default function TenantDetailPage() {
           <form onSubmit={editForm.handleSubmit(async (v) => {
             // An empty box means "back to the rule". Send null rather than ""
             // so the override is cleared instead of the field being ignored.
-            const payload = { ...v, agreed_deposit: v.agreed_deposit?.trim() ? v.agreed_deposit : null };
+            const payload = {
+              ...v,
+              agreed_deposit: v.agreed_deposit?.trim() ? v.agreed_deposit : null,
+              first_rent_month: firstRentMonthForApi(v.first_rent_month),
+            };
             try { await updateTenant.mutateAsync(payload as unknown as Record<string, unknown>); toast.success("Updated"); setMode("view"); }
             catch (e) { toast.error(getErrorMessage(e, "Failed to update tenant")); }
           })} className="space-y-4">
@@ -419,6 +427,13 @@ export default function TenantDetailPage() {
                   <option value="quarterly">Quarterly, in advance</option>
                 </select>
               </Field>
+              <FirstRentMonthField
+                registration={editForm.register("first_rent_month")}
+                moveIn={tenant.move_in_date}
+                value={editForm.watch("first_rent_month")}
+                error={editForm.formState.errors.first_rent_month?.message}
+                onUse={(month) => editForm.setValue("first_rent_month", month, { shouldValidate: true })}
+              />
               <Field label="Deposit refund % (for move-out)" error={editForm.formState.errors.deposit_refund_percentage?.message}>
                 <input type="number" min={0} max={100} {...editForm.register("deposit_refund_percentage")} className={inputCls} />
               </Field>

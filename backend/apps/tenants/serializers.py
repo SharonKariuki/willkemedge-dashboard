@@ -1,6 +1,7 @@
 """Tenant serializers — updated with deposit refund, notice, and edit fields."""
 from decimal import ROUND_HALF_UP, Decimal
 
+from django.db import models
 from django.utils import timezone
 from rest_framework import serializers
 
@@ -78,6 +79,39 @@ MONEY_AND_DAY_LIMITS = {
     "deposit_paid": {"min_value": 0},
     "due_day": {"min_value": 1, "max_value": 31},
 }
+
+#: How far past the move-in month the first rent month may be set. A month is
+#: the real case (keys on the 31st, rent from the 1st); two covers a fit-out
+#: period. Anything further is a typo or a rent-free deal that belongs in a
+#: waiver the landlord can see, not a silently skipped month.
+FIRST_RENT_MAX_MONTHS_AFTER_MOVE_IN = 2
+
+
+def clean_first_rent_month(value, move_in):
+    """The first rent month as the 1st of its month, checked against move-in.
+
+    Blank stays blank — the move-in month. Raises ValidationError naming the
+    field when it is before the move-in month or too far after it.
+    """
+    if not value:
+        return None
+    value = value.replace(day=1)
+    if not move_in:
+        return value
+    start = (move_in.year, move_in.month)
+    period = (value.year, value.month)
+    if period < start:
+        raise serializers.ValidationError({
+            "first_rent_month": "The first rent month cannot be before the move-in month.",
+        })
+    if (period[0] - start[0]) * 12 + period[1] - start[1] > FIRST_RENT_MAX_MONTHS_AFTER_MOVE_IN:
+        raise serializers.ValidationError({
+            "first_rent_month": (
+                f"The first rent month can be at most {FIRST_RENT_MAX_MONTHS_AFTER_MOVE_IN} "
+                "months after the move-in month. Record a longer rent-free period as a waiver."
+            ),
+        })
+    return value
 
 
 class TenantDocumentSerializer(serializers.ModelSerializer):
@@ -198,6 +232,7 @@ class TenantDetailSerializer(serializers.ModelSerializer):
             "unit", "unit_label", "building_name", "building_id", "unit_classification",
             "space_units", "space_label",
             "monthly_rent", "deposit_paid", "due_day", "is_billable", "billing_frequency",
+            "first_rent_month",
             "deposit_months", "expected_deposit", "deposit_shortfall",
             "agreed_deposit", "deposit_is_agreed",
 
@@ -303,26 +338,32 @@ class TenantCreateSerializer(serializers.ModelSerializer):
         required=False, allow_blank=True, default="", max_length=100, write_only=True,
         help_text="M-Pesa code, bank reference or receipt number for the deposit.",
     )
+    first_rent_month = OptionalDateField(
+        required=False, allow_null=True,
+        help_text="First month charged rent. Blank = the move-in month.",
+    )
 
     class Meta:
         model = Tenant
         fields = [
             "id", "first_name", "last_name", "id_number", "kra_pin", "phone", "email",
             "emergency_contact", "emergency_phone", "unit",
-            "monthly_rent", "deposit_paid", "due_day", "move_in_date", "notes",
-            "is_billable", "billing_frequency",
+            "monthly_rent", "deposit_paid", "due_day", "move_in_date", "first_rent_month",
+            "notes", "is_billable", "billing_frequency",
             "deposit_source", "deposit_date", "deposit_reference",
         ]
         extra_kwargs = MONEY_AND_DAY_LIMITS
 
     def validate(self, attrs):
-        """A deposit cannot be dated before the keys were handed over."""
+        """A deposit cannot be dated before the keys were handed over, and rent
+        cannot start before them either."""
         deposit_date = attrs.get("deposit_date")
         move_in = attrs.get("move_in_date")
         if deposit_date and move_in and deposit_date < move_in:
             raise serializers.ValidationError({
                 "deposit_date": "The deposit cannot be dated before the move-in date.",
             })
+        attrs["first_rent_month"] = clean_first_rent_month(attrs.get("first_rent_month"), move_in)
         return attrs
 
     def create(self, validated_data):
@@ -365,6 +406,7 @@ class TenantEditSerializer(serializers.ModelSerializer):
         max_digits=10, decimal_places=2, min_value=0,
         required=False, allow_null=True,
     )
+    first_rent_month = OptionalDateField(required=False, allow_null=True)
 
     class Meta:
         model = Tenant
@@ -372,12 +414,44 @@ class TenantEditSerializer(serializers.ModelSerializer):
             "first_name", "last_name", "id_number", "kra_pin", "phone", "email",
             "emergency_contact", "emergency_phone", "care_of",
             "monthly_rent", "deposit_paid", "agreed_deposit", "due_day",
-            "is_billable", "billing_frequency",
+            "is_billable", "billing_frequency", "first_rent_month",
             "deposit_refund_percentage",
             "notes",
 
         ]
         extra_kwargs = MONEY_AND_DAY_LIMITS
+
+    def validate_first_rent_month(self, value):
+        """Checked against move-in, and never moved past a month already charged.
+
+        Moving it later than a month that is already on the books would leave
+        that charge standing while the run treats the month as never owed.
+        Clearing a wrongly raised month is a correction to the ledger, done by
+        ``repair_first_rent_month``, not a side effect of editing the card.
+        """
+        from apps.payments.models import Arrears
+
+        tenant = self.instance
+        value = clean_first_rent_month(value, tenant.move_in_date if tenant else None)
+        # The form sends this on every save; only moving it later can strand
+        # a charge. Moving it earlier just lets the next run raise the months.
+        if tenant is None or not value or (value.year, value.month) <= tenant.first_rent_period:
+            return value
+        stranded = (
+            Arrears.objects.filter(tenant=tenant)
+            .filter(
+                models.Q(period_year__lt=value.year)
+                | models.Q(period_year=value.year, period_month__lt=value.month)
+            )
+            .order_by("period_year", "period_month")
+            .first()
+        )
+        if stranded:
+            raise serializers.ValidationError(
+                f"Rent for {stranded.period_month}/{stranded.period_year} is already "
+                "charged. Ask the administrator to correct that month first."
+            )
+        return value
 
     def validate_id_number(self, value):
         """Trimmed, and never blanked — it is the tenant's identity on file."""
@@ -418,8 +492,8 @@ class MoveOutSerializer(serializers.Serializer):
 # What a returning tenant's new letting is made of. Everything else — who they
 # are — is carried over from the tenancy they moved out of.
 MOVE_IN_AGAIN_FIELDS = (
-    "unit", "monthly_rent", "deposit_paid", "due_day", "move_in_date", "notes",
-    "is_billable", "deposit_source", "deposit_date", "deposit_reference",
+    "unit", "monthly_rent", "deposit_paid", "due_day", "move_in_date", "first_rent_month",
+    "notes", "is_billable", "deposit_source", "deposit_date", "deposit_reference",
 )
 
 

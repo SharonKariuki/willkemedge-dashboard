@@ -56,6 +56,8 @@ from rest_framework.response import Response
 from rest_framework.throttling import SimpleRateThrottle
 from rest_framework.views import APIView
 
+from apps.tenants.deposits import default_deposit_part, raise_card_to_books
+
 from .matching import match_tenant, tenant_by_name, tenant_by_phone
 from .models import CoopIpnEvent, CoopIpnStatus, PaymentSource
 from .services import allocate_payment_fifo
@@ -392,6 +394,9 @@ class CoopIpnView(APIView):
                         event.detail = f"Low-confidence match ({matched_by}) — verify"
                     else:
                         d = _posting_date(payload)
+                        # A new letting's first transfer fills the deposit
+                        # first; everyone else's is all rent.
+                        deposit_part = default_deposit_part(tenant, amount)
                         # Arrears-first: clear oldest unpaid periods before current.
                         payments = allocate_payment_fifo(
                             tenant=tenant,
@@ -402,7 +407,10 @@ class CoopIpnView(APIView):
                             notes=f"Co-op IPN ({parsed['channel']}); matched by {matched_by}; "
                                   f"ref {event.payment_ref}",
                             idempotency_key=trans_id,
+                            deposit_amount=deposit_part,
                         )
+                        if deposit_part > 0:
+                            raise_card_to_books(tenant)
                         event.status = CoopIpnStatus.RECORDED
                         split = f" across {len(payments)} periods" if len(payments) > 1 else ""
                         event.detail = f"Matched by {matched_by}{split}"
