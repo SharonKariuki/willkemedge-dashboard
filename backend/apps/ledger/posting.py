@@ -781,6 +781,41 @@ def post_opening_deposit(tenant, *, deposit, date):
     )
 
 
+def _opening_balance_lines(opening) -> list:
+    """Bring the tenant's 1040 from what their pre-books history left to the sheet.
+
+    The rows before the books keep the entries they posted, so the restart
+    posts only the difference, against 3300 like every other opening position.
+    """
+    from apps.payments.books import hidden_balance
+
+    tenant = opening.tenant
+    adjustment = Decimal(opening.amount) - hidden_balance(tenant, opening)
+    return [
+        _signed(RENT_RECEIVABLE, adjustment, f"Books restarted on the landlord's balance — {tenant}"),
+        _signed(RETAINED_EARNINGS, -adjustment, f"Opening balance restated — {tenant}"),
+    ]
+
+
+def post_opening_balance(opening, *, replace: bool = True) -> JournalEntry | None:
+    """Post a restarted account's opening balance (``payments.OpeningBalance``).
+
+    Always re-posted: the difference depends on the history behind it, so
+    ``rebuild_ledger`` recomputes it after every other entry.
+    """
+    return _build_entry(
+        date=opening.as_of,
+        memo=f"Opening balance at {opening.as_of:%d %b %Y}: {opening.tenant}"[:255],
+        reference=opening.source[:100],
+        building=_tenant_building(opening.tenant),
+        source_type="opening_balance",
+        source_id=opening.pk,
+        kind="normal",
+        lines=_opening_balance_lines(opening),
+        replace=replace,
+    )
+
+
 # ── utility ─────────────────────────────────────────────────────────────────
 
 def _period_to_date(month: int, year: int):

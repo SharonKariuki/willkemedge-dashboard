@@ -204,6 +204,36 @@ def on_utility_charge_deleted(sender, instance, **kwargs):
     )
 
 
+# ── Opening balance (books restarted) signals ───────────────────────────────
+
+@receiver(post_save, sender="payments.OpeningBalance")
+def on_opening_balance_saved(sender, instance, created, **kwargs):
+    """Post (or re-post) the entry that brings 1040 to the landlord's figure."""
+    from .posting import post_opening_balance
+
+    _safe_post(
+        source_type="opening_balance", source_id=instance.pk, kind="normal", operation="post",
+        fn=lambda: post_opening_balance(instance),
+    )
+
+
+@receiver(post_delete, sender="payments.OpeningBalance")
+def on_opening_balance_deleted(sender, instance, **kwargs):
+    """Undoing a restart reverses its entry, so 1040 is back on the full history."""
+    from .models import JournalEntry
+    from .rebuild import _mirror_entry
+
+    entry = JournalEntry.objects.filter(
+        source_type="opening_balance", source_id=instance.pk, kind="normal"
+    ).first()
+    if entry is None:
+        return
+    _safe_post(
+        source_type="opening_balance", source_id=instance.pk, kind="reversal",
+        operation="reverse", fn=lambda: _mirror_entry(entry),
+    )
+
+
 # ── Arrears (rent billed) signals ────────────────────────────────────────────
 
 @receiver(post_save, sender="payments.Arrears")

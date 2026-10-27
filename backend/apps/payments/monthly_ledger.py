@@ -87,20 +87,30 @@ def build_monthly_ledger(
     charges posted after that date. It intentionally does not rewrite or hide
     a rent obligation for a period already being reconstructed.
     """
+    from . import books
     from .models import Arrears, Payment, PaymentType, UtilityCharge
 
     today = today or _dt.date.today()
 
+    # A tenant whose books were restarted carries one opening figure into the
+    # month their books begin, and nothing from before it (see ``books``).
+    opening = books.opening_for(tenant)
+    opening_key = _key(opening.as_of.year, opening.as_of.month) if opening else None
+
     charges: dict[int, Arrears] = {}
-    for arr in Arrears.objects.filter(tenant=tenant):
+    for arr in Arrears.objects.filter(tenant=tenant).filter(books.arrears_q()):
         charges[_key(arr.period_year, arr.period_month)] = arr
 
     other: dict[int, Decimal] = {}
-    utilities = UtilityCharge.objects.filter(tenant=tenant)
+    utilities = UtilityCharge.objects.filter(tenant=tenant).filter(books.utilities_q())
     if as_of:
         utilities = utilities.filter(posting_date__lte=as_of)
     for util in utilities:
         k = _key(util.period_year, util.period_month)
+        if opening_key is not None and k <= opening_key:
+            # The opening month's metered water rides on the first invoice in
+            # the books, so it is shown there, beside the rent it was billed with.
+            k = opening_key + 1
         other[k] = other.get(k, ZERO) + _money(util.amount)
 
     # Deposits are a refundable liability, not rent paid — the same exclusion the
@@ -109,6 +119,7 @@ def build_monthly_ledger(
     payments = (
         Payment.objects.filter(tenant=tenant, voided_at__isnull=True)
         .exclude(payment_type=PaymentType.DEPOSIT)
+        .filter(books.payments_q())
         .only("amount", "payment_date")
     )
     if as_of:
@@ -128,7 +139,7 @@ def build_monthly_ledger(
     from .credits import issued_credits, sent_refunds
 
     credited: dict[int, Decimal] = {}
-    credit_rows = issued_credits([tenant.pk]).only("amount", "credit_date")
+    credit_rows = issued_credits([tenant.pk]).filter(books.credits_q()).only("amount", "credit_date")
     if as_of:
         credit_rows = credit_rows.filter(credit_date__lte=as_of)
     for credit in credit_rows:
@@ -136,7 +147,7 @@ def build_monthly_ledger(
         credited[k] = credited.get(k, ZERO) + _money(credit.amount)
 
     refunded: dict[int, Decimal] = {}
-    refund_rows = sent_refunds([tenant.pk]).only("amount", "sent_on")
+    refund_rows = sent_refunds([tenant.pk]).filter(books.refunds_q()).only("amount", "sent_on")
     if as_of:
         refund_rows = refund_rows.filter(sent_on__lte=as_of)
     for refund in refund_rows:
@@ -144,6 +155,8 @@ def build_monthly_ledger(
         refunded[k] = refunded.get(k, ZERO) + _money(refund.amount)
 
     keys = set(charges) | set(other) | set(paid) | set(credited) | set(refunded)
+    if opening_key is not None:
+        keys.add(opening_key)
     if not keys:
         return []
 
@@ -176,6 +189,11 @@ def build_monthly_ledger(
         if is_opening:
             brought_forward += rent
             rent = ZERO
+        if k == opening_key:
+            # The restarted account's single figure: the landlord's balance on
+            # the day before the books begin.
+            brought_forward += _money(opening.amount)
+            is_opening = True
 
         total_due = brought_forward + rent + vat + other_charges + refunds
         balance = total_due - received - waived - credits
@@ -226,6 +244,7 @@ def current_balances(tenants, *, today: _dt.date | None = None) -> dict[int, Dec
     from django.db.models import DecimalField, F, Sum, Value
     from django.db.models.functions import Coalesce
 
+    from . import books
     from .models import Arrears, Payment, PaymentType, UtilityCharge
 
     ids = [t.pk if hasattr(t, "pk") else int(t) for t in tenants]
@@ -245,13 +264,14 @@ def current_balances(tenants, *, today: _dt.date | None = None) -> dict[int, Dec
         }
 
     charged = _by_tenant(
-        Arrears.objects.filter(tenant_id__in=ids).filter(upto),
+        Arrears.objects.filter(tenant_id__in=ids).filter(upto).filter(books.arrears_q()),
         Coalesce(F("expected_rent"), zero)
         + Coalesce(F("expected_vat"), zero)
         - Coalesce(F("waived_amount"), zero),
     )
     other = _by_tenant(
-        UtilityCharge.objects.filter(tenant_id__in=ids).filter(upto), F("amount")
+        UtilityCharge.objects.filter(tenant_id__in=ids).filter(upto).filter(books.utilities_q()),
+        F("amount"),
     )
     # Deposits are a refundable liability and voided payments never arrived —
     # the same two exclusions the roll makes.
@@ -260,22 +280,27 @@ def current_balances(tenants, *, today: _dt.date | None = None) -> dict[int, Dec
             tenant_id__in=ids,
             voided_at__isnull=True,
             payment_date__lt=first_of_next_month,
-        ).exclude(payment_type=PaymentType.DEPOSIT),
+        ).exclude(payment_type=PaymentType.DEPOSIT).filter(books.payments_q()),
         F("amount"),
     )
 
     from .credits import issued_credits, sent_refunds
 
     credited = _by_tenant(
-        issued_credits(ids).filter(credit_date__lt=first_of_next_month), F("amount")
+        issued_credits(ids).filter(credit_date__lt=first_of_next_month).filter(books.credits_q()),
+        F("amount"),
     )
     refunded = _by_tenant(
-        sent_refunds(ids).filter(sent_on__lt=first_of_next_month), F("amount")
+        sent_refunds(ids).filter(sent_on__lt=first_of_next_month).filter(books.refunds_q()),
+        F("amount"),
     )
+
+    opening = books.opening_amounts(ids, before=first_of_next_month)
 
     return {
         tid: _money(
-            charged.get(tid, ZERO) + other.get(tid, ZERO) - received.get(tid, ZERO)
+            opening.get(tid, ZERO)
+            + charged.get(tid, ZERO) + other.get(tid, ZERO) - received.get(tid, ZERO)
             - credited.get(tid, ZERO) + refunded.get(tid, ZERO)
         )
         for tid in ids
