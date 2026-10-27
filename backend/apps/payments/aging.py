@@ -54,7 +54,8 @@ def aging_buckets(tenants, *, today: _dt.date | None = None) -> dict[int, dict]:
     """
     from django.db.models import Q
 
-    from .models import Arrears, Payment, PaymentType, UtilityCharge
+    from . import books
+    from .models import Arrears, OpeningBalance, Payment, PaymentType, UtilityCharge
     from .monthly_ledger import OPENING_MARKER
 
     ids = [t.pk if hasattr(t, "pk") else int(t) for t in tenants]
@@ -77,7 +78,7 @@ def aging_buckets(tenants, *, today: _dt.date | None = None) -> dict[int, dict]:
         key = (year, month)
         bucket[key] = bucket.get(key, ZERO) + amount
 
-    for arr in Arrears.objects.filter(tenant_id__in=ids).filter(upto):
+    for arr in Arrears.objects.filter(tenant_id__in=ids).filter(upto).filter(books.arrears_q()):
         charge = (
             _money(arr.expected_rent)
             + _money(arr.expected_vat)
@@ -85,7 +86,7 @@ def aging_buckets(tenants, *, today: _dt.date | None = None) -> dict[int, dict]:
         )
         _add(arr.tenant_id, arr.period_year, arr.period_month, charge)
 
-    for util in UtilityCharge.objects.filter(tenant_id__in=ids).filter(upto):
+    for util in UtilityCharge.objects.filter(tenant_id__in=ids).filter(upto).filter(books.utilities_q()):
         _add(util.tenant_id, util.period_year, util.period_month, _money(util.amount))
 
     received: dict[int, Decimal] = {tid: ZERO for tid in ids}
@@ -96,6 +97,7 @@ def aging_buckets(tenants, *, today: _dt.date | None = None) -> dict[int, dict]:
             payment_date__lt=first_of_next_month,
         )
         .exclude(payment_type=PaymentType.DEPOSIT)
+        .filter(books.payments_q())
         .values_list("tenant_id", "amount")
     )
     for tenant_id, amount in payments:
@@ -109,11 +111,13 @@ def aging_buckets(tenants, *, today: _dt.date | None = None) -> dict[int, dict]:
 
     for tenant_id, amount in (
         issued_credits(ids).filter(credit_date__lt=first_of_next_month)
+        .filter(books.credits_q())
         .values_list("tenant_id", "amount")
     ):
         received[tenant_id] += _money(amount)
     for tenant_id, sent_on, amount in (
         sent_refunds(ids).filter(sent_on__lt=first_of_next_month)
+        .filter(books.refunds_q())
         .values_list("tenant_id", "sent_on", "amount")
     ):
         _add(tenant_id, sent_on.year, sent_on.month, _money(amount))
@@ -125,9 +129,23 @@ def aging_buckets(tenants, *, today: _dt.date | None = None) -> dict[int, dict]:
         (row["tenant_id"], row["period_year"], row["period_month"])
         for row in Arrears.objects.filter(tenant_id__in=ids)
         .filter(upto)
+        .filter(books.arrears_q())
         .filter(waive_notes__contains=OPENING_MARKER)
         .values("tenant_id", "period_year", "period_month")
     }
+
+    # A restarted account's opening figure is a charge (or, when negative,
+    # credit in hand) from before the books began: it is aged like any other
+    # carried opening position, from its own month end.
+    for tenant_id, as_of, amount in OpeningBalance.objects.filter(tenant_id__in=ids).values_list(
+        "tenant_id", "as_of", "amount"
+    ):
+        amount = _money(amount)
+        if amount > ZERO:
+            _add(tenant_id, as_of.year, as_of.month, amount)
+            opening_periods.add((tenant_id, as_of.year, as_of.month))
+        elif amount < ZERO:
+            received[tenant_id] += -amount
 
     result: dict[int, dict] = {}
     for tenant_id in ids:

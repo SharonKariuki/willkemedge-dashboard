@@ -331,7 +331,10 @@ class ArrearsViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        qs = Arrears.objects.select_related("tenant", "tenant__unit")
+        from . import books
+
+        # Months before a restarted tenant's books are history (see ``books``).
+        qs = Arrears.objects.select_related("tenant", "tenant__unit").filter(books.arrears_q())
 
         cleared = self.request.query_params.get("cleared")
         if cleared == "false":
