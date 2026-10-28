@@ -213,4 +213,37 @@ describe("CreateTenantForm", () => {
     ).toBeInTheDocument();
     expect(mutateAsync).not.toHaveBeenCalled();
   });
+
+  describe("the first rent month", () => {
+    async function fillLetting(user: ReturnType<typeof userEvent.setup>, moveIn: string) {
+      await fillRequiredIdentity(user);
+      await user.selectOptions(screen.getByLabelText("Unit *"), "1");
+      await user.type(screen.getByLabelText("Monthly rent (KES) *"), "27000");
+      const date = screen.getByLabelText("Move-in date *");
+      await user.clear(date);
+      await user.type(date, moveIn);
+    }
+
+    it("sends nothing when left blank — the move-in month", async () => {
+      const user = userEvent.setup();
+      await fillLetting(user, "15/10/2026");
+
+      await user.click(screen.getByRole("button", { name: /Register/ }));
+
+      await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
+      expect(submitted().first_rent_month).toBeUndefined();
+    });
+
+    it("offers next month for a late move-in and sends the 1st of it", async () => {
+      // MR203: keys on 31 October, rent from November.
+      const user = userEvent.setup();
+      await fillLetting(user, "31/10/2026");
+
+      await user.click(screen.getByRole("button", { name: "Start rent in November 2026" }));
+      await user.click(screen.getByRole("button", { name: /Register/ }));
+
+      await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
+      expect(submitted().first_rent_month).toBe("2026-11-01");
+    });
+  });
 });

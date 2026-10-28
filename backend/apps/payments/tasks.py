@@ -528,18 +528,17 @@ def billing_floor() -> tuple[int, int] | None:
 def first_billable_period(tenant, floor) -> tuple[int, int] | None:
     """The first month this tenant should be charged rent for.
 
-    Whichever is later of their move-in month — nobody owes rent for a month
-    they had no keys — and the books' billing floor.
+    Whichever is later of their first rent month — the move-in month unless the
+    letting was agreed to start paying later, since nobody owes rent for a
+    month they had no keys — and the books' billing floor.
     """
     from .books import opening_for
 
-    bounds = [b for b in (floor, None) if b]
+    bounds = [b for b in (floor, tenant.first_rent_period) if b]
     opening = opening_for(tenant)
     if opening is not None:
         # A restarted account is never billed for a month before its books.
         bounds.append((opening.books_year, opening.books_month))
-    if tenant.move_in_date:
-        bounds.append((tenant.move_in_date.year, tenant.move_in_date.month))
     return max(bounds) if bounds else None
 
 

@@ -117,3 +117,50 @@ def deposit_held_on_books(tenant, as_of=None) -> Decimal:
         payments = payments.filter(payment_date__lte=as_of)
     paid = Decimal(payments.aggregate(t=Sum("amount"))["t"] or ZERO)
     return (paid + opening_deposit_on_books(tenant, as_of=as_of)).quantize(CENTS)
+
+
+def deposit_still_to_receive(tenant) -> Decimal:
+    """The deposit on the tenant's card that the books have not received yet.
+
+    The card (``deposit_paid``) is what the office recorded the letting as
+    taking. It runs ahead of the books when the deposit comes in later through
+    the bank rather than being keyed in as cash at registration.
+    """
+    card = Decimal(tenant.deposit_paid or ZERO)
+    return max(card - deposit_held_on_books(tenant), ZERO).quantize(CENTS)
+
+
+def default_deposit_part(tenant, amount) -> Decimal:
+    """How much of an incoming credit to book as deposit before rent.
+
+    Deposit first, but only for a new letting — one with no rent received
+    yet — and only up to the deposit its card says is still to come. A new
+    tenant's first transfer is usually deposit and rent together; booked whole
+    as rent, the deposit became an overpayment and the books held no deposit
+    at all (MR203, DON2A).
+
+    Measured against the card, never the one-month rule: most deposits
+    pre-date the rule, and a tenant with nothing declared must not have rent
+    quietly diverted into a deposit nobody agreed. An established tenant's
+    payments are never split at all.
+    """
+    from apps.payments.models import Payment, PaymentType
+
+    has_rent = Payment.objects.filter(
+        tenant=tenant, payment_type=PaymentType.RENT, voided_at__isnull=True,
+    ).exists()
+    if has_rent:
+        return ZERO
+    return min(deposit_still_to_receive(tenant), Decimal(str(amount))).quantize(CENTS)
+
+def raise_card_to_books(tenant) -> None:
+    """Bring ``Tenant.deposit_paid`` up to the deposit the ledger now holds.
+
+    For a deposit booked from a bank credit rather than typed on the card.
+    Never lowers the card: a figure above the books is an edit still to be
+    booked (``adjust_deposit_held``), not something this may undo.
+    """
+    held = deposit_held_on_books(tenant)
+    if held > Decimal(tenant.deposit_paid or ZERO):
+        tenant.deposit_paid = held
+        tenant.save(update_fields=["deposit_paid", "updated_at"])

@@ -63,6 +63,7 @@ class Command(BaseCommand):
         from apps.payments.models import CoopIpnEvent, CoopIpnStatus
         from apps.payments.services import allocate_payment_fifo
         from apps.payments.tasks import send_deposit_receipt
+        from apps.tenants.deposits import default_deposit_part, raise_card_to_books
 
         dry = opts["dry_run"]
         auto = opts["auto_confirm"]
@@ -139,6 +140,7 @@ class Command(BaseCommand):
                         f"({'auto-confirmed phone' if is_auto else 'bill_ref'}); "
                         f"ref {event.payment_ref}"
                     )
+                    deposit_part = default_deposit_part(tenant, event.amount)
                     payments = allocate_payment_fifo(
                         tenant=tenant,
                         amount=event.amount,
@@ -147,7 +149,10 @@ class Command(BaseCommand):
                         reference=event.transaction_id,
                         notes=notes,
                         idempotency_key=event.transaction_id,
+                        deposit_amount=deposit_part,
                     )
+                    if deposit_part > 0:
+                        raise_card_to_books(tenant)
                     event.status = CoopIpnStatus.RECORDED
                     split = f" across {len(payments)} periods" if len(payments) > 1 else ""
                     prefix = "Auto-confirmed" if is_auto else "Reprocessed"

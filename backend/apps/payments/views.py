@@ -523,6 +523,11 @@ class UnmatchedCreditSerializer(serializers.ModelSerializer):
 
 class AssignCreditSerializer(serializers.Serializer):
     tenant = serializers.IntegerField(min_value=1)
+    # How much of the credit is deposit; the rest is rent. Omitted = the
+    # default (deposit first for a new letting, see default_deposit_part).
+    deposit_amount = serializers.DecimalField(
+        max_digits=12, decimal_places=2, min_value=0, required=False, allow_null=True,
+    )
 
 
 class UnmatchedCreditViewSet(viewsets.ReadOnlyModelViewSet):
@@ -553,12 +558,16 @@ class UnmatchedCreditViewSet(viewsets.ReadOnlyModelViewSet):
 
         try:
             event, payments = assign_unmatched_credit(
-                event_id=pk, tenant=tenant, actor=request.user
+                event_id=pk, tenant=tenant, actor=request.user,
+                deposit_amount=body.validated_data.get("deposit_amount"),
             )
         except CoopIpnEvent.DoesNotExist:
             return Response({"detail": "Event not found."}, status=status.HTTP_404_NOT_FOUND)
         except CreditAlreadyResolved as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        except ValueError as exc:
+            # A deposit part larger than the credit.
+            return Response({"deposit_amount": [str(exc)]}, status=status.HTTP_400_BAD_REQUEST)
 
         # Receipt off the atomic block so a broker outage can't roll back the booking.
         try:
@@ -578,6 +587,27 @@ class UnmatchedCreditViewSet(viewsets.ReadOnlyModelViewSet):
             },
             status=status.HTTP_200_OK,
         )
+
+    @action(detail=True, methods=["get"])
+    def split(self, request, pk=None):
+        """GET .../split/?tenant=<id> — how assign would divide this credit by default.
+
+        So the assign dialog can show "deposit X, rent Y" before anyone
+        confirms, and let the director change it.
+        """
+        from apps.tenants.deposits import default_deposit_part, deposit_still_to_receive
+
+        event = self.get_object()
+        tenant = Tenant.objects.filter(pk=request.query_params.get("tenant") or 0).first()
+        if not tenant:
+            return Response({"detail": "Tenant not found."}, status=status.HTTP_404_NOT_FOUND)
+        deposit = default_deposit_part(tenant, event.amount)
+        return Response({
+            "amount": str(event.amount),
+            "deposit_amount": str(deposit),
+            "rent_amount": str(event.amount - deposit),
+            "deposit_still_to_receive": str(deposit_still_to_receive(tenant)),
+        })
 
 
 

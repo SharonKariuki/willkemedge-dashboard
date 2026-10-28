@@ -85,7 +85,7 @@ def _money(v) -> str:
 
 TENANT_MONEY = frozenset({
     "monthly_rent", "deposit_paid", "agreed_deposit", "is_billable", "due_day",
-    "deposit_refund_percentage", "deposit_refund_amount",
+    "first_rent_month", "deposit_refund_percentage", "deposit_refund_amount",
 })
 
 TRACKED = [

@@ -1,6 +1,8 @@
 """
 Tenant models — updated with deposit refund logic, move-out notice, and KYC.
 """
+from datetime import date
+
 from django.core.validators import MaxValueValidator, MinValueValidator, RegexValidator
 from django.db import models
 from django.utils import timezone
@@ -152,6 +154,17 @@ class Tenant(models.Model):
     )
 
     move_in_date = models.DateField()
+    # The first month this letting is charged rent for. Blank means the
+    # move-in month, which is billed in full. A tenant who gets the keys on
+    # 31 October and starts paying in November has November here — without
+    # it the run raised October, and because the catch-up bills every month
+    # from move-in onward, deleting the wrong month only brought it back on
+    # the next run (MR203, MR308). Stored as the 1st of the month.
+    first_rent_month = models.DateField(
+        null=True,
+        blank=True,
+        help_text="First month charged rent (the 1st of that month). Blank = the move-in month.",
+    )
     move_out_date = models.DateField(null=True, blank=True)
 
     # Move-out notice: tenant or admin sets intended departure date
@@ -225,6 +238,16 @@ class Tenant(models.Model):
     @property
     def is_active(self) -> bool:
         return self.status in (TenantStatus.ACTIVE, TenantStatus.NOTICE_GIVEN)
+
+    @property
+    def first_rent_period(self) -> tuple[int, int] | None:
+        """(year, month) of the first month this letting owes rent for."""
+        start = self.first_rent_month or self.move_in_date
+        if isinstance(start, str):
+            # A Tenant built in memory keeps whatever was assigned until it is
+            # read back from the database, and that is a plain string.
+            start = date.fromisoformat(start)
+        return (start.year, start.month) if start else None
 
     # --- KYC ---
 

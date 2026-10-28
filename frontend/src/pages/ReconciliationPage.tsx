@@ -22,6 +22,7 @@ import { toChoices, type TenantChoice } from "@/features/payments/tenantChoices"
 import { useTenants } from "@/hooks/useTenants";
 import {
   useAssignCredit,
+  useCreditSplit,
   useUnmatchedCredits,
   type UnmatchedCredit,
 } from "@/hooks/useUnmatchedCredits";
@@ -32,6 +33,52 @@ function formatKes(amount: string): string {
   return Number.isFinite(n) ? `KES ${n.toLocaleString("en-KE")}` : `KES ${amount}`;
 }
 
+/**
+ * Deposit / rent split for one credit. A new tenant's first transfer is usually
+ * deposit and rent together; booked whole as rent the deposit went missing
+ * (MR203). The deposit box starts at the server's default — the deposit still
+ * to come on a new letting, otherwise 0 — and rent is whatever is left, so the
+ * two always add up to the credit.
+ */
+function SplitFields({
+  credit, deposit, onDeposit, stillToReceive, disabled,
+}: {
+  credit: UnmatchedCredit;
+  deposit: string;
+  onDeposit: (value: string) => void;
+  stillToReceive?: string;
+  disabled: boolean;
+}) {
+  const total = Number(credit.amount);
+  const depositNum = Number(deposit || 0);
+  const valid = Number.isFinite(depositNum) && depositNum >= 0 && depositNum <= total;
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-ink-500">
+      <label className="flex items-center gap-1.5">
+        Deposit
+        <input
+          inputMode="decimal"
+          value={deposit}
+          onChange={(e) => onDeposit(e.target.value)}
+          disabled={disabled}
+          aria-label={`Deposit part of credit ${credit.transaction_id}`}
+          aria-invalid={!valid}
+          className="w-24 rounded-md border border-border bg-surface px-2 py-1 text-right text-xs text-ink-900"
+        />
+      </label>
+      <span>
+        Rent <span className="font-medium text-ink-900">
+          {valid ? formatKes(String(total - depositNum)) : "—"}
+        </span>
+      </span>
+      {!valid && <span className="text-status-unpaid">Between 0 and {formatKes(credit.amount)}</span>}
+      {valid && Number(stillToReceive ?? 0) > 0 && (
+        <span>Deposit still to receive {formatKes(stillToReceive ?? "0")}</span>
+      )}
+    </div>
+  );
+}
+
 function CreditRow({
   credit,
   tenants,
@@ -40,7 +87,18 @@ function CreditRow({
   tenants: TenantChoice[];
 }) {
   const [tenantId, setTenantId] = useState<number | null>(null);
+  // null = not touched since the tenant was picked: show the server default.
+  const [deposit, setDeposit] = useState<string | null>(null);
   const assign = useAssignCredit();
+  const split = useCreditSplit(credit.id, tenantId);
+  const depositValue = deposit ?? (split.data ? String(Number(split.data.deposit_amount)) : "0");
+  const depositNum = Number(depositValue || 0);
+  const splitValid = Number.isFinite(depositNum) && depositNum >= 0 && depositNum <= Number(credit.amount);
+
+  const pickTenant = (id: number | null) => {
+    setTenantId(id);
+    setDeposit(null);
+  };
 
   const handleAssign = () => {
     if (tenantId === null) {
@@ -48,7 +106,7 @@ function CreditRow({
       return;
     }
     assign.mutate(
-      { id: credit.id, tenant: tenantId },
+      { id: credit.id, tenant: tenantId, deposit_amount: String(depositNum) },
       {
         onSuccess: (res) => toast.success(res.detail),
         onError: (err) => toast.error(getErrorMessage(err)),
@@ -85,15 +143,27 @@ function CreditRow({
           <TenantPicker
             choices={tenants}
             value={tenantId}
-            onChange={setTenantId}
+            onChange={pickTenant}
             disabled={assign.isPending}
             suggestion={credit.payer_hint.name}
             ariaLabel={`Assign credit ${credit.transaction_id} to tenant`}
           />
-          <Button onClick={handleAssign} disabled={assign.isPending || tenantId === null}>
+          <Button
+            onClick={handleAssign}
+            disabled={assign.isPending || tenantId === null || split.isLoading || !splitValid}
+          >
             {assign.isPending ? "Assigning…" : "Assign"}
           </Button>
         </div>
+        {tenantId !== null && (
+          <SplitFields
+            credit={credit}
+            deposit={depositValue}
+            onDeposit={setDeposit}
+            stillToReceive={split.data?.deposit_still_to_receive}
+            disabled={assign.isPending || split.isLoading}
+          />
+        )}
       </TD>
     </TR>
   );
