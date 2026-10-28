@@ -23,7 +23,9 @@ export interface UtilityCharge {
   expense_category_name: string;
 }
 
-export type ChargeTypeValue = "utility" | "late_fee" | "parking" | "damage";
+export type ChargeTypeValue =
+  | "electricity" | "garbage" | "security" | "service_charge" | "utility"
+  | "late_fee" | "parking" | "damage";
 
 export interface PreviousReading {
   tenant: number;

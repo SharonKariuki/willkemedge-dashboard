@@ -88,6 +88,10 @@ def _add(tenant, charge_type=ChargeType.LATE_FEE, amount="1500", label="Late pay
 class TestEachTypeBooksToItsOwnAccount:
     @pytest.mark.parametrize("charge_type, code", [
         (ChargeType.UTILITY, "4150"),
+        (ChargeType.ELECTRICITY, "4150"),
+        (ChargeType.GARBAGE, "4150"),
+        (ChargeType.SECURITY, "4150"),
+        (ChargeType.SERVICE_CHARGE, "4150"),
         (ChargeType.LATE_FEE, "4200"),
         (ChargeType.PARKING, "4250"),
     ])
@@ -270,6 +274,7 @@ class TestApi:
         types = {t["value"]: t for t in resp.json()["charge_types"]}
         assert types["late_fee"]["account"].startswith("4200")
         assert types["parking"]["account"].startswith("4250")
-        assert types["utility"]["account"].startswith("4150")
+        for named in ("utility", "electricity", "garbage", "security", "service_charge"):
+            assert types[named]["account"].startswith("4150")
         assert types["damage"]["account"] == ""
         assert any(c["id"] == repairs.pk for c in resp.json()["expense_categories"])

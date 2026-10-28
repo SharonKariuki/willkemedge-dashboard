@@ -664,14 +664,15 @@ class UtilityChargeViewSet(viewsets.ReadOnlyModelViewSet):
         names = dict(Account.objects.filter(
             code__in=[SERVICE_CHARGE_UTILITIES, LATE_FEES, PARKING],
         ).values_list("code", "name"))
+        # Mirrors ``charge_account_code``: everything but these books to 4150.
         account_for = {
-            ChargeType.UTILITY: SERVICE_CHARGE_UTILITIES,
             ChargeType.LATE_FEE: LATE_FEES,
             ChargeType.PARKING: PARKING,
+            ChargeType.DAMAGE: None,
         }
         types = []
         for value, text in ChargeType.choices:
-            code = account_for.get(value)
+            code = account_for.get(value, SERVICE_CHARGE_UTILITIES)
             types.append({
                 "value": value,
                 "label": text,

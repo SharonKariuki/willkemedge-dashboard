@@ -19,7 +19,8 @@ vi.mock("react-router-dom", async () => {
 
 const options: ChargeOptions = {
   charge_types: [
-    { value: "utility", label: "Water, electricity or service charge", account: "4150 Service Charge / Utilities Reimbursed by Tenants" },
+    { value: "garbage", label: "Garbage collection", account: "4150 Service Charge / Utilities Reimbursed by Tenants" },
+    { value: "utility", label: "Water or other utility", account: "4150 Service Charge / Utilities Reimbursed by Tenants" },
     { value: "late_fee", label: "Late payment penalty", account: "4200 Late Payment Fees / Penalties" },
     { value: "parking", label: "Parking", account: "4250 Parking Fees" },
     { value: "damage", label: "Damage or repair recharge", account: "" },
@@ -85,6 +86,17 @@ describe("AddChargePage", () => {
       label: "Late payment penalty", expense_category: null,
     });
     expect(navigate).toHaveBeenCalledWith("/tenants/7");
+  });
+
+  it("lists the named service charges under the one account they book to", async () => {
+    renderPage();
+    const group = screen.getByRole("group", { name: /^4150/ });
+    expect(group).toContainElement(screen.getByRole("option", { name: "Garbage collection" }));
+    expect(group).toContainElement(screen.getByRole("option", { name: "Water or other utility" }));
+
+    await userEvent.selectOptions(screen.getByLabelText(/Type of charge/), "garbage");
+    expect(screen.getByLabelText(/Reason for the charge/)).toHaveValue("Garbage collection");
+    expect(screen.getByText(/Booked to 4150/)).toBeInTheDocument();
   });
 
   it("asks which expense a damage recharge recovers", async () => {
