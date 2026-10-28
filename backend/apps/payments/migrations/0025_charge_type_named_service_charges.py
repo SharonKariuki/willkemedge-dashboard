@@ -4,7 +4,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('payments', '0023_coopipnevent_void_requeue_count'),
+        ('payments', '0024_opening_balance'),
     ]
 
     operations = [
