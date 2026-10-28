@@ -21,6 +21,7 @@ import {
 import { CreditsPanel } from "@/features/credits/CreditsPanel";
 import { VoidPaymentModal } from "@/features/payments/VoidPaymentModal";
 import { MoveInAgainForm } from "@/features/tenants/MoveInAgainForm";
+import { optionalEmail } from "@/features/tenants/email";
 import { FirstRentMonthField } from "@/features/tenants/FirstRentMonthField";
 import { firstRentMonthForApi, firstRentMonthFromApi } from "@/features/tenants/firstRentMonth";
 import { SpacePanel } from "@/features/tenants/SpacePanel";
@@ -52,7 +53,7 @@ const editSchema = z.object({
   id_number: z.string().trim().min(1, "Required"),
   kra_pin: z.string().regex(/^[AP]\d{9}[A-Z]$/, "Format: A007523148T").or(z.literal("")).optional(),
   phone: z.string().min(1, "Required"),
-  email: z.string().email("Enter a valid email").or(z.literal("")).optional(),
+  email: optionalEmail,
   care_of: z.string().optional(),
   monthly_rent: z.string().min(1, "Required").refine(isNonNegativeAmountOrBlank, "Enter a valid amount"),
   deposit_paid: z.string().optional().refine(isNonNegativeAmountOrBlank, "Enter a valid amount"),

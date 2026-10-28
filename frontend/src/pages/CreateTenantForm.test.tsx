@@ -101,8 +101,7 @@ describe("CreateTenantForm", () => {
       await user.clear(box);
       await user.type(box, "20000");
       await user.selectOptions(screen.getByLabelText("How it was received"), "mpesa");
-      // Move-in defaults to today, and a deposit may not predate it — pinned so
-      // the 12 Sept deposit below stays valid on every day after 12 Sept 2026.
+      // Move-in defaults to today — pinned so the dates below stay fixed.
       const moveIn = screen.getByLabelText("Move-in date *");
       await user.clear(moveIn);
       await user.type(moveIn, "01/09/2026");
@@ -195,23 +194,65 @@ describe("CreateTenantForm", () => {
     // nothing here worth asserting in jsdom.
   });
 
-  it("refuses a deposit dated before the keys were handed over", async () => {
-    const user = userEvent.setup();
-    await fillRequiredIdentity(user);
-    await user.selectOptions(screen.getByLabelText("Unit *"), "1");
-    await user.type(screen.getByLabelText("Monthly rent (KES) *"), "20000");
+  describe("the deposit date", () => {
+    async function fillDeposit(user: ReturnType<typeof userEvent.setup>, moveIn: string, paid: string) {
+      await fillRequiredIdentity(user);
+      await user.selectOptions(screen.getByLabelText("Unit *"), "1");
+      await user.type(screen.getByLabelText("Monthly rent (KES) *"), "20000");
+      const box = screen.getByLabelText("Deposit received (KES)");
+      await user.clear(box);
+      await user.type(box, "20000");
+      const moveInBox = screen.getByLabelText("Move-in date *");
+      await user.clear(moveInBox);
+      await user.type(moveInBox, moveIn);
+      await user.type(screen.getByLabelText("Date received"), paid);
+      await user.click(screen.getByRole("button", { name: /Register/ }));
+    }
 
-    const box = screen.getByLabelText("Deposit received (KES)");
-    await user.clear(box);
-    await user.type(box, "20000");
-    await user.type(screen.getByLabelText("Date received"), "01/01/2020");
+    it("accepts a deposit paid before the keys are handed over", async () => {
+      // Deposit paid a week before the keys are handed over.
+      const user = userEvent.setup();
+      await fillDeposit(user, "01/11/2026", "25/10/2026");
 
-    await user.click(screen.getByRole("button", { name: /Register/ }));
+      await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
+      expect(submitted()).toMatchObject({ deposit_date: "2026-10-25", move_in_date: "2026-11-01" });
+    });
 
-    expect(
-      await screen.findByText(/Cannot be before the move-in date/),
-    ).toBeInTheDocument();
-    expect(mutateAsync).not.toHaveBeenCalled();
+    it("refuses a deposit dated in the future", async () => {
+      const user = userEvent.setup();
+      await fillDeposit(user, "01/11/2026", "01/01/2099");
+
+      expect(await screen.findByText(/Cannot be in the future/)).toBeInTheDocument();
+      expect(mutateAsync).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("the email", () => {
+    it("saves a pasted address with spaces around it", async () => {
+      const user = userEvent.setup();
+      await fillRequiredIdentity(user);
+      await user.selectOptions(screen.getByLabelText("Unit *"), "1");
+      await user.type(screen.getByLabelText("Monthly rent (KES) *"), "20000");
+      await user.type(screen.getByLabelText("Email"), " jane.tenant@example.com ");
+
+      await user.click(screen.getByRole("button", { name: /Register/ }));
+
+      await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
+      expect(submitted().email).toBe("jane.tenant@example.com");
+    });
+
+    it("says what is wrong instead of silently not saving", async () => {
+      const user = userEvent.setup();
+      await fillRequiredIdentity(user);
+      await user.selectOptions(screen.getByLabelText("Unit *"), "1");
+      await user.type(screen.getByLabelText("Monthly rent (KES) *"), "20000");
+      await user.type(screen.getByLabelText("Email"), "jane.tenant@example");
+
+      await user.click(screen.getByRole("button", { name: /Register/ }));
+
+      expect(await screen.findByText("Enter a valid email")).toBeInTheDocument();
+      expect(mutateAsync).not.toHaveBeenCalled();
+    });
   });
 
   describe("the first rent month", () => {

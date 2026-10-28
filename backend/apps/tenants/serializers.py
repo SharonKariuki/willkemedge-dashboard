@@ -361,13 +361,13 @@ class TenantCreateSerializer(serializers.ModelSerializer):
         extra_kwargs = MONEY_AND_DAY_LIMITS
 
     def validate(self, attrs):
-        """A deposit cannot be dated before the keys were handed over, and rent
-        cannot start before them either."""
+        """A deposit is usually paid before the keys are handed over, so it may
+        predate the move-in — but not be after today. Rent cannot start before move-in."""
         deposit_date = attrs.get("deposit_date")
         move_in = attrs.get("move_in_date")
-        if deposit_date and move_in and deposit_date < move_in:
+        if deposit_date and deposit_date > timezone.localdate():
             raise serializers.ValidationError({
-                "deposit_date": "The deposit cannot be dated before the move-in date.",
+                "deposit_date": "The deposit cannot be dated in the future.",
             })
         attrs["first_rent_month"] = clean_first_rent_month(attrs.get("first_rent_month"), move_in)
         return attrs
