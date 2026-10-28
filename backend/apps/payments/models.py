@@ -238,7 +238,14 @@ class ChargeType(models.TextChoices):
     adding one here never needs a new account (see ``charge_account_code``).
     """
 
-    UTILITY = "utility", "Water, electricity or service charge"
+    # Utility and service costs recovered from tenants — all book to 4150, the
+    # one account the chart has for them; the type only names the charge.
+    ELECTRICITY = "electricity", "Electricity"
+    GARBAGE = "garbage", "Garbage collection"
+    SECURITY = "security", "Security"
+    SERVICE_CHARGE = "service_charge", "Service charge"
+    # Meter readings are this type too, so it keeps the "utility" value.
+    UTILITY = "utility", "Water or other utility"
     LATE_FEE = "late_fee", "Late payment penalty"
     PARKING = "parking", "Parking"
     # A cost the landlord paid and the tenant owes back. Booked against the
