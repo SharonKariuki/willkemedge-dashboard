@@ -192,8 +192,9 @@ def month_balances(tenants, month: int, year: int) -> dict[int, dict]:
     ``current_balances`` reports as at the month's end, so the column agrees
     with the tenant list and the statement.
     """
+    from apps.payments import books
     from apps.payments.credits import issued_credits, sent_refunds
-    from apps.payments.models import Arrears, UtilityCharge
+    from apps.payments.models import Arrears, OpeningBalance, UtilityCharge
     from apps.payments.monthly_ledger import OPENING_MARKER, current_balances
 
     ids = [t.pk if hasattr(t, "pk") else int(t) for t in tenants]
@@ -215,7 +216,16 @@ def month_balances(tenants, month: int, year: int) -> dict[int, dict]:
         for tid in ids
     }
 
-    for arr in Arrears.objects.filter(tenant_id__in=ids, period_month=month, period_year=year):
+    # A restarted account opens in the month of its ``as_of``: the opening
+    # figure is that month's brought-forward.
+    for tid, amount in OpeningBalance.objects.filter(
+        tenant_id__in=ids, as_of__gte=start, as_of__lte=end
+    ).values_list("tenant_id", "amount"):
+        rows[tid]["brought_forward"] += money(amount)
+
+    for arr in Arrears.objects.filter(
+        books.arrears_q(), tenant_id__in=ids, period_month=month, period_year=year
+    ):
         row = rows[arr.tenant_id]
         charge = money(arr.expected_rent) + money(arr.expected_vat)
         waived = money(arr.waived_amount)
@@ -227,7 +237,7 @@ def month_balances(tenants, month: int, year: int) -> dict[int, dict]:
         row["credits"] += waived
 
     for tid, amount in UtilityCharge.objects.filter(
-        tenant_id__in=ids, period_month=month, period_year=year
+        books.utilities_q(), tenant_id__in=ids, period_month=month, period_year=year
     ).values_list("tenant_id", "amount"):
         rows[tid]["other_charges"] += money(amount)
 
@@ -236,17 +246,18 @@ def month_balances(tenants, month: int, year: int) -> dict[int, dict]:
             tenant_id__in=ids, voided_at__isnull=True,
             payment_date__gte=start, payment_date__lte=end,
         )
+        .filter(books.payments_q())
         .exclude(payment_type=PaymentType.DEPOSIT)
         .values_list("tenant_id", "amount")
     ):
         rows[tid]["paid"] += money(amount)
 
     for tid, amount in issued_credits(ids).filter(
-        credit_date__gte=start, credit_date__lte=end
+        books.credits_q(), credit_date__gte=start, credit_date__lte=end
     ).values_list("tenant_id", "amount"):
         rows[tid]["credits"] += money(amount)
     for tid, amount in sent_refunds(ids).filter(
-        sent_on__gte=start, sent_on__lte=end
+        books.refunds_q(), sent_on__gte=start, sent_on__lte=end
     ).values_list("tenant_id", "amount"):
         rows[tid]["refunds"] += money(amount)
 

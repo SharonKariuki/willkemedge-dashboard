@@ -10,6 +10,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from apps.buildings.unit_order import unit_sort_key
+from apps.payments import books
 
 from .models import Tenant, TenantDocument, TenantStatus
 from .serializers import (
@@ -70,7 +71,7 @@ class TenantViewSet(viewsets.ModelViewSet):
                 outstanding_balance=Coalesce(
                     models.Sum(
                         "arrears__balance",
-                        filter=models.Q(arrears__is_cleared=False),
+                        filter=models.Q(arrears__is_cleared=False) & books.arrears_q("arrears__"),
                     ),
                     models.Value(Decimal("0.00")),
                     output_field=models.DecimalField(max_digits=12, decimal_places=2),
@@ -451,7 +452,7 @@ class TenantViewSet(viewsets.ModelViewSet):
             Payment.objects.filter(tenant=tenant)
             .order_by("-payment_date", "-id")
         )
-        arrears = Arrears.objects.filter(tenant=tenant, is_cleared=False)
+        arrears = Arrears.objects.filter(books.arrears_q(), tenant=tenant, is_cleared=False)
         # Voided payments are excluded from every other balance in the system;
         # counting them here made paid-to-date disagree with the arrears table.
         total_paid = (

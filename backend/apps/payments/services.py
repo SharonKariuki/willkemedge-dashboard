@@ -379,9 +379,13 @@ def allocate_payment_fifo(
     # atomic block, so two credits arriving for the same tenant concurrently are
     # serialised: the second waits, then re-reads the balances the first left
     # behind instead of allocating against stale (already-cleared) rows.
+    from . import books
+
+    # Rows from before a restarted tenant's books are history: new money never
+    # settles them (see ``books``).
     outstanding = list(
-        Arrears.objects.select_for_update()
-        .filter(tenant=tenant, balance__gt=0)
+        Arrears.objects.select_for_update(of=("self",))
+        .filter(books.arrears_q(), tenant=tenant, balance__gt=0)
         .order_by("period_year", "period_month")
     )
     for ar in outstanding:
@@ -546,7 +550,11 @@ def available_credit(tenant) -> Decimal:
     (``TenantCredit``) have settled. That is not overpaid rent being drawn down,
     so it is taken back out before counting what has been consumed.
     """
+    from . import books
     from .models import REFUND_ACTIVE_STATUSES, CreditApplication, RefundLine
+
+    if books.opening_for(tenant) is not None:
+        return books.unapplied_credit(tenant)
 
     surplus = ZERO
     consumed = ZERO

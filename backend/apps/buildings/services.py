@@ -99,6 +99,7 @@ def has_unsettled_earlier_months(unit: Unit) -> bool:
     """
     from django.utils import timezone
 
+    from apps.payments import books
     from apps.payments.credits import manual_credit_available
     from apps.payments.models import Arrears
     from apps.payments.services import available_credit
@@ -119,7 +120,7 @@ def has_unsettled_earlier_months(unit: Unit) -> bool:
     open_by_tenant = {}
     rows = (
         Arrears.objects
-        .filter(earlier, tenant_id__in=tenant_ids, is_cleared=False, balance__gt=0)
+        .filter(earlier, books.arrears_q(), tenant_id__in=tenant_ids, is_cleared=False, balance__gt=0)
         .values_list("tenant_id", "balance")
     )
     for tenant_id, balance in rows:

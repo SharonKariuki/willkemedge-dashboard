@@ -1011,3 +1011,77 @@ class RefundLine(models.Model):
     def __str__(self) -> str:
         source = self.credit.number if self.credit_id else "overpayment"
         return f"{self.refund.number} ← {source} KES {self.amount}"
+
+
+class OpeningBalance(models.Model):
+    """Where a tenant's books begin: the landlord's balance on ``as_of``.
+
+    The landlord's rent sheets are the record the business agrees to. Before
+    the app was trusted, months of data were keyed, re-keyed and reconciled
+    against them, and that history no longer adds up to the sheet. Rather than
+    rewrite it, the account is restarted: this row carries the sheet's
+    end-of-month balance, and everything the tenant was charged, paid or
+    credited on or before ``as_of`` stops counting. Nothing is deleted — the
+    old rows stay on file, hidden from every balance, statement and report —
+    so deleting this row puts the tenant straight back on their full history.
+
+    ``amount`` is signed: positive is owed, negative is credit in hand. It is
+    the only figure the tenant's account carries across ``as_of``.
+
+    ``as_of`` is always the last day of a month, so the books open on the 1st
+    of the next one (``books_year``/``books_month``, stored so the database can
+    filter every query on it).
+    """
+
+    tenant = models.OneToOneField(
+        Tenant, on_delete=models.PROTECT, related_name="opening_balance",
+    )
+    as_of = models.DateField(help_text="Last day before the books begin (a month end).")
+    amount = models.DecimalField(
+        max_digits=14, decimal_places=2,
+        help_text="Balance carried in: positive is owed, negative is credit in hand.",
+    )
+    books_year = models.PositiveIntegerField(editable=False)
+    books_month = models.PositiveSmallIntegerField(editable=False)
+    #  year * 12 + month of the first month in the books — one integer the
+    #  period filters compare ``period_year * 12 + period_month`` against.
+    books_key = models.PositiveIntegerField(editable=False)
+    source = models.CharField(
+        max_length=255, help_text="Where the figure came from, e.g. the landlord sheet and its date.",
+    )
+    notes = models.TextField(blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="+",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "payments_opening_balance"
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(books_month__gte=1) & models.Q(books_month__lte=12),
+                name="opening_balance_books_month_valid",
+            ),
+        ]
+
+    def clean(self):
+        from django.core.exceptions import ValidationError
+
+        if self.as_of and (self.as_of + _dt.timedelta(days=1)).day != 1:
+            raise ValidationError({"as_of": "The books open on a month end."})
+
+    def save(self, *args, **kwargs):
+        self.clean()
+        books_from = self.as_of + _dt.timedelta(days=1)
+        self.books_year, self.books_month = books_from.year, books_from.month
+        self.books_key = books_from.year * 12 + books_from.month
+        super().save(*args, **kwargs)
+
+    @property
+    def books_from(self) -> _dt.date:
+        return self.as_of + _dt.timedelta(days=1)
+
+    def __str__(self) -> str:
+        return f"{self.tenant} — opening KES {self.amount} at {self.as_of}"
