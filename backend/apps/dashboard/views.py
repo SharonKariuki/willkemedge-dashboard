@@ -17,6 +17,7 @@ from apps.buildings.models import (
     UnitClassification,
     UnitStatus,
 )
+from apps.payments import books
 from apps.payments.models import Arrears, Payment, PaymentType
 from apps.payments.monthly_ledger import current_balances
 from apps.payments.tax_service import TAX_RATE_BUSINESS
@@ -186,7 +187,7 @@ class DashboardSummaryView(APIView):
         # the tenant is actually late on.
         oldest_open = {}
         for a in (
-            Arrears.objects.filter(tenant_id__in=owing_ids, is_cleared=False)
+            Arrears.objects.filter(books.arrears_q(), tenant_id__in=owing_ids, is_cleared=False)
             .order_by("tenant_id", "period_year", "period_month")
         ):
             oldest_open.setdefault(a.tenant_id, a)

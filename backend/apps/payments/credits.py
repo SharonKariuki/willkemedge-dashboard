@@ -34,6 +34,7 @@ from django.utils import timezone
 
 from apps.accounts import audit
 
+from . import books
 from .models import (
     CREDIT_TYPE_FOR_REASON,
     REFUND_ACTIVE_STATUSES,
@@ -151,23 +152,26 @@ def account_balance(tenant) -> Decimal:
     a tenant who has paid it must not look in credit and be refunded rent they
     owe next week.
     """
-    charged = Arrears.objects.filter(tenant=tenant).aggregate(
+    charged = Arrears.objects.filter(books.arrears_q(), tenant=tenant).aggregate(
         rent=Sum("expected_rent"), vat=Sum("expected_vat"), waived=Sum("waived_amount"),
     )
-    other = UtilityCharge.objects.filter(tenant=tenant).aggregate(t=Sum("amount"))["t"]
+    other = UtilityCharge.objects.filter(
+        books.utilities_q(), tenant=tenant
+    ).aggregate(t=Sum("amount"))["t"]
     received = (
-        Payment.objects.filter(tenant=tenant, voided_at__isnull=True)
+        Payment.objects.filter(books.payments_q(), tenant=tenant, voided_at__isnull=True)
         .exclude(payment_type=PaymentType.DEPOSIT)
         .aggregate(t=Sum("amount"))["t"]
     )
     credited = TenantCredit.objects.filter(
-        tenant=tenant, status=CreditStatus.ISSUED
+        books.credits_q(), tenant=tenant, status=CreditStatus.ISSUED
     ).aggregate(t=Sum("amount"))["t"]
     refunded = Refund.objects.filter(
-        tenant=tenant, status=RefundStatus.SENT
+        books.refunds_q(), tenant=tenant, status=RefundStatus.SENT
     ).aggregate(t=Sum("amount"))["t"]
+    opening = books.opening_amounts([tenant.pk]).get(tenant.pk, ZERO)
     total = (
-        (charged["rent"] or ZERO) + (charged["vat"] or ZERO) - (charged["waived"] or ZERO)
+        opening + (charged["rent"] or ZERO) + (charged["vat"] or ZERO) - (charged["waived"] or ZERO)
         + (other or ZERO) - (received or ZERO) - (credited or ZERO) + (refunded or ZERO)
     )
     return _money(total)
@@ -429,8 +433,8 @@ def _apply(credit: TenantCredit, arrears: Arrears, amount: Decimal, *, origin, a
 def _open_rent(tenant, *, first: Arrears | None = None):
     """Rent the tenant still owes, the corrected month first, then oldest first."""
     rows = list(
-        Arrears.objects.select_for_update()
-        .filter(tenant=tenant, balance__gt=0)
+        Arrears.objects.select_for_update(of=("self",))
+        .filter(books.arrears_q(), tenant=tenant, balance__gt=0)
         .order_by("period_year", "period_month")
     )
     if first is not None:

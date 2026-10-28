@@ -31,7 +31,7 @@ from apps.accounts.permissions import CanForgiveMoney
 from apps.expenses.models import ExpenseCategory
 from apps.tenants.models import Tenant
 
-from . import credits
+from . import books, credits
 from .credit_serializers import (
     CreditCreateSerializer,
     HoldSerializer,
@@ -131,7 +131,10 @@ class TenantCreditViewSet(viewsets.ReadOnlyModelViewSet):
             Tenant.objects.select_related("unit"), pk=request.query_params.get("tenant")
         )
         rent_rows = []
-        for arr in Arrears.objects.filter(tenant=tenant).order_by("-period_year", "-period_month")[:24]:
+        for arr in (
+            Arrears.objects.filter(books.arrears_q(), tenant=tenant)
+            .order_by("-period_year", "-period_month")[:24]
+        ):
             if OPENING_MARKER in (arr.waive_notes or ""):
                 continue
             rent_rows.append({
@@ -154,7 +157,10 @@ class TenantCreditViewSet(viewsets.ReadOnlyModelViewSet):
                 "creditable": credits.creditable_remaining(utility_charge=u),
                 "vat_rate": "0",
             }
-            for u in UtilityCharge.objects.filter(tenant=tenant, amount__gt=0).order_by("-posting_date", "-id")[:24]
+            for u in (
+                UtilityCharge.objects.filter(books.utilities_q(), tenant=tenant, amount__gt=0)
+                .order_by("-posting_date", "-id")[:24]
+            )
         ]
         reasons = [
             {
