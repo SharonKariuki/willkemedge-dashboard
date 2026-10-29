@@ -25,7 +25,7 @@ import { Note } from "@/features/credits/Note";
 import { KES, round2 } from "@/features/credits/shared";
 import { Field, inputCls } from "@/features/tenants/shared";
 import { useAuth } from "@/hooks/useAuth";
-import { useAddCharge, useChargeOptions } from "@/hooks/useCharges";
+import { type ChargeTypeOption, useAddCharge, useChargeOptions } from "@/hooks/useCharges";
 import { useCreditPosition } from "@/hooks/useCredits";
 import { useTenant } from "@/hooks/useTenants";
 import type { ChargeTypeValue } from "@/hooks/useWaterReadings";
@@ -35,6 +35,10 @@ import { formatBalanceKES } from "@/lib/money";
 
 /** What the statement line says unless the owner writes something better. */
 const DEFAULT_LABEL: Record<ChargeTypeValue, string> = {
+  electricity: "Electricity",
+  garbage: "Garbage collection",
+  security: "Security",
+  service_charge: "Service charge",
   utility: "",
   late_fee: "Late payment penalty",
   parking: "Parking",
@@ -42,11 +46,25 @@ const DEFAULT_LABEL: Record<ChargeTypeValue, string> = {
 };
 
 const PLACEHOLDER: Record<ChargeTypeValue, string> = {
-  utility: "e.g. Electricity token, Garbage collection",
+  electricity: "e.g. Electricity, October",
+  garbage: "e.g. Garbage collection, October",
+  security: "e.g. Security, October",
+  service_charge: "e.g. Service charge, October",
+  utility: "e.g. Water (not metered), October",
   late_fee: "Late payment penalty",
   parking: "Parking",
   damage: "e.g. Broken window replaced",
 };
+
+/** Charge types under the account they book to, in the order the server lists them. */
+function groupByAccount(types: ChargeTypeOption[]) {
+  const groups = new Map<string, ChargeTypeOption[]>();
+  for (const t of types) {
+    const key = t.account || "Recharge of a cost you paid — choose the expense below";
+    groups.set(key, [...(groups.get(key) ?? []), t]);
+  }
+  return [...groups.entries()];
+}
 
 /** "2026-10" for the month a date falls in. */
 function monthOf(iso: string) {
@@ -188,8 +206,12 @@ export default function AddChargePage() {
                 className={inputCls}
               >
                 <option value="">Choose…</option>
-                {options.charge_types.map((t) => (
-                  <option key={t.value} value={t.value}>{t.label}</option>
+                {groupByAccount(options.charge_types).map(([account, types]) => (
+                  <optgroup key={account} label={account}>
+                    {types.map((t) => (
+                      <option key={t.value} value={t.value}>{t.label}</option>
+                    ))}
+                  </optgroup>
                 ))}
               </select>
             </Field>

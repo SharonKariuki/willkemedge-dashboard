@@ -7,9 +7,11 @@ a deposit showed on the tenant's card while being absent from the balance sheet.
 Tenants who predate the cutover only have theirs booked because
 ``post_opening_deposit`` posted it; anyone registered afterwards had nothing.
 """
+from datetime import timedelta
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APIClient, APITestCase
 
@@ -133,14 +135,34 @@ class MoveInDepositBookingTests(APITestCase):
         assert response.status_code == status.HTTP_201_CREATED, response.data
         assert str(Payment.objects.get().payment_date) == "2026-09-01"
 
-    def test_a_deposit_cannot_predate_the_move_in(self):
+    def test_a_deposit_paid_before_the_move_in_is_booked_on_its_date(self):
+        # Deposits are paid before the keys are handed over; registration used to refuse it.
         unit = self._vacant("WED1F", "20000")
 
         response = self._register(unit, deposit_date="2026-08-20")
 
+        assert response.status_code == status.HTTP_201_CREATED, response.data
+        payment = Payment.objects.get()
+        assert payment.payment_type == PaymentType.DEPOSIT
+        assert str(payment.payment_date) == "2026-08-20"
+
+    def test_a_deposit_cannot_be_dated_in_the_future(self):
+        unit = self._vacant("WED1H", "20000")
+        tomorrow = timezone.localdate() + timedelta(days=1)
+
+        response = self._register(unit, deposit_date=tomorrow.isoformat())
+
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert "deposit_date" in response.data
         assert not Tenant.objects.exists()
+
+    def test_an_email_with_spaces_around_it_is_saved_trimmed(self):
+        unit = self._vacant("WED1I", "20000")
+
+        response = self._register(unit, email="  jane.tenant@example.com ")
+
+        assert response.status_code == status.HTTP_201_CREATED, response.data
+        assert Tenant.objects.get().email == "jane.tenant@example.com"
 
     # --- the cases that must book nothing ----------------------------------
 

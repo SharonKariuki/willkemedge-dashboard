@@ -22,6 +22,7 @@ import {
   PageHeader, Skeleton, Table, TBody, TD, TH, THead, TR,
 } from "@/components/ui";
 import { FirstRentMonthField } from "@/features/tenants/FirstRentMonthField";
+import { optionalEmail } from "@/features/tenants/email";
 import { firstRentMonthForApi } from "@/features/tenants/firstRentMonth";
 import { EmailStatementsModal, Field, inputCls, KYC_TONE, RemindModal } from "@/features/tenants/shared";
 import { useBuildings } from "@/hooks/useBuildings";
@@ -48,7 +49,7 @@ const createSchema = z
     id_number: z.string().min(1, "Required"),
     kra_pin: z.string().regex(/^[AP]\d{9}[A-Z]$/, "Format: A007523148T").or(z.literal("")).optional(),
     phone: z.string().min(1, "Required"),
-    email: z.string().email().or(z.literal("")).optional(),
+    email: optionalEmail,
     emergency_contact: z.string().optional(),
     emergency_phone: z.string().optional(),
     unit: z.coerce.number().min(1, "Select a unit"),
@@ -92,11 +93,13 @@ const createSchema = z
         message: "Enter an amount greater than 0, or untick 'charge rent'",
       });
     }
-    if (values.deposit_date && values.move_in_date && values.deposit_date < values.move_in_date) {
+    // A deposit is usually paid before the keys are handed over, so only a
+    // future date is wrong.
+    if (values.deposit_date && values.deposit_date > todayIso()) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["deposit_date"],
-        message: "Cannot be before the move-in date",
+        message: "Cannot be in the future",
       });
     }
     if (values.first_rent_month && values.move_in_date
@@ -173,7 +176,7 @@ export function CreateTenantForm({ onClose }: { onClose: () => void }) {
         <Field label="Phone *" error={errors.phone?.message}>
           <input {...register("phone")} className={inputCls} placeholder="+254…" />
         </Field>
-        <Field label="Email">
+        <Field label="Email" error={errors.email?.message}>
           <input type="email" {...register("email")} className={inputCls} />
         </Field>
         <Field label="Unit *" error={errors.unit?.message}>
