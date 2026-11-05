@@ -15,7 +15,8 @@ export type CreditReasonValue =
   | "billing_correction"
   | "rent_concession"
   | "tenant_paid_cost"
-  | "opening_credit";
+  | "opening_credit"
+  | "deposit_applied";
 
 export interface CreditReasonOption {
   value: CreditReasonValue;
@@ -181,7 +182,7 @@ export function useVoidCreditPreview(creditId: number | null) {
 
 /** Everything a credit or refund changes, refreshed together. The "tenants"
  *  prefix covers the tenant, its payment history (rent roll) and the list. */
-function useRefreshAccount() {
+export function useRefreshAccount() {
   const qc = useQueryClient();
   return () => {
     qc.invalidateQueries({ queryKey: ["credits"] });

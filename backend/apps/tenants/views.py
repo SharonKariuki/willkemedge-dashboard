@@ -283,18 +283,23 @@ class TenantViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"], url_path="move-out")
     def move_out(self, request, pk=None):
-        """POST /api/tenants/<id>/move-out/ — finalise move-out with deposit refund %."""
+        """POST /api/tenants/<id>/move-out/ — finalise move-out.
+
+        The deposit is settled afterwards, on its own (``/api/deposit-settlements/``),
+        which books it and sets the refund figures below. A refund percentage
+        sent here is still recorded as a note of intent, but books nothing.
+        """
         tenant = self.get_object()
         if not tenant.is_active:
             return Response({"detail": "Tenant is not active."}, status=status.HTTP_400_BAD_REQUEST)
         ser = MoveOutSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
 
-        # Calculate deposit refund
-        refund_pct = ser.validated_data.get("deposit_refund_percentage", 100)
-        tenant.deposit_refund_percentage = refund_pct
-        tenant.deposit_refund_amount = tenant.deposit_paid * (Decimal(refund_pct) / Decimal(100))
-        tenant.save(update_fields=["deposit_refund_percentage", "deposit_refund_amount"])
+        if "deposit_refund_percentage" in request.data:
+            refund_pct = ser.validated_data["deposit_refund_percentage"]
+            tenant.deposit_refund_percentage = refund_pct
+            tenant.deposit_refund_amount = tenant.deposit_paid * (Decimal(refund_pct) / Decimal(100))
+            tenant.save(update_fields=["deposit_refund_percentage", "deposit_refund_amount"])
 
         with transaction.atomic():
             move_out_tenant(

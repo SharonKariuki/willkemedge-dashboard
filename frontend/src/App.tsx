@@ -23,6 +23,7 @@ import SettingsPage from "@/pages/SettingsPage";
 import AddChargePage from "@/pages/AddChargePage";
 import AddCreditPage from "@/pages/AddCreditPage";
 import RefundCreditPage from "@/pages/RefundCreditPage";
+import SettleDepositPage from "@/pages/SettleDepositPage";
 import TenantDetailPage from "@/pages/TenantDetailPage";
 import TenantsPage from "@/pages/TenantsPage";
 import UnitsPage from "@/pages/UnitsPage";
@@ -54,6 +55,7 @@ export default function App() {
         <Route path="/tenants/:id/charges/new" element={<AddChargePage />} />
         <Route path="/tenants/:id/credits/new" element={<AddCreditPage />} />
         <Route path="/tenants/:id/credits/refund" element={<RefundCreditPage />} />
+        <Route path="/tenants/:id/deposit/settle" element={<SettleDepositPage />} />
         <Route path="/payments" element={<PaymentsPage />} />
         <Route path="/reconciliation" element={<ReconciliationPage />} />
         <Route path="/expenses" element={<ExpensesPage />} />

@@ -8,8 +8,8 @@ from apps.expenses.models import ExpenseCategory
 from apps.tenants.models import Tenant
 
 from .models import (
+    MANUAL_CREDIT_REASONS,
     Arrears,
-    CreditReason,
     PaymentSource,
     Refund,
     TenantCredit,
@@ -132,7 +132,7 @@ class TenantCreditSerializer(serializers.ModelSerializer):
 
 class CreditCreateSerializer(serializers.Serializer):
     tenant = serializers.PrimaryKeyRelatedField(queryset=Tenant.objects.all())
-    reason = serializers.ChoiceField(choices=CreditReason.choices)
+    reason = serializers.ChoiceField(choices=[(r.value, r.label) for r in MANUAL_CREDIT_REASONS])
     amount = serializers.DecimalField(max_digits=10, decimal_places=2, min_value=Decimal("0.01"))
     credit_date = serializers.DateField()
     description = serializers.CharField(max_length=200)
