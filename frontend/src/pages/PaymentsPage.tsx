@@ -536,7 +536,7 @@ export default function PaymentsPage() {
             </Table>
           </div>
 
-          <div className="grid gap-3 md:hidden">
+          <div className="grid grid-cols-1 gap-3 md:hidden">
             {payments.map((p) => (
               <Card key={p.id} variant="glass" padding="sm">
                 <div className="flex items-start gap-3">
@@ -554,7 +554,7 @@ export default function PaymentsPage() {
                       </div>
                       <p
                         className={cn(
-                          "text-sm font-semibold tabular-nums",
+                          "shrink-0 whitespace-nowrap text-sm font-semibold tabular-nums",
                           p.is_void
                             ? "text-ink-400 line-through"
                             : "text-sage-700 dark:text-sage-400"
@@ -563,7 +563,7 @@ export default function PaymentsPage() {
                         KES {Number(p.amount).toLocaleString()}
                       </p>
                     </div>
-                    <div className="mt-2 flex items-center justify-between gap-2">
+                    <div className="mt-2 flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5">
                       <SourceChip source={p.source} label={p.source_display} />
                       <p className="text-[11px] text-ink-400">{toDayFirst(p.payment_date)}</p>
                       <div className="flex items-center gap-3">

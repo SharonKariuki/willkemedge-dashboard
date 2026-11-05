@@ -38,6 +38,9 @@ export interface Col<R> {
   numeric?: boolean;
   /** Custom on-screen cell (the CSV still uses `get`). */
   render?: (row: R) => ReactNode;
+  /** Let the heading and cells wrap — for a text column in a narrow table, so
+   *  a long line does not push the next column off a phone. */
+  wrap?: boolean;
 }
 
 export function display<R>(col: Col<R>, row: R): string {

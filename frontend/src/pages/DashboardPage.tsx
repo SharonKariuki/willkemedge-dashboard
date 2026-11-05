@@ -226,7 +226,9 @@ export default function DashboardPage() {
           </div>
         </Card>
 
-        <div className="lg:col-span-2">
+        {/* min-w-0: a grid item otherwise grows to its widest content (a long
+            alert, the payments table) and pushes the page sideways on phones. */}
+        <div className="min-w-0 lg:col-span-2">
           <div className="mb-4 flex items-baseline justify-between">
             <h2 className="text-lg font-semibold text-content">This morning</h2>
             <Badge tone={alerts.length === 0 ? "sage" : "coral"} withDot>
@@ -265,7 +267,7 @@ export default function DashboardPage() {
                           >
                             {action.label}
                           </span>
-                          <p className="mt-1.5 leading-snug text-content-secondary group-hover:text-content">
+                          <p className="mt-1.5 break-words leading-snug text-content-secondary group-hover:text-content">
                             {a.message}
                           </p>
                         </div>
@@ -289,7 +291,7 @@ export default function DashboardPage() {
           <SmsBalanceCard compact className="mt-6" />
         </div>
 
-        <div className="lg:col-span-3">
+        <div className="min-w-0 lg:col-span-3">
           <div className="mb-4 flex items-baseline justify-between">
             <h2 className="text-lg font-semibold text-content">Recent payments</h2>
             <Link
@@ -309,28 +311,35 @@ export default function DashboardPage() {
               </p>
             </Card>
           ) : (
-            <Table minWidth={520}>
+            // Phones show tenant and amount (date beneath it) only, so the 520px
+            // floor the extra columns need applies from sm up.
+            <Table className="sm:min-w-[520px]">
               <THead>
                 <TR>
-                  <TH>Tenant</TH>
+                  <TH className="px-3 sm:px-5">Tenant</TH>
                   <TH className="hidden sm:table-cell">Building / Unit</TH>
                   <TH className="hidden md:table-cell">Method</TH>
-                  <TH className="text-right">Amount</TH>
-                  <TH className="text-right">Date</TH>
+                  <TH className="px-3 text-right sm:px-5">Amount</TH>
+                  <TH className="hidden text-right sm:table-cell">Date</TH>
                 </TR>
               </THead>
               <TBody>
                 {recent_payments.slice(0, 6).map((p) => (
                   <TR key={p.id}>
-                    <TD>
-                      <div className="flex w-max items-center gap-3">
+                    <TD className="px-3 sm:px-5">
+                      <div className="flex items-center gap-3 sm:w-max">
                         <img
                           src={avatarFor(p.tenant_name)}
                           alt=""
                           aria-hidden
-                          className="h-9 w-9 rounded-full ring-1 ring-border"
+                          className="hidden h-9 w-9 rounded-full ring-1 ring-border sm:block"
                         />
-                        <span className="font-medium text-content">{p.tenant_name}</span>
+                        <span
+                          className="block max-w-[10rem] truncate font-medium text-content sm:max-w-none"
+                          title={p.tenant_name}
+                        >
+                          {p.tenant_name}
+                        </span>
                       </div>
                     </TD>
                     <TD className="hidden text-content-muted sm:table-cell">
@@ -339,11 +348,14 @@ export default function DashboardPage() {
                     <TD className="hidden md:table-cell">
                       <Badge tone="neutral">{p.source || "—"}</Badge>
                     </TD>
-                    <TD className="text-right font-semibold tabular-nums text-content">
+                    <TD className="px-3 text-right font-semibold tabular-nums text-content sm:px-5">
                       <span className="text-content-muted">KES </span>
                       {Number(p.amount).toLocaleString()}
+                      <span className="block text-[11px] font-normal uppercase tracking-wider text-content-muted sm:hidden">
+                        {p.payment_date}
+                      </span>
                     </TD>
-                    <TD className="text-right text-xs uppercase tracking-wider text-content-muted">
+                    <TD className="hidden text-right text-xs uppercase tracking-wider text-content-muted sm:table-cell">
                       {p.payment_date}
                     </TD>
                   </TR>

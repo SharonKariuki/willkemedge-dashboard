@@ -19,7 +19,7 @@ import { cn } from "@/lib/cn";
 import { downloadFile } from "@/lib/downloadPdf";
 
 // ─── tabs and periods ────────────────────────────────────────────────────────
-const TABS = [
+export const TABS = [
   { key: "balance_sheet", label: "Balance Sheet", icon: BookOpen },
   { key: "pnl",           label: "Profit & Loss", icon: FileBarChart2 },
   { key: "trial_balance", label: "Trial Balance", icon: Scale },

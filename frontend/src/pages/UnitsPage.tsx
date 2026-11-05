@@ -193,7 +193,7 @@ export default function UnitsPage() {
 
       {/* Grid */}
       {isLoading ? (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {Array.from({ length: 8 }).map((_, i) => (
             <Skeleton key={i} className="h-36" />
           ))}
@@ -211,7 +211,7 @@ export default function UnitsPage() {
           description="Try adjusting the filter or search."
         />
       ) : (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {filtered.map((unit) => {
             const hasTenant = unit.current_tenant_id != null;
             return (

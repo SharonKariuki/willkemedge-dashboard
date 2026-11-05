@@ -111,9 +111,12 @@ export function ReportTable<R>({
       />
     );
   if (!rows || rows.length === 0) return <EmptyState title="No data" description={empty} />;
-  const right = (c: Col<R>) => (c.money || c.numeric ? "text-right tabular-nums" : "");
+  const right = (c: Col<R>) =>
+    cn(c.money || c.numeric ? "text-right tabular-nums" : "", c.wrap && "whitespace-normal");
   return (
-    <Table minWidth={Math.max(cols.length * 130, 480)}>
+    // 130px a column keeps wide reports readable (the wrapper scrolls), while a
+    // two-column statement still fits a phone with its amounts on screen.
+    <Table minWidth={cols.length * 130}>
       <THead>
         <TR>{cols.map((c) => <TH key={c.label} className={right(c)}>{c.label}</TH>)}</TR>
       </THead>
