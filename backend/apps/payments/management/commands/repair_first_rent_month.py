@@ -214,6 +214,23 @@ class Command(BaseCommand):
                 )
             row.delete()
 
+        # 2b. A month raised after the wrong one carried its overpayment as
+        #     credit: MR203's November was raised on 28 Oct with 26,000 of
+        #     October's 53,000 on it. That money is back in Reconciliation
+        #     now, so the carry is dropped — only a numbered credit still
+        #     applied to the month stays. Step 3 re-books the money itself.
+        from django.db.models import Sum
+
+        from apps.payments.services import _update_arrears
+
+        for row in Arrears.objects.filter(tenant=tenant):
+            numbered = row.credit_applications.filter(reversed_at__isnull=True).aggregate(
+                t=Sum("amount"))["t"] or 0
+            if row.credit_applied != numbered:
+                row.credit_applied = numbered
+                row.save(update_fields=["credit_applied", "updated_at"])
+                _update_arrears(tenant, row.period_month, row.period_year)
+
         # 3. Each credit again, split as agreed, oldest first.
         for event, credit in zip(events, fix.credits, strict=True):
             event.refresh_from_db()
