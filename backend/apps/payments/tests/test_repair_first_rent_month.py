@@ -86,3 +86,25 @@ def test_apply_rebooks_deposit_and_november(mr203):
     assert Payment.objects.filter(
         tenant=mr203, payment_type=PaymentType.DEPOSIT, voided_at__isnull=True,
     ).count() == 2
+
+
+def test_november_raised_on_the_carry_is_repaired_too(mr203):
+    """As prod stood on 5 Nov: the 28 Oct run raised November and put 26,000
+    of October's overpayment on it. That carry must not survive the re-book,
+    or November reads paid with 2,000 still owing."""
+    from apps.payments.services import apply_available_credit
+
+    november = Arrears.objects.create(
+        tenant=mr203, period_year=2026, period_month=11, expected_rent=Decimal("27000"),
+        expected_vat=Decimal("0"), amount_paid=Decimal("0"), balance=Decimal("27000"), is_cleared=False,
+    )
+    apply_available_credit(november)
+    november.refresh_from_db()
+    assert november.credit_applied == Decimal("26000")
+
+    _run("--apply")
+
+    november.refresh_from_db()
+    assert (november.amount_paid, november.credit_applied, november.balance) == (
+        Decimal("25000"), Decimal("0"), Decimal("2000"))
+    assert deposit_held_on_books(mr203) == Decimal("28000")
