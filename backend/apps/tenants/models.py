@@ -122,6 +122,15 @@ class Tenant(models.Model):
         help_text="Quarterly raises the three months of a calendar quarter together, before it starts.",
     )
 
+    # A commercial letting the landlord does not charge VAT on (MCG02). Rent on
+    # a BUSINESS unit carries 16% VAT by default; this switches it off for the
+    # one letting, from the next charge raised. Charges already raised keep
+    # their VAT until ``clear_vat`` restates them.
+    vat_exempt = models.BooleanField(
+        default=False,
+        help_text="Tick for a commercial letting that is not charged VAT.",
+    )
+
     # A tenancy that is on the books but is not charged rent. The caretakers who
     # live on the farms and at the Karen residence occupy as part of their
     # employment, not under a letting: the occupancy, their contact details and
