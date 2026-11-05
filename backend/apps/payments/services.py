@@ -60,12 +60,14 @@ def _generate_transaction_id() -> str:
 def expected_vat_for(tenant, base_rent: Decimal) -> Decimal:
     """VAT owed on top of a BUSINESS unit's base rent; zero for residential.
 
+    Zero, too, for a letting marked ``vat_exempt``.
+
     `Tenant.monthly_rent` / `Arrears.expected_rent` hold the VAT-EXCLUSIVE rent
     for commercial units (see import_matasia), while cash received is
     VAT-INCLUSIVE. This is the bridge between the two.
     """
     base = Decimal(str(base_rent or 0))
-    if base <= 0:
+    if base <= 0 or getattr(tenant, "vat_exempt", False):
         return ZERO
     classification = getattr(getattr(tenant, "unit", None), "classification", None)
     if classification != UnitClassification.BUSINESS:

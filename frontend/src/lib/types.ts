@@ -151,6 +151,8 @@ export type BillingFrequency = "monthly" | "quarterly";
 
 export interface TenantDetail extends TenantListItem {
   billing_frequency?: BillingFrequency;
+  /** A commercial letting that is not charged VAT (MCG02). */
+  vat_exempt?: boolean;
   /** First month charged rent, as the 1st of that month ("2026-11-01").
    *  Null = the move-in month. */
   first_rent_month?: string | null;
