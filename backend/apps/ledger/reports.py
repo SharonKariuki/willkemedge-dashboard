@@ -49,6 +49,8 @@ SOURCE_LABELS = {
     "opening_deposit": "Opening deposit",
     "petty_topup": "Petty cash top-up",
     "deposit_refund": "Deposit refund",
+    "deposit_settlement": "Deposit settlement",
+    "deposit_settlement_refund": "Deposit refund",
     "arrear": "Rent billed",
 }
 

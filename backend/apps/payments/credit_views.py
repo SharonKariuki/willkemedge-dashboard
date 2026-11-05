@@ -43,6 +43,7 @@ from .credit_serializers import (
 )
 from .models import (
     CREDIT_TYPE_FOR_REASON,
+    MANUAL_CREDIT_REASONS,
     Arrears,
     CreditApplication,
     CreditReason,
@@ -171,7 +172,7 @@ class TenantCreditViewSet(viewsets.ReadOnlyModelViewSet):
                 "rent_only": value == CreditReason.RENT_CONCESSION,
                 "needs_category": value == CreditReason.TENANT_PAID_COST,
             }
-            for value, label in CreditReason.choices
+            for value, label in ((r.value, r.label) for r in MANUAL_CREDIT_REASONS)
         ]
         categories = [
             {"id": c.pk, "name": c.name}

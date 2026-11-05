@@ -722,6 +722,10 @@ class CreditReason(models.TextChoices):
     RENT_CONCESSION = "rent_concession", "Rent discount or concession"
     TENANT_PAID_COST = "tenant_paid_cost", "Tenant paid for a repair or cost that was ours"
     OPENING_CREDIT = "opening_credit", "Credit owed from before the system"
+    # Raised only by a deposit settlement (``apps.payments.deposit_settlement``),
+    # never from Add Credit: the security deposit settling what the tenant owed
+    # when they left. Lives and dies with its settlement.
+    DEPOSIT_APPLIED = "deposit_applied", "Security deposit applied at move-out"
 
 
 #: The document a reason produces. Kept beside the reasons so the service and
@@ -731,7 +735,12 @@ CREDIT_TYPE_FOR_REASON = {
     CreditReason.RENT_CONCESSION: CreditType.CREDIT_NOTE,
     CreditReason.TENANT_PAID_COST: CreditType.ACCOUNT_CREDIT,
     CreditReason.OPENING_CREDIT: CreditType.ACCOUNT_CREDIT,
+    CreditReason.DEPOSIT_APPLIED: CreditType.ACCOUNT_CREDIT,
 }
+
+#: Reasons the owner can pick on Add Credit. A deposit applied at move-out is
+#: only ever created by settling the deposit.
+MANUAL_CREDIT_REASONS = tuple(r for r in CreditReason if r != CreditReason.DEPOSIT_APPLIED)
 
 
 class CreditStatus(models.TextChoices):
@@ -1011,6 +1020,157 @@ class RefundLine(models.Model):
     def __str__(self) -> str:
         source = self.credit.number if self.credit_id else "overpayment"
         return f"{self.refund.number} ← {source} KES {self.amount}"
+
+
+class RefundBasis(models.TextChoices):
+    """How the owner stated the deposit refund on the settlement form."""
+    REMAINDER = "remainder", "Whatever is left after the deductions"
+    AMOUNT = "amount", "A fixed amount"
+    PERCENTAGE = "percentage", "A percentage of the deposit"
+
+
+class DepositRefundStatus(models.TextChoices):
+    NONE = "none", "Nothing to refund"
+    TO_SEND = "to_send", "Refund to send"
+    SENT = "sent", "Refunded"
+
+
+class DepositSettlement(models.Model):
+    """What happened to a tenant's security deposit when they left.
+
+    Every shilling of the deposit held is accounted for: what was kept, line by
+    line (``DepositDeduction``), and what goes back to the tenant. The database
+    refuses a settlement where the two do not add up to the deposit.
+
+    Figures are stored at settlement time and never recalculated on read — the
+    settlement statement must print tomorrow what it printed today.
+    """
+
+    number = models.CharField(max_length=20, unique=True, editable=False)
+    tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT, related_name="deposit_settlements")
+    settlement_date = models.DateField(help_text="Date the deductions post to the ledger.")
+
+    deposit_held = models.DecimalField(
+        max_digits=10, decimal_places=2,
+        help_text="The deposit on the books (2100) when it was settled.",
+    )
+    balance_owed = models.DecimalField(
+        max_digits=10, decimal_places=2,
+        help_text="What the tenant owed on their account just before settling.",
+    )
+    deductions_total = models.DecimalField(max_digits=10, decimal_places=2)
+    refund_basis = models.CharField(max_length=12, choices=RefundBasis.choices)
+    refund_percentage = models.DecimalField(
+        max_digits=5, decimal_places=2, null=True, blank=True,
+        help_text="Only when the refund was stated as a percentage of the deposit.",
+    )
+    refund_amount = models.DecimalField(max_digits=10, decimal_places=2)
+
+    # The deposit applied to the tenant's unpaid balance, as a numbered credit
+    # on their account — so the rent roll, arrears and statement settle the
+    # same way they do for any other credit.
+    credit = models.OneToOneField(
+        "TenantCredit", on_delete=models.PROTECT, null=True, blank=True,
+        related_name="deposit_settlement",
+    )
+
+    refund_status = models.CharField(max_length=10, choices=DepositRefundStatus.choices)
+    method = models.CharField(max_length=10, choices=PaymentSource.choices, blank=True)
+    paid_to = models.CharField(max_length=100, blank=True, help_text="Phone number or bank account.")
+    reference = models.CharField(max_length=100, blank=True)
+    sent_on = models.DateField(null=True, blank=True, help_text="Date the refund actually left.")
+
+    notes = models.TextField(blank=True, help_text="Printed on the settlement statement.")
+
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="deposit_settlements_created",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    approved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="+",
+    )
+    approved_at = models.DateTimeField(null=True, blank=True)
+    approval_mode = models.CharField(max_length=30, default="owner_self")
+    sent_recorded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="+",
+    )
+    sent_recorded_at = models.DateTimeField(null=True, blank=True)
+
+    voided_at = models.DateTimeField(null=True, blank=True)
+    voided_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="+",
+    )
+    void_reason = models.CharField(max_length=255, blank=True)
+
+    class Meta:
+        db_table = "payments_deposit_settlement"
+        ordering = ["-settlement_date", "-id"]
+        constraints = [
+            models.CheckConstraint(condition=models.Q(deposit_held__gt=0), name="deposit_settlement_held_positive"),
+            models.CheckConstraint(
+                condition=models.Q(deductions_total__gte=0) & models.Q(refund_amount__gte=0),
+                name="deposit_settlement_non_negative",
+            ),
+            # The whole deposit is accounted for: kept + refunded = held.
+            models.CheckConstraint(
+                condition=models.Q(
+                    deposit_held=models.F("deductions_total") + models.F("refund_amount")
+                ),
+                name="deposit_settlement_adds_up",
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(refund_status="sent") | models.Q(sent_on__isnull=False),
+                name="deposit_settlement_sent_has_date",
+            ),
+            # A deposit is settled once. Voiding frees the tenant for a fresh one.
+            models.UniqueConstraint(
+                fields=["tenant"], condition=models.Q(voided_at__isnull=True),
+                name="one_live_deposit_settlement_per_tenant",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.number} — {self.tenant}: refund KES {self.refund_amount}"
+
+    @property
+    def is_void(self) -> bool:
+        return self.voided_at is not None
+
+
+class DeductionKind(models.TextChoices):
+    UNPAID_BALANCE = "unpaid_balance", "Unpaid rent and charges"
+    DAMAGES = "damages", "Damages and repairs"
+    CLEANING = "cleaning", "Cleaning"
+    OTHER = "other", "Other"
+
+
+class DepositDeduction(models.Model):
+    """One line kept back from a deposit, printed on the settlement statement."""
+
+    settlement = models.ForeignKey(DepositSettlement, on_delete=models.CASCADE, related_name="deductions")
+    kind = models.CharField(max_length=20, choices=DeductionKind.choices)
+    description = models.CharField(max_length=200, help_text="Printed on the settlement statement.")
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    # The cost a damages / cleaning / other deduction recovers. Never set for
+    # the unpaid balance, which settles the tenant's account instead.
+    expense_category = models.ForeignKey(
+        "expenses.ExpenseCategory", on_delete=models.PROTECT, null=True, blank=True,
+        related_name="deposit_deductions",
+    )
+
+    class Meta:
+        db_table = "payments_deposit_deduction"
+        ordering = ["id"]
+        constraints = [
+            models.CheckConstraint(condition=models.Q(amount__gt=0), name="deposit_deduction_positive"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.settlement.number}: {self.get_kind_display()} KES {self.amount}"
 
 
 class OpeningBalance(models.Model):

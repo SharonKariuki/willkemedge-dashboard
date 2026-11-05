@@ -151,7 +151,10 @@ export function CreditsPanel({
             {credits.map((credit) => {
               const expanded = open === credit.id;
               const used = Number(credit.amount_applied) + Number(credit.amount_refunded);
-              const usable = !credit.is_void && Number(credit.remaining) > 0;
+              // The deposit applied at move-out is changed from its settlement
+              // (Deposit card), never held, refunded or voided on its own.
+              const fromDeposit = credit.reason === "deposit_applied";
+              const usable = !credit.is_void && !fromDeposit && Number(credit.remaining) > 0;
               return (
                 <Fragment key={credit.id}>
                   <TR className={cn(credit.is_void && "text-content-muted line-through decoration-ink-300")}>
@@ -170,7 +173,7 @@ export function CreditsPanel({
                     <TD>{credit.reason_display}</TD>
                     <TD className="text-right tabular-nums">{KES(credit.amount)}</TD>
                     <TD className="text-right tabular-nums text-content-muted">{used ? KES(used) : "—"}</TD>
-                    <TD className="text-right font-medium tabular-nums">{credit.is_void ? "—" : KES(credit.remaining)}</TD>
+                    <TD className="text-right font-medium tabular-nums">{credit.is_void || fromDeposit ? "—" : KES(credit.remaining)}</TD>
                     <TD><Badge tone={STATUS_TONE[credit.status_display]}>{credit.status_display}</Badge></TD>
                     {canManage && (
                       <TD className="text-right">
@@ -194,7 +197,7 @@ export function CreditsPanel({
                               </Button>
                             </>
                           )}
-                          {!credit.is_void && (
+                          {!credit.is_void && !fromDeposit && (
                             <Button variant="ghost" size="sm" onClick={() => setVoiding(credit)}>
                               <Undo2 className="h-3.5 w-3.5" /> Void
                             </Button>
