@@ -66,6 +66,7 @@ const editSchema = z.object({
   emergency_phone: z.string().optional(),
   is_billable: z.boolean().optional(),
   billing_frequency: z.enum(["monthly", "quarterly"]).optional(),
+  vat_exempt: z.boolean().optional(),
   first_rent_month: z.string().optional(),
   notes: z.string().optional(),
 }).superRefine((values, ctx) => {
@@ -230,6 +231,7 @@ export default function TenantDetailPage() {
         due_day: tenant.due_day ?? 5,
         is_billable: tenant.is_billable ?? true,
         billing_frequency: tenant.billing_frequency ?? "monthly",
+        vat_exempt: tenant.vat_exempt ?? false,
         first_rent_month: firstRentMonthFromApi(tenant.first_rent_month),
         notes: tenant.notes ?? "",
       });
@@ -457,6 +459,22 @@ export default function TenantDetailPage() {
                 </span>
               </span>
             </label>
+            {tenant.unit_classification === "BUSINESS" && (
+              <label className="flex items-start gap-2.5 text-sm">
+                <input
+                  type="checkbox"
+                  {...editForm.register("vat_exempt")}
+                  className="mt-0.5 h-4 w-4 rounded border-border accent-sage-600"
+                />
+                <span>
+                  <span className="font-medium text-content">No VAT on this letting</span>
+                  <span className="mt-0.5 block text-[11px] text-ink-500">
+                    Rent is charged without 16% VAT from the next charge raised. Charges
+                    already raised keep their VAT until they are restated.
+                  </span>
+                </span>
+              </label>
+            )}
             <div className="flex justify-end gap-2">
               <Button type="button" variant="ghost" onClick={() => setMode("view")}>Cancel</Button>
               <Button type="submit" loading={updateTenant.isPending}>Save changes</Button>
@@ -556,6 +574,7 @@ export default function TenantDetailPage() {
             {/* Otherwise the page reads as a tenant who simply never owes
                 anything, with nothing to say the rent run skips them. */}
             {tenant.is_billable === false && <Badge tone="neutral">Rent-free</Badge>}
+            {tenant.vat_exempt && <Badge tone="neutral">No VAT</Badge>}
           </div>
         </Card>
         <Card padding="md">

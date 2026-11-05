@@ -243,7 +243,7 @@ class TenantDetailSerializer(serializers.ModelSerializer):
             "unit", "unit_label", "building_name", "building_id", "unit_classification",
             "space_units", "space_label",
             "monthly_rent", "deposit_paid", "due_day", "is_billable", "billing_frequency",
-            "first_rent_month",
+            "vat_exempt", "first_rent_month",
             "deposit_months", "expected_deposit", "deposit_shortfall",
             "agreed_deposit", "deposit_is_agreed",
 
@@ -425,7 +425,7 @@ class TenantEditSerializer(serializers.ModelSerializer):
             "first_name", "last_name", "id_number", "kra_pin", "phone", "email",
             "emergency_contact", "emergency_phone", "care_of",
             "monthly_rent", "deposit_paid", "agreed_deposit", "due_day",
-            "is_billable", "billing_frequency", "first_rent_month",
+            "is_billable", "billing_frequency", "vat_exempt", "first_rent_month",
             "deposit_refund_percentage",
             "notes",
 
