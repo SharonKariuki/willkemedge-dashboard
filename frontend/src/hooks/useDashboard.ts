@@ -51,7 +51,7 @@ export type AlertType = "overdue" | "partial" | "move_out" | "expiring_lease" | 
 export interface DashboardAlert {
   type: AlertType;
   message: string;
-  tenant_id?: number;
+  tenant_id?: number | null;
   unit_id?: number;
 }
 
