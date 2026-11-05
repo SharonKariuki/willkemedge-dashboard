@@ -24,6 +24,7 @@ from .serializers import (
     TenantDocumentSerializer,
     TenantEditSerializer,
     TenantListSerializer,
+    live_payments,
     rent_roll_balances,
 )
 from .services import (
@@ -456,8 +457,7 @@ class TenantViewSet(viewsets.ModelViewSet):
         # Voided payments are excluded from every other balance in the system;
         # counting them here made paid-to-date disagree with the arrears table.
         total_paid = (
-            tenant.payments.filter(voided_at__isnull=True)
-            .aggregate(total=Sum("amount"))["total"] or Decimal("0")
+            live_payments(tenant).aggregate(total=Sum("amount"))["total"] or Decimal("0")
         )
         total_arrears = arrears.aggregate(total=Sum("balance"))["total"] or Decimal("0")
         return Response({
@@ -500,59 +500,6 @@ class TenantViewSet(viewsets.ModelViewSet):
                 for a in arrears
             ],
         })
-    @action(detail=True, methods=["get"], url_path="statement")
-    def statement(self, request, pk=None):
-        """GET /api/tenants/<id>/statement/ — unified financial ledger."""
-        from apps.payments.models import Arrears, Payment
-        tenant = self.get_object()
-
-        # Charges (Arrears records)
-        charges = Arrears.objects.filter(tenant=tenant).order_by("period_year", "period_month")
-        # Credits (Payments)
-        credits = Payment.objects.filter(tenant=tenant).order_by("payment_date")
-
-        ledger = []
-        running_balance = Decimal("0")
-
-        # Arrears entries represent the rent obligation for each month
-        for c in charges:
-            running_balance += c.expected_rent
-            ledger.append({
-                "date": f"{c.period_year}-{c.period_month:02d}-01",
-                "description": f"Rent Charge - {c.period_month}/{c.period_year}",
-                "type": "debit",
-                "amount": _money(c.expected_rent),
-                "running_balance": _money(running_balance),
-                "period": f"{c.period_month}/{c.period_year}"
-            })
-
-        # Payment entries reduce the balance
-        for p in credits:
-            running_balance -= p.amount
-            ledger.append({
-                "date": p.payment_date.isoformat(),
-                "description": f"Rent Payment - {p.source.upper()} ({p.reference or 'N/A'})",
-                "type": "credit",
-                "amount": _money(p.amount),
-                "running_balance": _money(running_balance),
-                "period": f"{p.period_month}/{p.period_year}"
-            })
-
-        # Sort by date, then by type (debit/charge first on same day)
-        ledger.sort(key=lambda x: (x["date"], 0 if x["type"] == "debit" else 1))
-
-        total_expected = sum((c.expected_rent for c in charges), Decimal("0"))
-        total_paid = sum((p.amount for p in credits), Decimal("0"))
-        return Response({
-            "tenant_name": tenant.full_name,
-            "unit": tenant.unit.label if tenant.unit else "N/A",
-            "building": tenant.unit.building.name if tenant.unit else "N/A",
-            "total_expected": _money(total_expected),
-            "total_paid": _money(total_paid),
-            "current_balance": _money(running_balance),
-            "entries": ledger
-        })
-
     @action(detail=True, methods=["get"], url_path="statement-pdf")
     def statement_pdf(self, request, pk=None):
         """GET /api/tenants/<id>/statement-pdf/ — official Wilkem rent statement."""

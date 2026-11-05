@@ -74,8 +74,13 @@ def live_payments(tenant):
     ``voided_at`` and posting a mirror journal entry. Every balance, arrears and
     income figure excludes them; ``total_paid`` did not, so a voided receipt kept
     inflating the tenant's paid-to-date long after it had been reversed.
+
+    A tenant whose books were restarted (``payments.books``) counts from the
+    restart: money from before it is inside the opening balance already.
     """
-    return tenant.payments.filter(voided_at__isnull=True)
+    from apps.payments import books
+
+    return tenant.payments.filter(books.payments_q(), voided_at__isnull=True)
 
 
 # The database refuses these (CheckConstraints since #309); saying so here

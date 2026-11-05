@@ -577,6 +577,7 @@ def build_statement(
         (fy, fm), (ly, lm) = quarter_bounds((current.period_year, current.period_month))
         current_rows = list(
             Arrears.objects.filter(
+                books.arrears_q(),
                 tenant=tenant, period_year=fy, period_month__gte=fm, period_month__lte=lm,
             ).order_by("period_month")
         )
