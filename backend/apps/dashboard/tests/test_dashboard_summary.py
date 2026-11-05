@@ -124,6 +124,15 @@ class DashboardSummaryTests(APITestCase):
         assert building["total"] == 5
         assert building["occupied"] == 3
 
+    def test_partial_payment_alert_names_the_current_tenant(self):
+        # The dashboard links each alert to the page that resolves it; a
+        # partial-payment alert opens the tenant who owes the balance.
+        Unit.objects.filter(pk=self.res.pk).update(status=UnitStatus.OCCUPIED_PARTIAL)
+        alerts = [a for a in self._summary()["alerts"] if a["type"] == "partial"]
+        assert len(alerts) == 1
+        assert alerts[0]["unit_id"] == self.res.id
+        assert alerts[0]["tenant_id"] == self.res_t.id
+
     def test_collection_excludes_deposit_and_grosses_up_commercial(self):
         data = self._summary()
         kpis = data["kpis"]
