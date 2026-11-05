@@ -168,8 +168,64 @@ export default function DashboardPage() {
         />
       </section>
 
-      {/* ── This morning + Rent status / Recent payments ────────────────────────────────── */}
-      <section className="grid gap-6 lg:grid-cols-5">
+      {/* ── Quick actions + Rent status, then This morning + Recent payments ── */}
+      <section className="grid gap-x-6 gap-y-8 lg:grid-cols-5">
+        {/* Quick actions — under the Collected card, beside Rent status. */}
+        <div className="flex flex-wrap items-start gap-3 lg:col-span-2">
+          <QuickAction to="/payments" icon={Wallet} label="Record" ariaLabel="Record payment" />
+          <QuickAction to="/tenants?new=1" icon={UserPlus} label="Add tenant" />
+          <QuickAction to="/notifications" icon={Send} label="Remind" ariaLabel="Remind tenants" />
+          <QuickAction to="/reports" icon={BarChart3} label="Reports" ariaLabel="View reports" />
+        </div>
+
+        <Card padding="none" className="lg:col-span-3">
+          <div className="px-6 pt-4">
+            <h2 className="text-lg font-semibold text-content">Rent status</h2>
+          </div>
+          <div className="flex flex-col items-center gap-6 p-4 sm:flex-row sm:px-6">
+            <div className="relative flex h-[112px] w-[140px] shrink-0 items-center justify-center">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={occData}
+                    dataKey="value"
+                    innerRadius={38}
+                    outerRadius={54}
+                    paddingAngle={2}
+                    stroke="none"
+                  >
+                    {occData.map((_, i) => (
+                      <Cell key={i} fill={OCCUPANCY_COLORS[i % OCCUPANCY_COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <RcTooltip contentStyle={TOOLTIP_STYLE} />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                <p className="text-2xl font-bold tabular-nums tracking-tight text-content">
+                  {occupancyPct}
+                  <span className="text-base font-semibold text-content-muted">%</span>
+                </p>
+                <p className="mt-0.5 text-[10px] uppercase tracking-wider text-content-muted">
+                  occupied
+                </p>
+              </div>
+            </div>
+            <ul className="w-full space-y-2 text-sm">
+              {occData.map((d, i) => (
+                <li key={d.name} className="flex items-center gap-3">
+                  <span
+                    className="h-2.5 w-2.5 rounded-full"
+                    style={{ background: OCCUPANCY_COLORS[i % OCCUPANCY_COLORS.length] }}
+                  />
+                  <span className="text-content-secondary">{d.name}</span>
+                  <span className="ml-auto font-semibold tabular-nums text-content">{d.value}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </Card>
+
         <div className="lg:col-span-2">
           <div className="mb-4 flex items-baseline justify-between">
             <h2 className="text-lg font-semibold text-content">This morning</h2>
@@ -234,65 +290,7 @@ export default function DashboardPage() {
         </div>
 
         <div className="lg:col-span-3">
-          {/* Rent status with the quick actions beside it — on a phone the
-              actions sit in one row above the card. */}
-          <div className="flex flex-col-reverse gap-5 sm:flex-row sm:items-center">
-            <Card padding="none" className="min-w-0 flex-1">
-              <div className="px-6 pt-4">
-                <h2 className="text-lg font-semibold text-content">Rent status</h2>
-              </div>
-              <div className="flex flex-col items-center gap-6 p-4 sm:flex-row sm:px-6">
-                <div className="relative flex h-[112px] w-[140px] shrink-0 items-center justify-center">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie
-                        data={occData}
-                        dataKey="value"
-                        innerRadius={38}
-                        outerRadius={54}
-                        paddingAngle={2}
-                        stroke="none"
-                      >
-                        {occData.map((_, i) => (
-                          <Cell key={i} fill={OCCUPANCY_COLORS[i % OCCUPANCY_COLORS.length]} />
-                        ))}
-                      </Pie>
-                      <RcTooltip contentStyle={TOOLTIP_STYLE} />
-                    </PieChart>
-                  </ResponsiveContainer>
-                  <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-                    <p className="text-2xl font-bold tabular-nums tracking-tight text-content">
-                      {occupancyPct}
-                      <span className="text-base font-semibold text-content-muted">%</span>
-                    </p>
-                    <p className="mt-0.5 text-[10px] uppercase tracking-wider text-content-muted">
-                      occupied
-                    </p>
-                  </div>
-                </div>
-                <ul className="w-full space-y-2 text-sm">
-                  {occData.map((d, i) => (
-                    <li key={d.name} className="flex items-center gap-3">
-                      <span
-                        className="h-2.5 w-2.5 rounded-full"
-                        style={{ background: OCCUPANCY_COLORS[i % OCCUPANCY_COLORS.length] }}
-                      />
-                      <span className="text-content-secondary">{d.name}</span>
-                      <span className="ml-auto font-semibold tabular-nums text-content">{d.value}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </Card>
-            <div className="grid shrink-0 grid-cols-4 justify-items-center gap-x-3 gap-y-4 sm:grid-cols-2">
-              <QuickAction to="/payments" icon={Wallet} label="Record" ariaLabel="Record payment" />
-              <QuickAction to="/tenants?new=1" icon={UserPlus} label="Add tenant" />
-              <QuickAction to="/notifications" icon={Send} label="Remind" ariaLabel="Remind tenants" />
-              <QuickAction to="/reports" icon={BarChart3} label="Reports" ariaLabel="View reports" />
-            </div>
-          </div>
-
-          <div className="mb-4 mt-8 flex items-baseline justify-between">
+          <div className="mb-4 flex items-baseline justify-between">
             <h2 className="text-lg font-semibold text-content">Recent payments</h2>
             <Link
               to="/payments"
