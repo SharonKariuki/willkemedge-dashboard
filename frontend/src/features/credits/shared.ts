@@ -8,6 +8,7 @@
  * reason chosen, and the screens only describe the effect on the tenant.
  */
 import type { Refund } from "@/hooks/useCredits";
+import type { RefundBasis } from "@/hooks/useDepositSettlements";
 import { formatKES } from "@/lib/money";
 
 export const KES = formatKES;
@@ -22,3 +23,10 @@ export const METHODS: { value: Refund["method"]; label: string }[] = [
 
 /** Methods that leave a trace on a statement, so the reference is required. */
 export const NEEDS_REFERENCE = new Set<Refund["method"]>(["mpesa", "bank", "cheque"]);
+
+/** A deposit refund as the owner stated it, in shillings — mirrors the server. */
+export function refundFor(basis: RefundBasis, held: number, deductions: number, amount: string, pct: string): number {
+  if (basis === "amount") return round2(Number(amount) || 0);
+  if (basis === "percentage") return round2((held * (Number(pct) || 0)) / 100);
+  return round2(held - deductions);
+}

@@ -5,6 +5,7 @@ from rest_framework.routers import DefaultRouter
 from .coop_ipn import CoopIpnView
 from .credit_views import RefundViewSet, TenantCreditViewSet
 from .cron_views import ScheduledJobTriggerView
+from .deposit_settlement_views import DepositSettlementViewSet
 from .notification_views import NotificationViewSet
 from .reconciliation_views import DailyReconciliationTriggerView
 from .views import (
@@ -25,6 +26,7 @@ router.register("unmatched-credits", UnmatchedCreditViewSet, basename="unmatched
 router.register("utility-charges", UtilityChargeViewSet, basename="utility-charge")
 router.register("tenant-credits", TenantCreditViewSet, basename="tenant-credit")
 router.register("refunds", RefundViewSet, basename="refund")
+router.register("deposit-settlements", DepositSettlementViewSet, basename="deposit-settlement")
 
 app_name = "payments"
 

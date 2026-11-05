@@ -36,6 +36,8 @@ from django.utils.dateparse import parse_date
 
 from apps.buildings.models import UnitClassification
 from apps.expenses.coa import (
+    DEPOSIT_BANK,
+    DEPOSITS_HELD,
     LATE_FEES,
     OPERATING_BANK,
     PARKING,
@@ -676,6 +678,15 @@ def _credit_debit_lines(credit) -> list:
         return [(category.account.code, credit.amount, Decimal("0"), f"{category.name} — {label}"[:255])]
     if credit.reason == CreditReason.OPENING_CREDIT:
         return [(RETAINED_EARNINGS, credit.amount, Decimal("0"), f"Opening credit — {label}"[:255])]
+    if credit.reason == CreditReason.DEPOSIT_APPLIED:
+        # The deposit stops being owed back (2100) and settles the account
+        # instead; the money it was held in becomes the landlord's to use, so
+        # it leaves the deposit bank and 1030 still equals 2100.
+        return [
+            (DEPOSITS_HELD, credit.amount, Decimal("0"), f"Deposit applied — {label}"[:255]),
+            (OPERATING_BANK, credit.amount, Decimal("0"), "Deposit kept — moved from the deposit bank"),
+            (DEPOSIT_BANK, Decimal("0"), credit.amount, "Tenant Security Deposit Bank"),
+        ]
     raise ValueError(f"No posting rule for credit reason {credit.reason!r}.")
 
 
@@ -752,6 +763,87 @@ def reverse_refund(refund, *, on) -> JournalEntry:
         source_id=refund.pk,
         kind="reversal",
         lines=_mirror(_refund_lines(refund)),
+    )
+
+
+# ── Deposit settlement at move-out ──────────────────────────────────────────
+#
+# A deposit is a liability (2100) held in its own bank account (1030). When a
+# tenant leaves, every shilling of it goes one of three ways:
+#
+#   applied to what they owed   the settlement's TenantCredit (deposit_applied):
+#                               DR 2100 / CR 1040, and 1030 → 1020
+#   kept for damages, cleaning  DR 2100 / CR <the expense it recovers>, and
+#                               1030 → 1020 — the mirror of a damage recharge
+#   refunded                    DR 2100 / CR 1030, when the money leaves
+#
+# None of it is income: the unpaid rent was income when billed, and a
+# deduction for a repair reduces what the repair cost.
+
+
+def _settlement_lines(settlement) -> list:
+    kept = [d for d in settlement.deductions.all() if d.expense_category_id]
+    if not kept:
+        return []
+    total = sum((d.amount for d in kept), ZERO)
+    label = f"Deposit {settlement.number} — {settlement.tenant}"
+    lines = [(DEPOSITS_HELD, total, ZERO, f"Deposit kept — {label}"[:255])]
+    for d in kept:
+        if not d.expense_category.account_id:
+            raise ValueError(f"{settlement.number}: {d.expense_category} has no expense account to post to.")
+        lines.append((d.expense_category.account.code, ZERO, d.amount, f"{d.description} — {label}"[:255]))
+    lines += [
+        (OPERATING_BANK, total, ZERO, "Deposit kept — moved from the deposit bank"),
+        (DEPOSIT_BANK, ZERO, total, "Tenant Security Deposit Bank"),
+    ]
+    return lines
+
+
+def post_deposit_settlement(settlement, *, replace: bool = False) -> JournalEntry | None:
+    """Post what a settlement kept for damages, cleaning and other costs."""
+    return _build_entry(
+        date=settlement.settlement_date,
+        memo=f"Deposit settlement {settlement.number}: {settlement.tenant}"[:255],
+        reference=settlement.number,
+        building=_tenant_building(settlement.tenant),
+        source_type="deposit_settlement",
+        source_id=settlement.pk,
+        kind="normal",
+        lines=_settlement_lines(settlement),
+        replace=replace,
+    )
+
+
+def reverse_deposit_settlement(settlement, *, on) -> JournalEntry | None:
+    """Mirror-image of a voided settlement's deductions, dated the day voided."""
+    return _build_entry(
+        date=on,
+        memo=f"VOID deposit settlement {settlement.number}: {settlement.tenant}"[:255],
+        reference=settlement.number,
+        building=_tenant_building(settlement.tenant),
+        source_type="deposit_settlement",
+        source_id=settlement.pk,
+        kind="reversal",
+        lines=_mirror(_settlement_lines(settlement)),
+    )
+
+
+def post_deposit_settlement_refund(settlement, *, replace: bool = False) -> JournalEntry | None:
+    """Post the deposit refund once it has left: DR 2100 / CR 1030."""
+    amount = settlement.refund_amount
+    return _build_entry(
+        date=settlement.sent_on,
+        memo=f"Deposit refund {settlement.number}: {settlement.tenant}"[:255],
+        reference=settlement.reference or settlement.number,
+        building=_tenant_building(settlement.tenant),
+        source_type="deposit_settlement_refund",
+        source_id=settlement.pk,
+        kind="normal",
+        lines=[
+            (DEPOSITS_HELD, amount, ZERO, f"Deposit refunded — {settlement.tenant}"[:255]),
+            (DEPOSIT_BANK, ZERO, amount, "Tenant Security Deposit Bank"),
+        ],
+        replace=replace,
     )
 
 

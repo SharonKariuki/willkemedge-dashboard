@@ -120,6 +120,23 @@ def rebuild() -> Counter:
                     lambda on, r=r: posting.reverse_refund(r, on=on or r.sent_on),
                 )
 
+        from apps.payments.models import DepositRefundStatus, DepositSettlement
+
+        for s in DepositSettlement.objects.select_related("tenant__unit__building").prefetch_related(
+            "deductions__expense_category__account"
+        ):
+            posting.post_deposit_settlement(s, replace=True)
+            done["deposit settlements"] += 1
+            if s.refund_status == DepositRefundStatus.SENT:
+                posting.post_deposit_settlement_refund(s, replace=True)
+            if s.is_void:
+                _repost_reversal(
+                    "deposit_settlement", s.pk,
+                    lambda on, s=s: posting.reverse_deposit_settlement(
+                        s, on=on or s.voided_at.date()
+                    ),
+                )
+
         # Last: a restarted account's opening entry is the difference between
         # the landlord's figure and what the history above left in 1040.
         from apps.payments.models import OpeningBalance

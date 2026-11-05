@@ -108,6 +108,14 @@ def _next_number(series: str) -> str:
     return f"{series}-{seq.last:05d}"
 
 
+def _refuse_deposit_credit(credit: TenantCredit) -> None:
+    if credit.reason == CreditReason.DEPOSIT_APPLIED:
+        raise CreditError(
+            f"{credit.number} is the deposit applied at move-out. Change it from the "
+            "deposit settlement, not here."
+        )
+
+
 def _today(today=None) -> _dt.date:
     return today or timezone.localdate()
 
@@ -136,9 +144,16 @@ def _resettle(arrears: Arrears) -> None:
 # where a tenant stands
 # ---------------------------------------------------------------------------
 
+#: Credits the owner can hold, release, apply or refund. A deposit applied at
+#: move-out is spent the moment it is raised: whatever it does not settle in
+#: rent rows settles water and other charges through the balance, so what is
+#: left on it is not money the tenant can use again.
+USABLE_CREDITS_Q = ~Q(reason=CreditReason.DEPOSIT_APPLIED)
+
+
 def manual_credit_available(tenant, *, include_held: bool = True) -> Decimal:
     """What is left on the tenant's issued credits."""
-    qs = TenantCredit.objects.filter(tenant=tenant, status=CreditStatus.ISSUED)
+    qs = TenantCredit.objects.filter(USABLE_CREDITS_Q, tenant=tenant, status=CreditStatus.ISSUED)
     if not include_held:
         qs = qs.filter(on_hold=False)
     return sum((c.remaining for c in qs), ZERO)
@@ -468,7 +483,7 @@ def apply_account_credits(arrears: Arrears, *, today: _dt.date | None = None) ->
     total = ZERO
     credits = (
         TenantCredit.objects.select_for_update()
-        .filter(tenant_id=arrears.tenant_id, status=CreditStatus.ISSUED, on_hold=False)
+        .filter(USABLE_CREDITS_Q, tenant_id=arrears.tenant_id, status=CreditStatus.ISSUED, on_hold=False)
         .order_by("credit_date", "id")
     )
     for credit in credits:
@@ -496,6 +511,7 @@ def set_hold(credit: TenantCredit, *, hold: bool, actor=None, today: _dt.date | 
     credit = TenantCredit.objects.select_for_update().get(pk=credit.pk)
     if credit.is_void:
         raise CreditError("This credit has been voided.")
+    _refuse_deposit_credit(credit)
     if credit.on_hold == hold:
         return credit
     credit.on_hold = hold
@@ -556,7 +572,10 @@ def void_preview(credit: TenantCredit) -> dict:
 
 
 @transaction.atomic
-def void_credit(credit: TenantCredit, *, reason: str, actor=None, today: _dt.date | None = None) -> TenantCredit:
+def void_credit(
+    credit: TenantCredit, *, reason: str, actor=None, today: _dt.date | None = None,
+    _settlement: bool = False,
+) -> TenantCredit:
     """Take a credit off the account for good.
 
     * Rent it settled is re-opened (the applications are reversed).
@@ -574,6 +593,8 @@ def void_credit(credit: TenantCredit, *, reason: str, actor=None, today: _dt.dat
     credit = TenantCredit.objects.select_for_update().get(pk=credit.pk)
     if credit.is_void:
         raise CreditError("This credit is already void.")
+    if not _settlement:
+        _refuse_deposit_credit(credit)
 
     preview = void_preview(credit)
     for refund in Refund.objects.filter(
@@ -630,7 +651,7 @@ def _draw_plan(tenant, amount: Decimal, credit: TenantCredit | None):
         left -= take
     for c in (
         TenantCredit.objects.select_for_update()
-        .filter(tenant=tenant, status=CreditStatus.ISSUED)
+        .filter(USABLE_CREDITS_Q, tenant=tenant, status=CreditStatus.ISSUED)
         .order_by("credit_date", "id")
     ):
         if left <= 0:
@@ -688,6 +709,7 @@ def create_refund(
             raise CreditError("That credit belongs to a different tenant.")
         if credit.is_void:
             raise CreditError("That credit has been voided.")
+        _refuse_deposit_credit(credit)
         if amount > credit.remaining:
             raise CreditError(f"Only KES {credit.remaining:,.2f} is left on {credit.number}.")
 

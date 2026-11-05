@@ -19,6 +19,7 @@ import {
   Table, TBody, TD, TH, THead, TR,
 } from "@/components/ui";
 import { CreditsPanel } from "@/features/credits/CreditsPanel";
+import { DepositSettlementLinks } from "@/features/credits/DepositSettlement";
 import { VoidPaymentModal } from "@/features/payments/VoidPaymentModal";
 import { MoveInAgainForm } from "@/features/tenants/MoveInAgainForm";
 import { optionalEmail } from "@/features/tenants/email";
@@ -59,9 +60,6 @@ const editSchema = z.object({
   deposit_paid: z.string().optional().refine(isNonNegativeAmountOrBlank, "Enter a valid amount"),
   agreed_deposit: z.string().optional().refine(isNonNegativeAmountOrBlank, "Enter a valid amount"),
   due_day: z.coerce.number().int().min(1).max(31).optional(),
-  deposit_refund_percentage: z.coerce
-    .number({ invalid_type_error: "Enter a number between 0 and 100" })
-    .min(0, "Cannot be below 0").max(100, "Cannot exceed 100"),
   emergency_contact: z.string().optional(),
   emergency_phone: z.string().optional(),
   is_billable: z.boolean().optional(),
@@ -92,9 +90,6 @@ type NoticeFormValues = z.infer<typeof noticeSchema>;
 
 const moveOutSchema = z.object({
   move_out_date: z.string().min(1, "Required"),
-  deposit_refund_percentage: z.coerce
-    .number({ invalid_type_error: "Enter a number between 0 and 100" })
-    .min(0, "Cannot be below 0").max(100, "Cannot exceed 100"),
   notes: z.string().optional(),
 });
 type MoveOutFormValues = z.infer<typeof moveOutSchema>;
@@ -211,7 +206,7 @@ export default function TenantDetailPage() {
   });
   const moveOutForm = useForm<MoveOutFormValues>({
     resolver: zodResolver(moveOutSchema),
-    defaultValues: { move_out_date: todayIso(), deposit_refund_percentage: 100, notes: "" },
+    defaultValues: { move_out_date: todayIso(), notes: "" },
   });
 
   useEffect(() => {
@@ -225,7 +220,6 @@ export default function TenantDetailPage() {
         monthly_rent: String(tenant.monthly_rent),
         deposit_paid: String(tenant.deposit_paid),
         agreed_deposit: tenant.agreed_deposit == null ? "" : String(tenant.agreed_deposit),
-        deposit_refund_percentage: tenant.deposit_refund_percentage ?? 100,
         emergency_contact: tenant.emergency_contact ?? "",
         emergency_phone: tenant.emergency_phone ?? "",
         due_day: tenant.due_day ?? 5,
@@ -437,9 +431,6 @@ export default function TenantDetailPage() {
                 error={editForm.formState.errors.first_rent_month?.message}
                 onUse={(month) => editForm.setValue("first_rent_month", month, { shouldValidate: true })}
               />
-              <Field label="Deposit refund % (for move-out)" error={editForm.formState.errors.deposit_refund_percentage?.message}>
-                <input type="number" min={0} max={100} {...editForm.register("deposit_refund_percentage")} className={inputCls} />
-              </Field>
               <Field label="Emergency contact"><input {...editForm.register("emergency_contact")} className={inputCls} /></Field>
               <Field label="Emergency phone"><input {...editForm.register("emergency_phone")} className={inputCls} /></Field>
               <Field label="c/o (appears on rent statement)"><input {...editForm.register("care_of")} className={inputCls} placeholder="e.g. David Chibeka" /></Field>
@@ -507,8 +498,15 @@ export default function TenantDetailPage() {
         <Card padding="md">
           <form onSubmit={moveOutForm.handleSubmit(async (v) => {
             try {
-              await moveOut.mutateAsync({ move_out_date: v.move_out_date, notes: v.notes, deposit_refund_percentage: v.deposit_refund_percentage });
-              toast.success("Tenant moved out"); setMode("view");
+              await moveOut.mutateAsync({ move_out_date: v.move_out_date, notes: v.notes });
+              setMode("view");
+              // The deposit is the next thing to deal with, so go straight to it.
+              if (canManageCredit && Number(tenant.deposit_paid) > 0) {
+                toast.success("Tenant moved out. Now settle the deposit.");
+                navigate(`/tenants/${id}/deposit/settle`);
+              } else {
+                toast.success("Tenant moved out");
+              }
             } catch (e) { toast.error(getErrorMessage(e, "Failed to process move-out")); }
           })} className="space-y-4">
             <div className="rounded-md bg-status-unpaid/8 p-3 text-sm text-status-unpaid flex items-center gap-2">
@@ -517,13 +515,12 @@ export default function TenantDetailPage() {
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <DatePicker label="Move-out date *" {...moveOutForm.register("move_out_date")} error={moveOutForm.formState.errors.move_out_date?.message} />
-              <Field label="Deposit refund %" error={moveOutForm.formState.errors.deposit_refund_percentage?.message}>
-                <input type="number" min={0} max={100} step={1} {...moveOutForm.register("deposit_refund_percentage")} className={inputCls} />
-              </Field>
             </div>
-            <p className="-mt-1 text-[11px] text-content-muted">
-              Deposit paid: {KES(tenant.deposit_paid)}. Set to 0% if all forfeited due to damage.
-            </p>
+            {Number(tenant.deposit_paid) > 0 && (
+              <p className="-mt-1 text-[11px] text-content-muted">
+                Deposit held: {KES(tenant.deposit_paid)}. You&apos;ll settle it next — deductions, refund and a statement for the tenant.
+              </p>
+            )}
             <Field label="Notes"><textarea {...moveOutForm.register("notes")} rows={2} className={inputCls} /></Field>
             <div className="flex justify-end gap-2">
               <Button type="button" variant="ghost" onClick={() => setMode("view")}>Cancel</Button>
@@ -590,12 +587,13 @@ export default function TenantDetailPage() {
             the card names it under the figure held, so the reader knows what
             the deposit was meant to be. Where a different figure was agreed,
             Edit records it and the card shows that instead. */}
-        <Card padding="md">
+        <Card padding="md" id="deposit">
           <p className="text-xs uppercase tracking-wider text-content-muted">Rent security deposit</p>
           <p className="mt-2 font-semibold tabular-nums text-content">{KES(tenant.deposit_paid)}</p>
           <p className="mt-1 text-xs text-content-muted">
             {depositAgreed ? `${KES(tenant.expected_deposit)} agreed` : depositRule}
           </p>
+          {canManageCredit && <DepositSettlementLinks tenantId={tenant.id} />}
         </Card>
         {/* Balance: what the tenant owes, or the Credit on Account they hold.
             A credit is the other side of the same figure, so it lives here

@@ -140,6 +140,7 @@ LATE_FEES = "4200"
 PARKING = "4250"
 VAT_PAYABLE = "2600"                # 16% VAT collected on commercial rent
 DEPOSITS_HELD = "2100"
+DEPOSIT_BANK = "1030"                # the restricted account the deposits sit in
 RENT_RECEIVABLE = "1040"
 OPERATING_BANK = "1020"
 RETAINED_EARNINGS = "3300"          # opening credits owed from before the books began

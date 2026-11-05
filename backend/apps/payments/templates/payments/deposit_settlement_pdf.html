@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Deposit Settlement — {{ s.number }}</title>
+    <style>
+        @page { size: a4; margin: 1.6cm; }
+        body { font-family: Helvetica, Arial, sans-serif; color: #1a1a1a; font-size: 10px; line-height: 1.4; }
+        table { border-collapse: collapse; width: 100%; }
+        td, th { vertical-align: top; }
+
+        .masthead td { padding: 0; vertical-align: middle; }
+        .logo-box { background-color: #e11d2e; color: #ffffff; text-align: center; padding: 12px 10px; width: 210px; }
+        .logo-box .logo-main { font-size: 26px; font-weight: bold; letter-spacing: 1px; }
+        .logo-box .logo-edge { font-size: 15px; font-weight: bold; font-style: italic; }
+        .entity-box { padding-left: 16px; }
+        .entity-box .entity-name { font-size: 16px; font-weight: bold; }
+        .entity-box .entity-contact { font-size: 9px; color: #1d4ed8; }
+
+        .titlebar { border-top: 1px solid #999; border-bottom: 1px solid #999; padding: 6px 0; margin-top: 12px; }
+        .titlebar td { color: #1d4ed8; font-weight: bold; font-size: 12px; }
+        .titlebar .right { text-align: right; }
+
+        .who { margin-top: 10px; }
+        .who td { border: 1px solid #b8b8b8; padding: 8px 10px; }
+        .who .k { color: #555; font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px; }
+        .who .v { font-weight: bold; font-size: 11px; }
+
+        .lines { margin-top: 14px; }
+        .lines th { background-color: #f3d9c8; border: 1px solid #b8b8b8; padding: 6px; font-size: 9.5px; text-align: left; }
+        .lines td { border: 1px solid #cdcdcd; padding: 6px; }
+        .lines .money { text-align: right; width: 120px; }
+        .lines .sub td { font-weight: bold; background-color: #f7f7f7; }
+        .lines .indent { padding-left: 18px; }
+        .lines .total td { font-weight: bold; font-size: 12px; border-top: 2px solid #1a1a1a; }
+
+        .box { margin-top: 12px; }
+        .box td { border: 1px solid #c9c9c9; padding: 8px 10px; }
+        .box .title { font-weight: bold; font-size: 11px; }
+        .muted { color: #555; }
+        .void { color: #c20000; font-weight: bold; font-size: 14px; text-align: center; border: 2px solid #c20000; padding: 6px; margin-top: 10px; }
+        .footer { margin-top: 24px; font-size: 8.5px; color: #555; text-align: center; border-top: 1px solid #ccc; padding-top: 8px; }
+    </style>
+</head>
+<body>
+    <table class="masthead">
+        <tr>
+            <td class="logo-box"><div class="logo-main">WILKEM <span class="logo-edge">edge</span></div></td>
+            <td width="16"></td>
+            <td class="entity-box">
+                <div class="entity-name">{{ entity_name }}</div>
+                <div>{{ postal_address }}</div>
+                <div>Tel: {{ contact_phone }}</div>
+                <div class="entity-contact">{{ contact_email }}</div>
+            </td>
+        </tr>
+    </table>
+
+    <table class="titlebar">
+        <tr>
+            <td>SECURITY DEPOSIT SETTLEMENT STATEMENT</td>
+            <td class="right">{{ s.number }} · {{ settlement_date }}</td>
+        </tr>
+    </table>
+
+    {% if s.voided_at %}
+    <div class="void">VOID — this settlement was withdrawn and does not apply.</div>
+    {% endif %}
+
+    <table class="who">
+        <tr>
+            <td width="50%"><div class="k">Tenant</div><div class="v">{{ tenant_name }}</div></td>
+            <td width="50%"><div class="k">Premises</div><div class="v">{{ premises }}</div></td>
+        </tr>
+        <tr>
+            <td><div class="k">Tenancy</div><div>{{ tenancy }}</div></td>
+            <td><div class="k">Deposit held</div><div class="v">KES {{ deposit_held }}</div></td>
+        </tr>
+    </table>
+
+    <table class="lines">
+        <thead>
+            <tr><th>Description</th><th class="money">Amount (KES)</th></tr>
+        </thead>
+        <tbody>
+            <tr class="sub"><td>Security deposit held</td><td class="money">{{ deposit_held }}</td></tr>
+            {% if deductions %}
+            <tr><td colspan="2" class="muted">Less deductions:</td></tr>
+            {% for d in deductions %}
+            <tr><td class="indent">{{ d.description }}{% if d.description != d.kind %} <span class="muted">({{ d.kind }})</span>{% endif %}</td><td class="money">({{ d.amount }})</td></tr>
+            {% endfor %}
+            <tr class="sub"><td>Total deductions</td><td class="money">({{ deductions_total }})</td></tr>
+            {% else %}
+            <tr><td class="muted">No deductions.</td><td class="money">0.00</td></tr>
+            {% endif %}
+            <tr class="total"><td>Refund due to you{% if refund_share %} <span class="muted">({{ refund_share }}% of the deposit)</span>{% endif %}</td><td class="money">{{ refund_amount }}</td></tr>
+        </tbody>
+    </table>
+
+    <table class="box"><tr><td><span class="title">Refund</span><br>{% if s.refund_status == "none" %}
+            No refund is due: the deposit was used in full for the deductions above.
+        {% elif s.refund_status == "sent" %}
+            KES {{ refund_amount }} sent on {{ sent_on }} by {{ method }}{% if s.paid_to %} to {{ s.paid_to }}{% endif %}{% if s.reference %}, reference {{ s.reference }}{% endif %}.
+        {% else %}
+            KES {{ refund_amount }} will be sent to you{% if method %} by {{ method }}{% endif %}{% if s.paid_to %} to {{ s.paid_to }}{% endif %}.
+        {% endif %}</td></tr></table>
+
+    {% if remaining_owed %}
+    <table class="box"><tr><td><span class="title">Balance still owed</span><br>Your account showed KES {{ balance_owed }} unpaid when the deposit was settled. After applying
+        KES {{ applied_to_balance }} of the deposit, <b>KES {{ remaining_owed }}</b> remains payable.</td></tr></table>
+    {% endif %}
+
+    {% if s.notes %}
+    <table class="box"><tr><td><span class="title">Notes</span><br>{{ s.notes|linebreaksbr }}</td></tr></table>
+    {% endif %}
+
+    <div class="footer">
+        {{ entity_name }} · Deposit settlement {{ s.number }} · Issued {{ issued_on }}
+    </div>
+</body>
+</html>
