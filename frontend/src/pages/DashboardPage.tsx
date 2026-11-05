@@ -131,7 +131,12 @@ export default function DashboardPage() {
   return (
     <div className="space-y-10 lg:space-y-12">
       {/* ── Masthead with actions ─────────────────────────────────────────── */}
-      <Masthead dateLine={dateLine} greeting={greeting} />
+      <Masthead dateLine={dateLine} greeting={greeting}>
+        <QuickAction to="/payments" icon={Wallet} label="Record" ariaLabel="Record payment" />
+        <QuickAction to="/tenants?new=1" icon={UserPlus} label="Add tenant" />
+        <QuickAction to="/notifications" icon={Send} label="Remind" ariaLabel="Remind tenants" />
+        <QuickAction to="/reports" icon={BarChart3} label="Reports" ariaLabel="View reports" />
+      </Masthead>
 
       {/* ── KPI tiles — glanceable ────────────────────────────────────────── */}
       <section className="-mt-4 grid gap-5 sm:grid-cols-2 lg:-mt-6 lg:grid-cols-4 lg:items-stretch lg:gap-6">
@@ -168,70 +173,7 @@ export default function DashboardPage() {
         />
       </section>
 
-      {/* ── Income trend + Rent status ────────────────────────────────────── */}
-      <section className="grid gap-6 lg:grid-cols-3">
-        <Card padding="none" className="flex flex-col lg:col-span-2">
-          <div className="px-6 pt-4">
-            <h2 className="text-lg font-semibold text-content">Quick actions</h2>
-          </div>
-          <div className="grid flex-1 grid-cols-2 content-center gap-x-4 gap-y-6 p-6 sm:grid-cols-4">
-            <QuickAction to="/payments" icon={Wallet} label="Record" ariaLabel="Record payment" />
-            <QuickAction to="/tenants?new=1" icon={UserPlus} label="Add tenant" />
-            <QuickAction to="/notifications" icon={Send} label="Remind" ariaLabel="Remind tenants" />
-            <QuickAction to="/reports" icon={BarChart3} label="Reports" ariaLabel="View reports" />
-          </div>
-        </Card>
-
-        <Card padding="none">
-          <div className="px-6 pt-4">
-            <h2 className="text-lg font-semibold text-content">Rent status</h2>
-          </div>
-          <div className="p-4">
-            <div className="relative mx-auto flex h-[112px] w-full items-center justify-center">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={occData}
-                    dataKey="value"
-                    innerRadius={38}
-                    outerRadius={54}
-                    paddingAngle={2}
-                    stroke="none"
-                  >
-                    {occData.map((_, i) => (
-                      <Cell key={i} fill={OCCUPANCY_COLORS[i % OCCUPANCY_COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <RcTooltip contentStyle={TOOLTIP_STYLE} />
-                </PieChart>
-              </ResponsiveContainer>
-              <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-                <p className="text-2xl font-bold tabular-nums tracking-tight text-content">
-                  {occupancyPct}
-                  <span className="text-base font-semibold text-content-muted">%</span>
-                </p>
-                <p className="mt-0.5 text-[10px] uppercase tracking-wider text-content-muted">
-                  occupied
-                </p>
-              </div>
-            </div>
-            <ul className="mt-4 space-y-2 text-sm">
-              {occData.map((d, i) => (
-                <li key={d.name} className="flex items-center gap-3">
-                  <span
-                    className="h-2.5 w-2.5 rounded-full"
-                    style={{ background: OCCUPANCY_COLORS[i % OCCUPANCY_COLORS.length] }}
-                  />
-                  <span className="text-content-secondary">{d.name}</span>
-                  <span className="ml-auto font-semibold tabular-nums text-content">{d.value}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </Card>
-      </section>
-
-      {/* ── This morning + Recent payments ────────────────────────────────── */}
+      {/* ── This morning + Rent status / Recent payments ────────────────────────────────── */}
       <section className="grid gap-6 lg:grid-cols-5">
         <div className="lg:col-span-2">
           <div className="mb-4 flex items-baseline justify-between">
@@ -297,7 +239,55 @@ export default function DashboardPage() {
         </div>
 
         <div className="lg:col-span-3">
-          <div className="mb-4 flex items-baseline justify-between">
+            <Card padding="none">
+              <div className="px-6 pt-4">
+                <h2 className="text-lg font-semibold text-content">Rent status</h2>
+              </div>
+              <div className="flex flex-col items-center gap-6 p-4 sm:flex-row sm:px-6">
+                <div className="relative flex h-[112px] w-[140px] shrink-0 items-center justify-center">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={occData}
+                        dataKey="value"
+                        innerRadius={38}
+                        outerRadius={54}
+                        paddingAngle={2}
+                        stroke="none"
+                      >
+                        {occData.map((_, i) => (
+                          <Cell key={i} fill={OCCUPANCY_COLORS[i % OCCUPANCY_COLORS.length]} />
+                        ))}
+                      </Pie>
+                      <RcTooltip contentStyle={TOOLTIP_STYLE} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                  <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                    <p className="text-2xl font-bold tabular-nums tracking-tight text-content">
+                      {occupancyPct}
+                      <span className="text-base font-semibold text-content-muted">%</span>
+                    </p>
+                    <p className="mt-0.5 text-[10px] uppercase tracking-wider text-content-muted">
+                      occupied
+                    </p>
+                  </div>
+                </div>
+                <ul className="w-full space-y-2 text-sm">
+                  {occData.map((d, i) => (
+                    <li key={d.name} className="flex items-center gap-3">
+                      <span
+                        className="h-2.5 w-2.5 rounded-full"
+                        style={{ background: OCCUPANCY_COLORS[i % OCCUPANCY_COLORS.length] }}
+                      />
+                      <span className="text-content-secondary">{d.name}</span>
+                      <span className="ml-auto font-semibold tabular-nums text-content">{d.value}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </Card>
+
+          <div className="mb-4 mt-8 flex items-baseline justify-between">
             <h2 className="text-lg font-semibold text-content">Recent payments</h2>
             <Link
               to="/payments"
@@ -494,7 +484,7 @@ function Masthead({ dateLine, greeting, headline, children }: MastheadProps) {
       {/* shrink-0 so the greeting gives way first — otherwise the actions are
           squeezed until each button drops onto its own line. */}
       {children && (
-        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2.5">{children}</div>
+        <div className="flex shrink-0 flex-wrap items-start gap-3 sm:justify-end">{children}</div>
       )}
     </header>
   );
@@ -636,12 +626,12 @@ function QuickAction({ to, icon: Icon, label, ariaLabel }: QuickActionProps) {
     <Link
       to={to}
       aria-label={ariaLabel}
-      className="group flex flex-col items-center gap-3 rounded-3xl focus-visible:outline-none"
+      className="group flex w-16 flex-col items-center gap-1.5 rounded-2xl focus-visible:outline-none"
     >
-      <span className="flex aspect-square w-full max-w-[8.5rem] items-center justify-center rounded-3xl border border-border bg-surface text-content shadow-sm transition-all duration-200 group-hover:-translate-y-0.5 group-hover:bg-surface-sunk group-hover:shadow-md group-focus-visible:ring-2 group-focus-visible:ring-teal-500/40">
-        <Icon className="h-7 w-7" strokeWidth={1.75} />
+      <span className="flex h-12 w-12 items-center justify-center rounded-2xl border border-border bg-surface text-content shadow-sm transition-all duration-200 group-hover:-translate-y-0.5 group-hover:bg-surface-sunk group-hover:shadow-md group-focus-visible:ring-2 group-focus-visible:ring-teal-500/40">
+        <Icon className="h-5 w-5" strokeWidth={1.75} />
       </span>
-      <span className="text-sm font-medium text-content-secondary group-hover:text-content">
+      <span className="whitespace-nowrap text-xs font-medium text-content-secondary group-hover:text-content">
         {label}
       </span>
     </Link>
