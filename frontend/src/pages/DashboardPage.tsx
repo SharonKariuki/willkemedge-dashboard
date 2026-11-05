@@ -1,33 +1,26 @@
 import { format } from "date-fns";
 import {
   AlertTriangle,
-  ArrowUpRight,
+  BarChart3,
   Building2,
-  CreditCard,
+  ChevronRight,
+  Send,
   UserPlus,
-  TrendingDown,
   TrendingUp,
   Wallet,
   type LucideIcon,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import {
-  Area,
-  AreaChart,
-  Bar,
-  BarChart,
   Cell,
   Pie,
   PieChart,
   ResponsiveContainer,
   Tooltip as RcTooltip,
-  XAxis,
-  YAxis,
 } from "recharts";
 
 import {
   Badge,
-  Button,
   Card,
   EmptyState,
   ErrorState,
@@ -42,7 +35,7 @@ import {
 import SmsBalanceCard from "@/components/SmsBalanceCard";
 import { cn } from "@/lib/cn";
 import { useBuildingPhotoSrc, useBuildings } from "@/hooks/useBuildings";
-import { useDashboard } from "@/hooks/useDashboard";
+import { useDashboard, type DashboardAlert } from "@/hooks/useDashboard";
 import { avatarFor } from "@/lib/images";
 import { formatKES } from "@/lib/money";
 
@@ -54,8 +47,6 @@ const OCCUPANCY_COLORS = [
   "rgb(234,88,12)",   // Arrears — orange (attention)
   "rgb(203,213,225)", // Vacant — neutral-300
 ];
-const TEAL = "rgb(13,148,136)";
-const AXIS_TICK = { fill: "rgb(100,116,139)", fontSize: 12 };
 const TOOLTIP_STYLE = {
   background: "rgb(255,255,255)",
   border: "1px solid rgb(226,232,240)",
@@ -67,12 +58,6 @@ const TOOLTIP_STYLE = {
 
 function KES(n: number) {
   return formatKES(n);
-}
-
-function formatK(n: number) {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(0)}k`;
-  return String(n);
 }
 
 /** A building's own photo when it has one, else its stock picture. The
@@ -123,7 +108,7 @@ export default function DashboardPage() {
     );
   }
 
-  const { kpis, income_trend, occupancy, buildings, recent_payments, alerts } = data;
+  const { kpis, occupancy, buildings, recent_payments, alerts } = data;
 
   const occupancyPct = kpis.total_units > 0
     ? Math.round((kpis.occupied / kpis.total_units) * 100)
@@ -137,12 +122,6 @@ export default function DashboardPage() {
     { name: "Vacant",  value: occupancy.vacant },
   ].filter((d) => d.value > 0);
 
-  const thisMonth = kpis.collection_received;
-  const lastMonth = kpis.last_month_received ?? 0;
-  const trendDelta =
-    lastMonth > 0 ? ((thisMonth - lastMonth) / lastMonth) * 100 : 0;
-  const trendSign = trendDelta >= 0 ? "+" : "";
-
   const collectionPct = kpis.collection_expected > 0
     ? Math.round((kpis.collection_received / kpis.collection_expected) * 100)
     : kpis.collection_percentage ?? 0;
@@ -152,26 +131,7 @@ export default function DashboardPage() {
   return (
     <div className="space-y-10 lg:space-y-12">
       {/* ── Masthead with actions ─────────────────────────────────────────── */}
-      <Masthead dateLine={dateLine} greeting={greeting}>
-        <Link to="/tenants?new=1">
-          <Button variant="outline" size="md">
-            <UserPlus className="h-4 w-4" />
-            Add tenant
-          </Button>
-        </Link>
-        <Link to="/payments">
-          <Button variant="outline" size="md">
-            <CreditCard className="h-4 w-4" />
-            Record payment
-          </Button>
-        </Link>
-        <Link to="/reports">
-          <Button variant="primary" size="md">
-            View reports
-            <ArrowUpRight className="h-4 w-4" />
-          </Button>
-        </Link>
-      </Masthead>
+      <Masthead dateLine={dateLine} greeting={greeting} />
 
       {/* ── KPI tiles — glanceable ────────────────────────────────────────── */}
       <section className="-mt-4 grid gap-5 sm:grid-cols-2 lg:-mt-6 lg:grid-cols-4 lg:items-stretch lg:gap-6">
@@ -210,53 +170,15 @@ export default function DashboardPage() {
 
       {/* ── Income trend + Rent status ────────────────────────────────────── */}
       <section className="grid gap-6 lg:grid-cols-3">
-        <Card padding="none" className="lg:col-span-2">
-          <div className="flex items-center justify-between px-6 pt-4">
-            <div>
-              <h2 className="text-lg font-semibold text-content">Income</h2>
-              <p className="mt-0.5 text-sm text-content-muted">Last 6 months</p>
-            </div>
-            {lastMonth > 0 ? (
-              <Badge tone={trendDelta >= 0 ? "sage" : "coral"}>
-                {trendDelta >= 0 ? (
-                  <TrendingUp className="h-3.5 w-3.5" />
-                ) : (
-                  <TrendingDown className="h-3.5 w-3.5" />
-                )}
-                {trendSign}{trendDelta.toFixed(1)}% vs last month
-              </Badge>
-            ) : (
-              <Badge tone="neutral">First month on record</Badge>
-            )}
+        <Card padding="none" className="flex flex-col lg:col-span-2">
+          <div className="px-6 pt-4">
+            <h2 className="text-lg font-semibold text-content">Quick actions</h2>
           </div>
-          <div className="h-[150px] px-3 pb-3 pt-3">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart
-                data={income_trend}
-                margin={{ top: 10, right: 12, left: -8, bottom: 0 }}
-              >
-                <defs>
-                  <linearGradient id="incomeGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor={TEAL} stopOpacity={0.28} />
-                    <stop offset="100%" stopColor={TEAL} stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <XAxis dataKey="month" tickLine={false} axisLine={false} tick={AXIS_TICK} dy={6} />
-                <YAxis tickLine={false} axisLine={false} tick={AXIS_TICK} tickFormatter={formatK} />
-                <RcTooltip
-                  cursor={{ stroke: "rgba(13,148,136,0.35)" }}
-                  contentStyle={TOOLTIP_STYLE}
-                  formatter={(v) => [KES(Number(v)), "Income"]}
-                />
-                <Area
-                  type="monotone"
-                  dataKey="amount"
-                  stroke={TEAL}
-                  strokeWidth={2.5}
-                  fill="url(#incomeGrad)"
-                />
-              </AreaChart>
-            </ResponsiveContainer>
+          <div className="grid flex-1 grid-cols-2 content-center gap-x-4 gap-y-6 p-6 sm:grid-cols-4">
+            <QuickAction to="/payments" icon={Wallet} label="Record" ariaLabel="Record payment" />
+            <QuickAction to="/tenants?new=1" icon={UserPlus} label="Add tenant" />
+            <QuickAction to="/notifications" icon={Send} label="Remind" ariaLabel="Remind tenants" />
+            <QuickAction to="/reports" icon={BarChart3} label="Reports" ariaLabel="View reports" />
           </div>
         </Card>
 
@@ -331,15 +253,39 @@ export default function DashboardPage() {
             </Card>
           ) : (
             <Card padding="none">
-              <ul className="px-6 py-2">
-                {alerts.slice(0, 6).map((a, i) => (
-                  <li key={i} className="flex items-start gap-3 py-3 text-sm">
-                    <AlertSeverityDot type={a.type} />
-                    <p className="leading-snug text-content-secondary">{a.message}</p>
-                  </li>
-                ))}
+              <ul className="px-3 py-2">
+                {alerts.slice(0, 6).map((a, i) => {
+                  const action = alertAction(a);
+                  return (
+                    <li key={i}>
+                      <Link
+                        to={action.to}
+                        className="group flex items-start gap-3 rounded-xl px-3 py-3 text-sm transition-colors hover:bg-surface-sunk focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/40"
+                      >
+                        <AlertSeverityDot type={a.type} />
+                        <div className="min-w-0 flex-1">
+                          <span
+                            className={cn(
+                              "inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider",
+                              action.tone
+                            )}
+                          >
+                            {action.label}
+                          </span>
+                          <p className="mt-1.5 leading-snug text-content-secondary group-hover:text-content">
+                            {a.message}
+                          </p>
+                        </div>
+                        <ChevronRight
+                          aria-hidden
+                          className="mt-0.5 h-4 w-4 shrink-0 text-content-muted transition-transform group-hover:translate-x-0.5 group-hover:text-content"
+                        />
+                      </Link>
+                    </li>
+                  );
+                })}
                 {alerts.length > 6 && (
-                  <li className="py-3 text-xs text-content-muted">+{alerts.length - 6} more items</li>
+                  <li className="px-3 py-3 text-xs text-content-muted">+{alerts.length - 6} more items</li>
                 )}
               </ul>
             </Card>
@@ -472,25 +418,39 @@ export default function DashboardPage() {
             })}
           </div>
           {buildings.length > 1 && (
-            <Card padding="none" className="mt-8">
-              <div className="px-6 pt-6">
+            <Card padding="lg" className="mt-8">
+              <div className="flex items-baseline justify-between gap-3">
                 <h3 className="text-lg font-semibold text-content">Occupancy by building</h3>
+                <span className="text-sm text-content-muted">Units occupied</span>
               </div>
-              <div className="h-[220px] px-3 pb-4 pt-6">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart
-                    data={buildings}
-                    margin={{ top: 10, right: 12, left: -8, bottom: 0 }}
-                    barCategoryGap="30%"
-                  >
-                    <XAxis dataKey="name" tickLine={false} axisLine={false} tick={AXIS_TICK} dy={6} />
-                    <YAxis tickLine={false} axisLine={false} tick={AXIS_TICK} />
-                    <RcTooltip cursor={{ fill: "rgba(13,148,136,0.06)" }} contentStyle={TOOLTIP_STYLE} />
-                    <Bar dataKey="occupied" stackId="u" fill={TEAL} radius={[0, 0, 0, 0]} />
-                    <Bar dataKey="vacant" stackId="u" fill="rgb(203,213,225)" radius={[6, 6, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
+              <ul className="mt-5 space-y-5">
+                {buildings.map((b) => {
+                  const rate = b.total > 0 ? Math.round((b.occupied / b.total) * 100) : 0;
+                  return (
+                    <li key={b.id ?? b.name}>
+                      <div className="flex items-baseline justify-between gap-3">
+                        <span className="truncate font-medium text-content">{b.name}</span>
+                        <span className="shrink-0 text-sm tabular-nums text-content-muted">
+                          {b.occupied} / {b.total}
+                        </span>
+                      </div>
+                      <div
+                        className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-surface-sunk"
+                        role="progressbar"
+                        aria-label={`${b.name} occupancy`}
+                        aria-valuenow={rate}
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                      >
+                        <div
+                          className="h-1.5 rounded-full bg-teal-600 transition-[width] duration-700 ease-out"
+                          style={{ width: `${rate}%` }}
+                        />
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
             </Card>
           )}
         </section>
@@ -661,6 +621,56 @@ function Kpi({ icon: Icon, label, value, caption, progress, tone = "neutral", co
     );
   }
   return body;
+}
+
+interface QuickActionProps {
+  to: string;
+  icon: LucideIcon;
+  label: string;
+  /** Fuller name for screen readers when the visible label is a single word. */
+  ariaLabel?: string;
+}
+
+function QuickAction({ to, icon: Icon, label, ariaLabel }: QuickActionProps) {
+  return (
+    <Link
+      to={to}
+      aria-label={ariaLabel}
+      className="group flex flex-col items-center gap-3 rounded-3xl focus-visible:outline-none"
+    >
+      <span className="flex aspect-square w-full max-w-[8.5rem] items-center justify-center rounded-3xl border border-border bg-surface text-content shadow-sm transition-all duration-200 group-hover:-translate-y-0.5 group-hover:bg-surface-sunk group-hover:shadow-md group-focus-visible:ring-2 group-focus-visible:ring-teal-500/40">
+        <Icon className="h-7 w-7" strokeWidth={1.75} />
+      </span>
+      <span className="text-sm font-medium text-content-secondary group-hover:text-content">
+        {label}
+      </span>
+    </Link>
+  );
+}
+
+const ALERT_TONE = {
+  danger: "bg-danger-soft text-danger",
+  warning: "bg-warning-soft text-warning",
+  attention: "bg-orange-500/10 text-orange-700 dark:text-orange-500",
+  neutral: "bg-surface-sunk text-content-secondary",
+} as const;
+
+/** What to do about an alert, and where to go to do it. Alerts that name a
+ *  tenant open that tenant's page, where the balance, notice or lease lives. */
+function alertAction(a: DashboardAlert): { label: string; to: string; tone: string } {
+  const tenant = a.tenant_id ? `/tenants/${a.tenant_id}` : null;
+  switch (a.type) {
+    case "overdue":
+      return { label: "Collect rent", to: tenant ?? "/tenants?payment_status=in_arrears", tone: ALERT_TONE.danger };
+    case "partial":
+      return { label: "Chase balance", to: tenant ?? "/units", tone: ALERT_TONE.warning };
+    case "move_out":
+      return { label: "Plan move-out", to: tenant ?? "/tenants", tone: ALERT_TONE.attention };
+    case "expiring_lease":
+      return { label: "Renew lease", to: tenant ?? "/tenants", tone: ALERT_TONE.warning };
+    default:
+      return { label: "Review", to: tenant ?? "/units", tone: ALERT_TONE.neutral };
+  }
 }
 
 function AlertSeverityDot({ type }: { type: string }) {

@@ -414,7 +414,7 @@ class TenantPaymentHistoryView(APIView):
             })
 
         total_paid = money(
-            Payment.objects.filter(INCOME_PAYMENT_FILTER, tenant=tenant)
+            Payment.objects.filter(INCOME_PAYMENT_FILTER, books.payments_q(), tenant=tenant)
             .aggregate(t=Sum("amount"))["t"]
         )
         return Response({

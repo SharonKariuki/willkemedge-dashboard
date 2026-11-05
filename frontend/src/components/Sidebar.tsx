@@ -78,20 +78,8 @@ export default function Sidebar() {
           )}
         </button>
 
-        {/* Brand */}
-        <div
-          className={cn(
-            "flex shrink-0 items-center gap-3 border-b border-white/[0.06] pb-5 pt-1",
-            collapsed ? "justify-center" : "px-3"
-          )}
-        >
-          <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-ochre-500 text-ink-900 shadow-glass ring-1 ring-ochre-600/40">
-            <span className="font-display text-lg font-semibold leading-none">W</span>
-          </div>
-        </div>
-
         {/* Primary nav — scrolls internally so the profile stays pinned */}
-        <nav className="sidebar-nav flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto pt-4">
+        <nav className="sidebar-nav flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto pt-1">
           {visibleItems.map(({ to, label, icon: Icon }) => (
             <NavLink
               key={to}

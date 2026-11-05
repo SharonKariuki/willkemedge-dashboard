@@ -218,10 +218,18 @@ class DashboardSummaryView(APIView):
             .select_related("building")[:5]
         )
         for u in partial_units:
+            # The current tenant, so the alert can open their page to settle it.
+            current = (
+                u.tenants.filter(status__in=CURRENT_STATUSES)
+                .order_by("-move_in_date")
+                .values_list("id", flat=True)
+                .first()
+            )
             alerts.append({
                 "type": "partial",
                 "message": f"{u.building.name} — {u.label} has a partial payment this month",
                 "unit_id": u.id,
+                "tenant_id": current,
             })
 
         # 3. Move-out notices: tenants on notice who leave in the next 30 days.
