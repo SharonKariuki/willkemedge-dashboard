@@ -131,12 +131,7 @@ export default function DashboardPage() {
   return (
     <div className="space-y-10 lg:space-y-12">
       {/* ── Masthead with actions ─────────────────────────────────────────── */}
-      <Masthead dateLine={dateLine} greeting={greeting}>
-        <QuickAction to="/payments" icon={Wallet} label="Record" ariaLabel="Record payment" />
-        <QuickAction to="/tenants?new=1" icon={UserPlus} label="Add tenant" />
-        <QuickAction to="/notifications" icon={Send} label="Remind" ariaLabel="Remind tenants" />
-        <QuickAction to="/reports" icon={BarChart3} label="Reports" ariaLabel="View reports" />
-      </Masthead>
+      <Masthead dateLine={dateLine} greeting={greeting} />
 
       {/* ── KPI tiles — glanceable ────────────────────────────────────────── */}
       <section className="-mt-4 grid gap-5 sm:grid-cols-2 lg:-mt-6 lg:grid-cols-4 lg:items-stretch lg:gap-6">
@@ -239,7 +234,10 @@ export default function DashboardPage() {
         </div>
 
         <div className="lg:col-span-3">
-            <Card padding="none">
+          {/* Rent status with the quick actions beside it — on a phone the
+              actions sit in one row above the card. */}
+          <div className="flex flex-col-reverse gap-5 sm:flex-row sm:items-center">
+            <Card padding="none" className="min-w-0 flex-1">
               <div className="px-6 pt-4">
                 <h2 className="text-lg font-semibold text-content">Rent status</h2>
               </div>
@@ -286,6 +284,13 @@ export default function DashboardPage() {
                 </ul>
               </div>
             </Card>
+            <div className="grid shrink-0 grid-cols-4 justify-items-center gap-x-3 gap-y-4 sm:grid-cols-2">
+              <QuickAction to="/payments" icon={Wallet} label="Record" ariaLabel="Record payment" />
+              <QuickAction to="/tenants?new=1" icon={UserPlus} label="Add tenant" />
+              <QuickAction to="/notifications" icon={Send} label="Remind" ariaLabel="Remind tenants" />
+              <QuickAction to="/reports" icon={BarChart3} label="Reports" ariaLabel="View reports" />
+            </div>
+          </div>
 
           <div className="mb-4 mt-8 flex items-baseline justify-between">
             <h2 className="text-lg font-semibold text-content">Recent payments</h2>
