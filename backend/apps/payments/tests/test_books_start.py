@@ -144,6 +144,20 @@ class TestBalances:
         assert available_credit(history) == Decimal("11000.00")
 
 
+class TestPaidToDate:
+    def test_counts_from_the_restart(self, restarted):
+        from apps.tenants.serializers import live_payments
+
+        # The 4,000 paid in July is inside the opening balance; only September's
+        # 9,000 is paid in the books.
+        assert sum(p.amount for p in live_payments(restarted)) == Decimal("9000")
+
+    def test_without_a_restart_counts_everything(self, history):
+        from apps.tenants.serializers import live_payments
+
+        assert sum(p.amount for p in live_payments(history)) == Decimal("4000")
+
+
 class TestSubledger:
     def test_new_money_never_settles_a_month_before_the_books(self, restarted):
         from apps.payments.services import allocate_payment_fifo
