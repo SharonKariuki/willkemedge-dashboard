@@ -1,101 +1,100 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
 import { useLocation } from "react-router-dom";
 
 import { useAuth } from "@/hooks/useAuth";
 import { useViewPreferences } from "@/hooks/useViewPreferences";
-import {
-  NAV_CHILDREN,
-  NAV_FOOTER,
-  NAV_SECTIONS,
-  groupKey,
-  isUnder,
-  navItem,
-  type NavItem,
-  type NavSection,
-} from "@/lib/nav";
+import { NAV_TREE, activePath, navItem, type NavNode, type ViewKey } from "@/lib/nav";
 
 const OPEN_KEY = "willkemedge-nav-open";
 
-export interface VisibleSection extends Omit<NavSection, "keys"> {
-  items: NavItem[];
-  /** Holds the page on screen; its heading is highlighted and it is kept open. */
-  active: boolean;
-}
+// Earlier menus saved their open sections under other ids. Carry them over so
+// nobody finds their menu reset.
+const LEGACY: Record<string, string[]> = {
+  "group:Property": ["property"],
+  "group:Money": ["finance"],
+  "group:Books": ["finance", "reports"],
+};
 
-/** Saved open keys, or null on a first visit. */
-function readOpen(): string[] | null {
+function readOpen(): string[] {
   try {
     const raw = localStorage.getItem(OPEN_KEY);
-    return raw ? (JSON.parse(raw) as string[]) : null;
+    const saved = raw ? (JSON.parse(raw) as string[]) : [];
+    return [...new Set(saved.flatMap((k) => LEGACY[k] ?? [k]))];
   } catch {
-    return null;
+    return [];
   }
 }
 
-// On a first visit every group starts open, so nothing is hidden until the
-// user chooses to fold it away; the nested parents start folded.
-const ALL_GROUPS = NAV_SECTIONS.flatMap((s) => (s.label ? [groupKey(s.label)] : []));
+// One open/closed state for the whole app: the sidebar and the phone drawer
+// are both mounted (CSS decides which shows), and must agree.
+let openKeys: string[] = readOpen();
+const listeners = new Set<() => void>();
+
+function setOpenKeys(next: string[]) {
+  if (next === openKeys) return;
+  openKeys = next;
+  try {
+    localStorage.setItem(OPEN_KEY, JSON.stringify(next));
+  } catch {
+    // ignore
+  }
+  listeners.forEach((l) => l());
+}
+
+const subscribe = (l: () => void) => {
+  listeners.add(l);
+  return () => void listeners.delete(l);
+};
+const snapshot = () => openKeys;
+
+/** Drops links the user cannot or chose not to see, then any group left empty. */
+function prune(nodes: NavNode[], shown: (key: ViewKey) => boolean): NavNode[] {
+  return nodes.flatMap((n): NavNode[] => {
+    if (n.kind === "link") return shown(n.page) ? [n] : [];
+    const children = prune(n.children, shown);
+    return children.length ? [{ ...n, children }] : [];
+  });
+}
 
 /**
- * The menu as this user sees it — the single source for the desktop sidebar
- * and the mobile sheet, so a page can never be reachable on one and missing
- * from the other. Pages hidden in Settings and owner-only pages are dropped,
- * and so is any section left empty.
+ * The menu as this user sees it — the single source for the desktop sidebar,
+ * the icon rail and the phone drawer. Owner-only pages and pages hidden in
+ * Settings are dropped, and so is any group left empty. (Hiding a link is not
+ * the access check: the server and the pages enforce that.)
  */
-export function useNavTree({ remember = true }: { remember?: boolean } = {}) {
+export function useNavTree() {
   const { prefs } = useViewPreferences();
   const isOwner = Boolean(useAuth().user?.can_forgive_money);
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
 
   const shown = useCallback(
-    (item: NavItem) => (!item.togglable || prefs[item.key]) && (!item.ownerOnly || isOwner),
+    (key: ViewKey) => {
+      const item = navItem(key);
+      return (!item.togglable || prefs[key]) && (!item.ownerOnly || isOwner);
+    },
     [prefs, isOwner]
   );
 
-  const sections = useMemo<VisibleSection[]>(
-    () =>
-      NAV_SECTIONS.map(({ label, keys }) => {
-        const items = keys.map(navItem).filter(shown);
-        return { label, items, active: items.some((i) => isUnder(i, pathname)) };
-      }).filter((s) => s.items.length > 0),
-    [shown, pathname]
-  );
+  const tree = useMemo(() => prune(NAV_TREE, shown), [shown]);
 
-  const footer = useMemo(() => NAV_FOOTER.map(navItem).filter(shown), [shown]);
+  /** The active link's id last, the groups above it before it. */
+  const active = useMemo(() => activePath(tree, pathname, search), [tree, pathname, search]);
 
-  // Which groups and parents are open is remembered across visits (desktop
-  // only: a phone sheet starts folded so it opens short). The group and the
-  // parent holding the page on screen open themselves, so the active item is
-  // never hidden.
-  const [openKeys, setOpenKeys] = useState<string[]>(() => (remember ? readOpen() ?? ALL_GROUPS : []));
+  const open = useSyncExternalStore(subscribe, snapshot);
 
+  // The groups above the page on screen open themselves, so the active link is
+  // never hidden. Nothing else is closed: what the user opened stays open.
+  const ancestors = active.slice(0, -1).join("|");
   useEffect(() => {
-    if (!remember) return;
-    try {
-      localStorage.setItem(OPEN_KEY, JSON.stringify(openKeys));
-    } catch {
-      // ignore
-    }
-  }, [openKeys, remember]);
+    const wanted = ancestors ? ancestors.split("|") : [];
+    if (wanted.some((k) => !openKeys.includes(k))) setOpenKeys([...new Set([...openKeys, ...wanted])]);
+  }, [ancestors]);
 
-  const activeParent = useMemo(
-    () => sections.flatMap((s) => s.items).find((i) => NAV_CHILDREN[i.key] && isUnder(i, pathname))?.key,
-    [sections, pathname]
-  );
-
-  const activeGroup = sections.find((s) => s.active)?.label;
-
-  useEffect(() => {
-    const wanted = [activeGroup && groupKey(activeGroup), activeParent].filter((k): k is string => Boolean(k));
-    if (wanted.length === 0) return;
-    setOpenKeys((keys) => (wanted.every((k) => keys.includes(k)) ? keys : [...new Set([...keys, ...wanted])]));
-  }, [activeGroup, activeParent]);
-
-  const isOpen = useCallback((key: string) => openKeys.includes(key), [openKeys]);
+  const isOpen = useCallback((id: string) => open.includes(id), [open]);
   const toggle = useCallback(
-    (key: string) => setOpenKeys((keys) => (keys.includes(key) ? keys.filter((k) => k !== key) : [...keys, key])),
+    (id: string) => setOpenKeys(openKeys.includes(id) ? openKeys.filter((k) => k !== id) : [...openKeys, id]),
     []
   );
 
-  return { sections, footer, isOpen, toggle };
+  return { tree, active, isOpen, toggle };
 }

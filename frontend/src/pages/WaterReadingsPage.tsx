@@ -124,7 +124,7 @@ export default function WaterReadingsPage() {
     <div className="space-y-6">
       <PageHeader
         eyebrow="Utilities"
-        title="Water Readings"
+        title="Water Management"
         description="Enter each unit's current meter reading. Consumption is billed at the building's tariff and appears as Other Charges on the statement."
       />
 

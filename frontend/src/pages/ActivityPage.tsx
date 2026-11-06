@@ -158,7 +158,7 @@ export default function ActivityPage() {
   if (!isOwner) {
     return (
       <div className="space-y-6">
-        <PageHeader eyebrow="Oversight" title="Activity" />
+        <PageHeader eyebrow="Oversight" title="Activity Log" />
         <Card>
           <EmptyState
             icon={<Lock className="h-5 w-5" />}
@@ -174,7 +174,7 @@ export default function ActivityPage() {
     <div className="space-y-6">
       <PageHeader
         eyebrow="Oversight"
-        title="Activity"
+        title="Activity Log"
         description="Everything done in the system: who did it, when, and from which device. Nothing here can be edited or deleted. Only you can see this page."
       />
 
