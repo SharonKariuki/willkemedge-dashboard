@@ -40,7 +40,7 @@ import {
 } from "@/hooks/useReports";
 import { cn } from "@/lib/cn";
 
-const TABS = [
+export const TABS = [
   { key: "monthly",        label: "Collections" },
   { key: "annual",         label: "Annual Income" },
   { key: "arrears",        label: "Arrears" },
@@ -837,7 +837,7 @@ function LandlordTab() {
 
 function StatementSection({ title, rows, total }: { title: string; rows: LandlordRow[]; total?: number }) {
   const cols: Col<LandlordRow>[] = [
-    { label: title, get: (r) => r.description },
+    { label: title, get: (r) => r.description, wrap: true },
     { label: "Amount", get: (r) => r.amount, money: true },
   ];
   return (

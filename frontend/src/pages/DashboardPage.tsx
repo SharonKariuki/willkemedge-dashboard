@@ -170,12 +170,14 @@ export default function DashboardPage() {
 
       {/* ── Quick actions + Rent status, then This morning + Recent payments ── */}
       <section className="grid gap-x-6 gap-y-8 lg:grid-cols-5">
-        {/* Quick actions — under the Collected card, beside Rent status. */}
-        <div className="flex flex-wrap items-start gap-3 lg:col-span-2">
-          <QuickAction to="/payments" icon={Wallet} label="Record" ariaLabel="Record payment" />
-          <QuickAction to="/tenants?new=1" icon={UserPlus} label="Add tenant" />
-          <QuickAction to="/notifications" icon={Send} label="Remind" ariaLabel="Remind tenants" />
-          <QuickAction to="/reports" icon={BarChart3} label="Reports" ariaLabel="View reports" />
+        {/* Quick actions — under the Collected card, beside Rent status: a row
+            of four on phones and tablets, a 2×2 block that fills the column
+            alongside the chart on desktop. */}
+        <div className="grid grid-cols-4 gap-2.5 sm:gap-3 lg:col-span-2 lg:grid-cols-2 lg:auto-rows-fr">
+          <QuickAction to="/payments" icon={Wallet} label="Record" hint="Log a rent payment" ariaLabel="Record payment" tone="teal" />
+          <QuickAction to="/tenants?new=1" icon={UserPlus} label="Add tenant" hint="Move someone in" tone="navy" />
+          <QuickAction to="/notifications" icon={Send} label="Remind" hint="Send rent reminders" ariaLabel="Remind tenants" tone="coral" />
+          <QuickAction to="/reports" icon={BarChart3} label="Reports" hint="Statements & arrears" ariaLabel="View reports" tone="neutral" />
         </div>
 
         <Card padding="none" className="lg:col-span-3">
@@ -226,7 +228,9 @@ export default function DashboardPage() {
           </div>
         </Card>
 
-        <div className="lg:col-span-2">
+        {/* min-w-0: a grid item otherwise grows to its widest content (a long
+            alert, the payments table) and pushes the page sideways on phones. */}
+        <div className="min-w-0 lg:col-span-2">
           <div className="mb-4 flex items-baseline justify-between">
             <h2 className="text-lg font-semibold text-content">This morning</h2>
             <Badge tone={alerts.length === 0 ? "sage" : "coral"} withDot>
@@ -265,7 +269,7 @@ export default function DashboardPage() {
                           >
                             {action.label}
                           </span>
-                          <p className="mt-1.5 leading-snug text-content-secondary group-hover:text-content">
+                          <p className="mt-1.5 break-words leading-snug text-content-secondary group-hover:text-content">
                             {a.message}
                           </p>
                         </div>
@@ -289,7 +293,7 @@ export default function DashboardPage() {
           <SmsBalanceCard compact className="mt-6" />
         </div>
 
-        <div className="lg:col-span-3">
+        <div className="min-w-0 lg:col-span-3">
           <div className="mb-4 flex items-baseline justify-between">
             <h2 className="text-lg font-semibold text-content">Recent payments</h2>
             <Link
@@ -309,28 +313,35 @@ export default function DashboardPage() {
               </p>
             </Card>
           ) : (
-            <Table minWidth={520}>
+            // Phones show tenant and amount (date beneath it) only, so the 520px
+            // floor the extra columns need applies from sm up.
+            <Table className="sm:min-w-[520px]">
               <THead>
                 <TR>
-                  <TH>Tenant</TH>
+                  <TH className="px-3 sm:px-5">Tenant</TH>
                   <TH className="hidden sm:table-cell">Building / Unit</TH>
                   <TH className="hidden md:table-cell">Method</TH>
-                  <TH className="text-right">Amount</TH>
-                  <TH className="text-right">Date</TH>
+                  <TH className="px-3 text-right sm:px-5">Amount</TH>
+                  <TH className="hidden text-right sm:table-cell">Date</TH>
                 </TR>
               </THead>
               <TBody>
                 {recent_payments.slice(0, 6).map((p) => (
                   <TR key={p.id}>
-                    <TD>
-                      <div className="flex w-max items-center gap-3">
+                    <TD className="px-3 sm:px-5">
+                      <div className="flex items-center gap-3 sm:w-max">
                         <img
                           src={avatarFor(p.tenant_name)}
                           alt=""
                           aria-hidden
-                          className="h-9 w-9 rounded-full ring-1 ring-border"
+                          className="hidden h-9 w-9 rounded-full ring-1 ring-border sm:block"
                         />
-                        <span className="font-medium text-content">{p.tenant_name}</span>
+                        <span
+                          className="block max-w-[10rem] truncate font-medium text-content sm:max-w-none"
+                          title={p.tenant_name}
+                        >
+                          {p.tenant_name}
+                        </span>
                       </div>
                     </TD>
                     <TD className="hidden text-content-muted sm:table-cell">
@@ -339,11 +350,14 @@ export default function DashboardPage() {
                     <TD className="hidden md:table-cell">
                       <Badge tone="neutral">{p.source || "—"}</Badge>
                     </TD>
-                    <TD className="text-right font-semibold tabular-nums text-content">
+                    <TD className="px-3 text-right font-semibold tabular-nums text-content sm:px-5">
                       <span className="text-content-muted">KES </span>
                       {Number(p.amount).toLocaleString()}
+                      <span className="block text-[11px] font-normal uppercase tracking-wider text-content-muted sm:hidden">
+                        {p.payment_date}
+                      </span>
                     </TD>
-                    <TD className="text-right text-xs uppercase tracking-wider text-content-muted">
+                    <TD className="hidden text-right text-xs uppercase tracking-wider text-content-muted sm:table-cell">
                       {p.payment_date}
                     </TD>
                   </TR>
@@ -620,22 +634,39 @@ interface QuickActionProps {
   to: string;
   icon: LucideIcon;
   label: string;
+  /** One line under the label, shown where the tile has room (desktop). */
+  hint: string;
   /** Fuller name for screen readers when the visible label is a single word. */
   ariaLabel?: string;
+  tone: keyof typeof QUICK_ACTION_TONES;
 }
 
-function QuickAction({ to, icon: Icon, label, ariaLabel }: QuickActionProps) {
+/** Icon well colours — one hue per action so the four are told apart at a glance. */
+const QUICK_ACTION_TONES = {
+  teal: "bg-teal-500/10 text-teal-700 dark:bg-teal-500/15 dark:text-teal-500",
+  coral: "bg-coral-50 text-coral-600 dark:bg-white/10 dark:text-coral-400",
+  navy: "bg-navy-500/10 text-navy-700 dark:bg-white/10 dark:text-content",
+  neutral: "bg-surface-sunk text-content-secondary",
+};
+
+function QuickAction({ to, icon: Icon, label, hint, ariaLabel, tone }: QuickActionProps) {
   return (
     <Link
       to={to}
       aria-label={ariaLabel}
-      className="group flex w-16 flex-col items-center gap-1.5 rounded-2xl focus-visible:outline-none"
+      className="group flex min-h-[88px] flex-col items-center justify-center gap-2 rounded-2xl border border-border bg-surface px-1.5 py-3 text-center shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-border-strong hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/40 active:translate-y-0 active:shadow-sm lg:flex-row lg:justify-start lg:gap-3.5 lg:px-4 lg:text-left"
     >
-      <span className="flex h-12 w-12 items-center justify-center rounded-2xl border border-border bg-surface text-content shadow-sm transition-all duration-200 group-hover:-translate-y-0.5 group-hover:bg-surface-sunk group-hover:shadow-md group-focus-visible:ring-2 group-focus-visible:ring-teal-500/40">
-        <Icon className="h-5 w-5" strokeWidth={1.75} />
+      <span
+        className={cn(
+          "flex h-11 w-11 shrink-0 items-center justify-center rounded-xl transition-transform duration-200 group-hover:scale-105 lg:h-12 lg:w-12",
+          QUICK_ACTION_TONES[tone]
+        )}
+      >
+        <Icon className="h-5 w-5 lg:h-[22px] lg:w-[22px]" strokeWidth={2} />
       </span>
-      <span className="whitespace-nowrap text-xs font-medium text-content-secondary group-hover:text-content">
-        {label}
+      <span className="min-w-0">
+        <span className="block whitespace-nowrap text-xs font-semibold leading-tight text-content sm:text-sm">{label}</span>
+        <span className="mt-0.5 hidden truncate text-xs text-content-muted lg:block">{hint}</span>
       </span>
     </Link>
   );
