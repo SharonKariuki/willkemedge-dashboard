@@ -7,27 +7,34 @@ import {
   NAV_CHILDREN,
   NAV_FOOTER,
   NAV_SECTIONS,
+  groupKey,
   isUnder,
   navItem,
   type NavItem,
   type NavSection,
-  type ViewKey,
 } from "@/lib/nav";
 
 const OPEN_KEY = "willkemedge-nav-open";
 
 export interface VisibleSection extends Omit<NavSection, "keys"> {
   items: NavItem[];
+  /** Holds the page on screen; its heading is highlighted and it is kept open. */
+  active: boolean;
 }
 
-function readOpen(): ViewKey[] {
+/** Saved open keys, or null on a first visit. */
+function readOpen(): string[] | null {
   try {
     const raw = localStorage.getItem(OPEN_KEY);
-    return raw ? (JSON.parse(raw) as ViewKey[]) : [];
+    return raw ? (JSON.parse(raw) as string[]) : null;
   } catch {
-    return [];
+    return null;
   }
 }
+
+// On a first visit every group starts open, so nothing is hidden until the
+// user chooses to fold it away; the nested parents start folded.
+const ALL_GROUPS = NAV_SECTIONS.flatMap((s) => (s.label ? [groupKey(s.label)] : []));
 
 /**
  * The menu as this user sees it — the single source for the desktop sidebar
@@ -47,18 +54,20 @@ export function useNavTree({ remember = true }: { remember?: boolean } = {}) {
 
   const sections = useMemo<VisibleSection[]>(
     () =>
-      NAV_SECTIONS.map(({ label, keys }) => ({ label, items: keys.map(navItem).filter(shown) })).filter(
-        (s) => s.items.length > 0
-      ),
-    [shown]
+      NAV_SECTIONS.map(({ label, keys }) => {
+        const items = keys.map(navItem).filter(shown);
+        return { label, items, active: items.some((i) => isUnder(i, pathname)) };
+      }).filter((s) => s.items.length > 0),
+    [shown, pathname]
   );
 
   const footer = useMemo(() => NAV_FOOTER.map(navItem).filter(shown), [shown]);
 
-  // Which parents are open is remembered across visits (desktop only: a phone
-  // sheet starts folded so it opens short); the parent of the page
-  // on screen is always open so the active child is never hidden.
-  const [openKeys, setOpenKeys] = useState<ViewKey[]>(() => (remember ? readOpen() : []));
+  // Which groups and parents are open is remembered across visits (desktop
+  // only: a phone sheet starts folded so it opens short). The group and the
+  // parent holding the page on screen open themselves, so the active item is
+  // never hidden.
+  const [openKeys, setOpenKeys] = useState<string[]>(() => (remember ? readOpen() ?? ALL_GROUPS : []));
 
   useEffect(() => {
     if (!remember) return;
@@ -74,13 +83,17 @@ export function useNavTree({ remember = true }: { remember?: boolean } = {}) {
     [sections, pathname]
   );
 
-  useEffect(() => {
-    if (activeParent) setOpenKeys((keys) => (keys.includes(activeParent) ? keys : [...keys, activeParent]));
-  }, [activeParent]);
+  const activeGroup = sections.find((s) => s.active)?.label;
 
-  const isOpen = useCallback((key: ViewKey) => openKeys.includes(key), [openKeys]);
+  useEffect(() => {
+    const wanted = [activeGroup && groupKey(activeGroup), activeParent].filter((k): k is string => Boolean(k));
+    if (wanted.length === 0) return;
+    setOpenKeys((keys) => (wanted.every((k) => keys.includes(k)) ? keys : [...new Set([...keys, ...wanted])]));
+  }, [activeGroup, activeParent]);
+
+  const isOpen = useCallback((key: string) => openKeys.includes(key), [openKeys]);
   const toggle = useCallback(
-    (key: ViewKey) => setOpenKeys((keys) => (keys.includes(key) ? keys.filter((k) => k !== key) : [...keys, key])),
+    (key: string) => setOpenKeys((keys) => (keys.includes(key) ? keys.filter((k) => k !== key) : [...keys, key])),
     []
   );
 
