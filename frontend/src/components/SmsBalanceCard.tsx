@@ -1,7 +1,7 @@
-import { AlertTriangle, Check, Copy, MessageSquare, RefreshCw } from "lucide-react";
+import { Check, Copy, RefreshCw } from "lucide-react";
 import { useState } from "react";
 
-import { Badge, Button, Card, CardHeader, CardTitle, Skeleton } from "@/components/ui";
+import { Card, Skeleton } from "@/components/ui";
 import { useRefreshSmsBalance, useSmsBalance, type SmsBalance } from "@/hooks/useNotifications";
 import { cn } from "@/lib/cn";
 
@@ -17,9 +17,20 @@ import { cn } from "@/lib/cn";
  * It appears on the dashboard (compact), on Notifications and in Settings,
  * which is why the paybill and account number come from the server rather than
  * being written into three templates that can drift apart.
+ *
+ * Deliberately quiet: neutral surface and a teal accent while healthy, amber
+ * only once the balance drops below the server's low threshold, so the card is
+ * ignorable until it needs attention.
  */
 
-function CopyValue({ label, value }: { label: string; value: string }) {
+/**
+ * The meter has no natural "full", so it is drawn against the one number the
+ * server does define: the low threshold sits at a fixed point on the track and
+ * the fill shows how far above (or below) that line the wallet is.
+ */
+const LOW_MARK = 0.25;
+
+function CopyField({ label, value, grow = false }: { label: string; value: string; grow?: boolean }) {
   const [copied, setCopied] = useState(false);
 
   const copy = async () => {
@@ -39,42 +50,87 @@ function CopyValue({ label, value }: { label: string; value: string }) {
       type="button"
       onClick={copy}
       aria-label={`Copy ${label}: ${value}`}
-      className="group inline-flex items-center gap-1.5 rounded px-1 py-0.5 font-mono text-sm font-semibold text-ink-900 transition-colors hover:bg-white/60"
-    >
-      {value || "—"}
-      {copied ? (
-        <Check className="h-3.5 w-3.5 text-sage-600" />
-      ) : (
-        <Copy className="h-3.5 w-3.5 text-ink-500 opacity-0 transition-opacity group-hover:opacity-100" />
+      className={cn(
+        "group flex min-w-0 items-center justify-between gap-2 rounded-lg px-3 py-2 text-left",
+        grow ? "flex-1" : "shrink-0",
+        " transition-colors hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
       )}
+    >
+      <span className="min-w-0">
+        <span className="block text-[10px] font-semibold uppercase tracking-[0.12em] text-content-muted">
+          {label}
+        </span>
+        <span className="block break-all font-mono text-sm font-semibold tabular-nums text-content">
+          {value || "—"}
+        </span>
+      </span>
+      <span
+        aria-hidden
+        className={cn(
+          "flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-all",
+          copied
+            ? "bg-success-soft text-success"
+            : "text-content-muted opacity-40 group-hover:bg-hover group-hover:opacity-100"
+        )}
+      >
+        {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+      </span>
+      <span className="sr-only" aria-live="polite">
+        {copied ? `${label} copied` : ""}
+      </span>
     </button>
   );
 }
 
 /** Paybill + account number, the two things needed to load airtime. */
-function TopupDetails({ topup, compact }: { topup: SmsBalance["topup"]; compact: boolean }) {
+function TopupSlip({ topup, low }: { topup: SmsBalance["topup"]; low: boolean }) {
   return (
-    <div className={cn("rounded-lg border border-gray-200/70", compact ? "p-2.5" : "p-3")}>
-      <p className="mb-1.5 text-xs font-medium uppercase tracking-wider text-ink-500">
-        Top up by M-Pesa
+    <div className="max-w-md">
+      <p className="mb-1.5 text-[11px] font-medium text-content-muted">
+        {low ? "Top up now via M-Pesa" : "Top up via M-Pesa"}
       </p>
-      <dl className="flex flex-wrap items-center gap-x-6 gap-y-1">
-        <div className="flex items-center gap-2">
-          <dt className="text-sm text-ink-500">Paybill</dt>
-          <dd><CopyValue label="paybill" value={topup.paybill} /></dd>
-        </div>
-        <div className="flex items-center gap-2">
-          <dt className="text-sm text-ink-500">Account</dt>
-          <dd><CopyValue label="account number" value={topup.account} /></dd>
-        </div>
-      </dl>
-      {!compact && <p className="mt-2 text-xs text-ink-500">{topup.note}</p>}
+      <div
+        className={cn(
+          "flex items-stretch rounded-xl p-0.5 ring-1 ring-inset",
+          low ? "bg-warning-soft/60 ring-warning/20" : "bg-surface-sunk ring-border/60"
+        )}
+      >
+        <CopyField label="Paybill" value={topup.paybill} />
+        <span aria-hidden className="my-2 w-px bg-border" />
+        <CopyField label="Account" value={topup.account} grow />
+      </div>
+    </div>
+  );
+}
+
+function Meter({ balance, threshold, low }: { balance: number; threshold: number; low: boolean }) {
+  if (!(threshold > 0)) return null;
+  const fill = Math.min(1, Math.max(0.02, (balance / threshold) * LOW_MARK));
+  return (
+    <div
+      className="relative mt-3 h-1 rounded-full bg-surface-sunk"
+      role="img"
+      aria-label={`Balance is ${low ? "below" : "above"} the low-credit line of KES ${threshold.toLocaleString()}`}
+    >
+      <div
+        className={cn(
+          "h-full rounded-full transition-[width] duration-700 ease-out",
+          low ? "bg-warning" : "bg-gradient-to-r from-teal-800 to-teal-700"
+        )}
+        style={{ width: `${fill * 100}%` }}
+      />
+      {/* The low-credit line */}
+      <span
+        aria-hidden
+        className="absolute -top-1 h-3 w-0.5 rounded-full bg-content-muted/40"
+        style={{ left: `${LOW_MARK * 100}%` }}
+      />
     </div>
   );
 }
 
 interface Props {
-  /** Dashboard placement: tighter spacing, no "last checked" footnote. */
+  /** Dashboard placement: tighter spacing, no note or "last checked" line. */
   compact?: boolean;
   className?: string;
 }
@@ -85,77 +141,131 @@ export default function SmsBalanceCard({ compact = false, className }: Props) {
 
   const busy = isFetching || refresh.isPending;
   const amount = data?.balance != null ? Number(data.balance) : null;
+  const low = Boolean(data?.low && amount != null);
+  const threshold = Number(data?.low_threshold ?? 0);
+
+  const [whole, fraction] =
+    amount != null
+      ? amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).split(".")
+      : ["", ""];
 
   return (
-    <Card variant="glass" padding="md" className={className}>
-      <CardHeader>
-        <div className="flex items-center gap-2">
-          <MessageSquare className="h-4 w-4 text-sage-600" />
-          <CardTitle>SMS credit</CardTitle>
-        </div>
-        <div className="flex items-center gap-2">
-          {data?.low && <Badge tone="unpaid" withDot>Running low</Badge>}
-          <Button size="sm" variant="glass" onClick={() => refresh.mutate()} disabled={busy}>
-            <RefreshCw className={cn("h-3.5 w-3.5", busy && "animate-spin")} />
-            {busy ? "Checking…" : "Refresh"}
-          </Button>
-        </div>
-      </CardHeader>
+    <Card
+      variant="glass"
+      padding={compact ? "sm" : "md"}
+      className={cn("relative overflow-hidden", className)}
+    >
+      {/* A faint wash of the state colour in the corner — enough to tell
+          healthy from low at a glance without shouting. */}
+      <div
+        aria-hidden
+        className={cn(
+          "pointer-events-none absolute -right-16 -top-16 h-40 w-40 rounded-full blur-3xl",
+          low ? "bg-warning/15" : "bg-teal-700/10"
+        )}
+      />
 
       {isLoading ? (
-        <Skeleton className="h-24" />
+        <div className="space-y-3">
+          <Skeleton className="h-4 w-24" />
+          <Skeleton className="h-8 w-40" />
+          <Skeleton className="h-14" />
+        </div>
       ) : (
-        <>
-          <div className={compact ? "mb-3" : "mb-4"}>
-            {amount != null ? (
-              <>
-                <p
+        <div className="relative">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-content-muted">
+                SMS credit
+              </p>
+              {amount != null && (
+                <span
                   className={cn(
-                    "font-semibold tabular-nums",
-                    compact ? "text-2xl" : "text-3xl",
-                    data?.low ? "text-orange-600" : "text-ink-900"
+                    "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium",
+                    low ? "bg-warning-soft text-warning" : "bg-teal-700/10 text-teal-800 dark:text-teal-600"
                   )}
                 >
-                  {data?.currency ?? "KES"}{" "}
-                  {amount.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-                </p>
-                <p className="mt-1 text-sm text-ink-500">
-                  {data?.sms_remaining != null
-                    ? `About ${data.sms_remaining.toLocaleString()} more tenant messages at KES ${data.unit_cost} each.`
-                    : "Africa's Talking account balance."}
-                </p>
-              </>
-            ) : (
-              <div className="flex items-start gap-2 rounded-md bg-orange-500/10 p-3">
-                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-orange-600" />
-                <p className="text-sm text-ink-700">
-                  {data?.error ?? "The SMS balance is unavailable right now."}
-                </p>
-              </div>
-            )}
+                  <span className="relative flex h-1.5 w-1.5">
+                    {low && (
+                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-warning opacity-60 motion-reduce:hidden" />
+                    )}
+                    <span className={cn("relative h-1.5 w-1.5 rounded-full", low ? "bg-warning" : "bg-teal-700")} />
+                  </span>
+                  {low ? "Low" : "Healthy"}
+                </span>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => refresh.mutate()}
+              disabled={busy}
+              aria-label={busy ? "Checking SMS balance" : "Refresh SMS balance"}
+              title="Refresh"
+              className="-mr-1.5 rounded-lg p-1.5 text-content-muted transition-colors hover:bg-hover hover:text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:opacity-60"
+            >
+              <RefreshCw className={cn("h-3.5 w-3.5", busy && "animate-spin")} />
+            </button>
           </div>
 
-          {data?.low && amount != null && (
-            <p
-              className={cn(
-                "rounded-md bg-orange-500/10 p-3 text-sm text-ink-700",
-                compact ? "mb-3" : "mb-4"
+          {amount != null ? (
+            <>
+              <p className="mt-2 flex items-baseline gap-1.5 tabular-nums text-content">
+                <span className="text-sm font-medium text-content-muted">{data?.currency || "KES"}</span>
+                <span
+                  className={cn(
+                    "font-semibold leading-none tracking-tight",
+                    compact ? "text-[28px]" : "text-[34px]"
+                  )}
+                >
+                  {whole}
+                  <span className="text-[0.55em] font-medium text-content-muted">.{fraction}</span>
+                </span>
+              </p>
+
+              <Meter balance={amount} threshold={threshold} low={low} />
+
+              <p className="mt-2 text-xs text-content-secondary">
+                {data?.sms_remaining != null && (
+                  <>
+                    <span className="font-semibold tabular-nums text-content">
+                      ≈ {data.sms_remaining.toLocaleString()}
+                    </span>{" "}
+                    messages left
+                  </>
+                )}
+                {low && (
+                  <span className="text-content-muted">
+                    {data?.sms_remaining != null ? " · " : ""}
+                    below KES {threshold.toLocaleString()}, reminders may stop
+                  </span>
+                )}
+              </p>
+            </>
+          ) : (
+            <p className="mt-2 text-sm text-content-secondary">
+              {data?.error ?? "Balance unavailable right now."}
+            </p>
+          )}
+
+          {data?.topup && (
+            <div className={compact ? "mt-4" : "mt-5"}>
+              <TopupSlip topup={data.topup} low={low} />
+            </div>
+          )}
+
+          {!compact && (data?.topup?.note || data?.checked_at) && (
+            <p className="mt-3 text-[11px] leading-relaxed text-content-muted">
+              {data?.topup?.note}
+              {data?.topup?.note && data?.checked_at && " · "}
+              {data?.checked_at && (
+                <>
+                  Checked {new Date(data.checked_at).toLocaleString()}
+                  {data.cached && " (cached)"}
+                </>
               )}
-            >
-              Below KES {Number(data.low_threshold).toLocaleString()} — top up so rent reminders,
-              receipts and statements keep going out.
             </p>
           )}
-
-          {data?.topup && <TopupDetails topup={data.topup} compact={compact} />}
-
-          {!compact && data?.checked_at && (
-            <p className="mt-3 text-xs text-ink-500">
-              Last checked {new Date(data.checked_at).toLocaleString()}
-              {data.cached && " (cached)"}
-            </p>
-          )}
-        </>
+        </div>
       )}
     </Card>
   );
