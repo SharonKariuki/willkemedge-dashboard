@@ -84,6 +84,7 @@ export async function mockApi(page: Page) {
     if (path === "/buildings/1") return json(BUILDING);
     if (path === "/buildings") return json(DASHBOARD.buildings.map((b) => ({ ...b, unit_count: b.total, occupied_count: b.occupied })));
     if (path === "/units") return json([]);
+    if (path === "/manual-income") return json([]);
     if (path === "/payments" && method === "POST") return json({ id: 1, amount: "12000.00" }, 201);
 
     // Default: empty list for collection endpoints, empty object otherwise.
