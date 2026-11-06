@@ -44,6 +44,7 @@ export interface RecentPayment {
   source: string;
   payment_date: string;
   reference: string;
+  voided?: boolean;
 }
 
 export type AlertType = "overdue" | "partial" | "move_out" | "expiring_lease" | "maintenance";
@@ -51,6 +52,13 @@ export type AlertType = "overdue" | "partial" | "move_out" | "expiring_lease" | 
 export interface DashboardAlert {
   type: AlertType;
   message: string;
+  /** Structured parts of `message`, so the feed can lay an item out. */
+  title?: string;
+  unit?: string | null;
+  amount?: number | null;
+  date_label?: string;
+  date?: string;
+  detail?: string;
   tenant_id?: number | null;
   unit_id?: number;
 }

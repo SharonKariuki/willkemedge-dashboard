@@ -165,6 +165,7 @@ class DashboardSummaryView(APIView):
                     "source": p.source,
                     "payment_date": p.payment_date.isoformat(),
                     "reference": p.reference,
+                    "voided": p.is_void,
                 })
             except Exception:
                 pass
@@ -208,6 +209,13 @@ class DashboardSummaryView(APIView):
                     f"(Due {due_date_str}) — "
                     f"{tenant.unit.building.name} {tenant.unit.label}"
                 ),
+                # Structured parts, so the feed can lay the item out instead
+                # of printing `message` as one run-on line.
+                "title": tenant.full_name,
+                "unit": f"{tenant.unit.building.name} {tenant.unit.label}",
+                "amount": float(rent_roll[tenant_id]),
+                "date_label": "Due",
+                "date": due_date_str,
                 "tenant_id": tenant_id,
             })
 
@@ -222,14 +230,16 @@ class DashboardSummaryView(APIView):
             current = (
                 u.tenants.filter(status__in=CURRENT_STATUSES)
                 .order_by("-move_in_date")
-                .values_list("id", flat=True)
                 .first()
             )
             alerts.append({
                 "type": "partial",
                 "message": f"{u.building.name} — {u.label} has a partial payment this month",
+                "title": current.full_name if current else f"{u.building.name} {u.label}",
+                "unit": f"{u.building.name} {u.label}" if current else None,
+                "detail": "Partial payment this month",
                 "unit_id": u.id,
-                "tenant_id": current,
+                "tenant_id": current.id if current else None,
             })
 
         # 3. Move-out notices: tenants on notice who leave in the next 30 days.
@@ -250,6 +260,11 @@ class DashboardSummaryView(APIView):
                     f"{t.full_name} ({t.unit.building.name} {t.unit.label}) "
                     f"is moving out in {days_left} day{'s' if days_left != 1 else ''}"
                 ),
+                "title": t.full_name,
+                "unit": f"{t.unit.building.name} {t.unit.label}",
+                "detail": f"Moving out in {days_left} day{'s' if days_left != 1 else ''}",
+                "date_label": "Leaves",
+                "date": t.intended_move_out_date.strftime("%d/%m/%Y"),
                 "tenant_id": t.id,
             })
 
@@ -267,6 +282,11 @@ class DashboardSummaryView(APIView):
                     f"{t.full_name} ({t.unit.building.name} {t.unit.label}) "
                     f"has been a tenant since {t.move_in_date} — lease renewal due"
                 ),
+                "title": t.full_name,
+                "unit": f"{t.unit.building.name} {t.unit.label}",
+                "detail": "Lease renewal due",
+                "date_label": "Since",
+                "date": t.move_in_date.strftime("%d/%m/%Y"),
                 "tenant_id": t.id,
             })
 
