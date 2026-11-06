@@ -85,7 +85,7 @@ export default function ManualIncomePage() {
     <div className="space-y-6">
       <PageHeader
         eyebrow="Income"
-        title="Manual Income"
+        title="Other Income"
         description="Record non-tenant income such as farm produce sales. Rent is recorded under Payments."
         actions={
           <Button onClick={() => setShowForm((v) => !v)}>

@@ -512,7 +512,7 @@ export default function BuildingsPage() {
       <div className="space-y-6">
         <PageHeader
           eyebrow="Portfolio"
-          title="Buildings"
+          title="Properties"
           description={`${buildings?.length ?? 0} ${
             (buildings?.length ?? 0) === 1 ? "property" : "properties"
           } under management.`}
