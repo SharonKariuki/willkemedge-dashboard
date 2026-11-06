@@ -5,7 +5,8 @@ import { hasNoHorizontalScroll, mockApi, seedAuth } from "./helpers";
 /**
  * Cross-resolution pass. `mobile.spec.ts` pins the 375px phone case; this one
  * sweeps every route across the widths the dashboard is actually opened at —
- * a small phone, a tablet, and the 1366px laptop that is the common desktop.
+ * a small phone, a tablet, 1024px (the narrowest width with the full sidebar,
+ * so the tightest content area) and the 1366px laptop that is the common desktop.
  *
  * Runs on the desktop project only: the mobile project would repeat the whole
  * sweep for no extra coverage, since each case sets its own viewport.
@@ -13,10 +14,11 @@ import { hasNoHorizontalScroll, mockApi, seedAuth } from "./helpers";
 const ROUTES = [
   "/login", "/dashboard", "/buildings", "/buildings/1", "/units", "/tenants",
   "/tenants/1", "/payments", "/reconciliation", "/expenses", "/income",
-  "/water", "/accounting", "/notifications", "/reports", "/settings",
+  "/water", "/accounting", "/accounting?acct=ledger", "/notifications", "/reports",
+  "/reports?tab=landlord", "/settings",
 ];
 
-const WIDTHS = [360, 768, 1366];
+const WIDTHS = [360, 768, 1024, 1366];
 
 const DESKTOP_ONLY = "the desktop project already covers this sweep";
 
