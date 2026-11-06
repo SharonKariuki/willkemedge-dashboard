@@ -4,23 +4,23 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/cn";
 
 const card = cva(
-  // Floating surface — generous radius, soft ambient shadow, no border in
-  // light mode (a subtle border replaces the shadow in dark mode).
+  // Resting surface — a 1px hairline border plus a tight, light shadow, so
+  // the edge stays crisp against the tinted page background.
   "relative rounded-2xl transition-all duration-200 ease-out",
   {
     variants: {
       variant: {
         // Elevated — default floating white surface
-        elevated: "bg-surface shadow-sm dark:border dark:border-border",
+        elevated: "bg-surface border border-border shadow-sm",
         // Flat — quiet surface, hairline only (no float)
         flat: "bg-surface border border-border",
         // Sunk — recessed surface
         sunk: "bg-surface-sunk",
         // Legacy aliases → floating look
-        glass: "bg-surface shadow-sm dark:border dark:border-border",
-        "glass-strong": "bg-surface shadow-md dark:border dark:border-border",
-        neu: "bg-surface shadow-sm dark:border dark:border-border",
-        "neu-sm": "bg-surface shadow-xs dark:border dark:border-border",
+        glass: "bg-surface border border-border shadow-sm",
+        "glass-strong": "bg-surface border border-border shadow-sm",
+        neu: "bg-surface border border-border shadow-sm",
+        "neu-sm": "bg-surface border border-border shadow-xs",
       },
       padding: {
         none: "",

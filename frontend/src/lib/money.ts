@@ -15,6 +15,15 @@ export function formatKES(value: string | number | null | undefined): string {
 }
 
 /**
+ * "KES 1,028,973" — rounded to the whole shilling, for headline totals and
+ * KPI cards where summed water charges would otherwise print "1,028,972.8".
+ * Line items and balances keep `formatKES` so their cents stay visible.
+ */
+export function formatKESWhole(value: string | number | null | undefined): string {
+  return `KES ${Math.round(Number(value || 0)).toLocaleString()}`;
+}
+
+/**
  * "20,000" in arrears (owed), "20,000 cr" in credit, "0" when square.
  * No currency prefix — callers that want one wrap the result themselves.
  */

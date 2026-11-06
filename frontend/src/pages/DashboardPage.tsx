@@ -39,16 +39,18 @@ import { cn } from "@/lib/cn";
 import { useBuildingPhotoSrc, useBuildings } from "@/hooks/useBuildings";
 import { useDashboard, type DashboardAlert } from "@/hooks/useDashboard";
 import { avatarFor } from "@/lib/images";
-import { formatKES } from "@/lib/money";
+import { formatKESWhole } from "@/lib/money";
 
 // Chart palette — teal (income/occupied) + semantic status, no rainbow.
-const OCCUPANCY_COLORS = [
-  "rgb(22,163,74)",   // Paid — success
-  "rgb(217,119,6)",   // Partial — warning
-  "rgb(220,38,38)",   // Unpaid — danger
-  "rgb(234,88,12)",   // Arrears — orange (attention)
-  "rgb(203,213,225)", // Vacant — neutral-300
-];
+// Keyed by status, not by position: empty statuses are dropped from the
+// chart, and a positional palette would then repaint the ones after them.
+const OCCUPANCY_COLORS = {
+  Paid: "rgb(22,163,74)",      // success
+  Partial: "rgb(217,119,6)",   // warning
+  Unpaid: "rgb(220,38,38)",    // danger
+  Arrears: "rgb(234,88,12)",   // orange (attention)
+  Vacant: "rgb(203,213,225)",  // neutral-300
+} as const;
 const TOOLTIP_STYLE = {
   background: "rgb(255,255,255)",
   border: "1px solid rgb(226,232,240)",
@@ -59,7 +61,7 @@ const TOOLTIP_STYLE = {
 } as const;
 
 function KES(n: number) {
-  return formatKES(n);
+  return formatKESWhole(n);
 }
 
 /** A building's own photo when it has one, else its stock picture. The
@@ -117,13 +119,17 @@ export default function DashboardPage() {
     ? Math.round((kpis.occupied / kpis.total_units) * 100)
     : 0;
 
-  const occData = [
-    { name: "Paid",    value: occupancy.paid },
-    { name: "Partial", value: occupancy.partial },
-    { name: "Unpaid",  value: occupancy.unpaid },
-    { name: "Arrears", value: occupancy.arrears },
-    { name: "Vacant",  value: occupancy.vacant },
-  ].filter((d) => d.value > 0);
+  const occData = (
+    [
+      { name: "Paid",    value: occupancy.paid },
+      { name: "Partial", value: occupancy.partial },
+      { name: "Unpaid",  value: occupancy.unpaid },
+      { name: "Arrears", value: occupancy.arrears },
+      { name: "Vacant",  value: occupancy.vacant },
+    ] as const
+  ).filter((d) => d.value > 0);
+  // The donut's own total — what the slices add up to.
+  const occTotal = occData.reduce((sum, d) => sum + d.value, 0);
 
   const collectionPct = kpis.collection_expected > 0
     ? Math.round((kpis.collection_received / kpis.collection_expected) * 100)
@@ -203,8 +209,8 @@ export default function DashboardPage() {
                     paddingAngle={2}
                     stroke="none"
                   >
-                    {occData.map((_, i) => (
-                      <Cell key={i} fill={OCCUPANCY_COLORS[i % OCCUPANCY_COLORS.length]} />
+                    {occData.map((d) => (
+                      <Cell key={d.name} fill={OCCUPANCY_COLORS[d.name]} />
                     ))}
                   </Pie>
                   <RcTooltip contentStyle={TOOLTIP_STYLE} />
@@ -212,26 +218,44 @@ export default function DashboardPage() {
               </ResponsiveContainer>
               <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
                 <p className="text-2xl font-bold tabular-nums tracking-tight text-content">
-                  {occupancyPct}
-                  <span className="text-base font-semibold text-content-muted">%</span>
+                  {occTotal.toLocaleString()}
                 </p>
                 <p className="mt-0.5 text-[10px] uppercase tracking-wider text-content-muted">
-                  occupied
+                  {occTotal === 1 ? "unit" : "units"}
                 </p>
               </div>
             </div>
-            <ul className="w-full space-y-2 text-sm">
-              {occData.map((d, i) => (
-                <li key={d.name} className="flex items-center gap-3">
-                  <span
-                    className="h-2.5 w-2.5 rounded-full"
-                    style={{ background: OCCUPANCY_COLORS[i % OCCUPANCY_COLORS.length] }}
-                  />
-                  <span className="text-content-secondary">{d.name}</span>
-                  <span className="ml-auto font-semibold tabular-nums text-content">{d.value}</span>
-                </li>
-              ))}
-            </ul>
+            {/* Legend as a table: status | count | share, columns aligned. */}
+            <table className="w-full text-sm">
+              <caption className="sr-only">Units by rent status</caption>
+              <thead>
+                <tr className="text-[11px] uppercase tracking-wider text-content-muted">
+                  <th scope="col" className="pb-1.5 text-left font-medium">Status</th>
+                  <th scope="col" className="pb-1.5 text-right font-medium">Units</th>
+                  <th scope="col" className="pb-1.5 pl-4 text-right font-medium">Share</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {occData.map((d) => (
+                  <tr key={d.name}>
+                    <th scope="row" className="py-1.5 text-left font-normal text-content-secondary">
+                      <span className="flex items-center gap-2.5">
+                        <span
+                          aria-hidden
+                          className="h-2.5 w-2.5 shrink-0 rounded-full"
+                          style={{ background: OCCUPANCY_COLORS[d.name] }}
+                        />
+                        {d.name}
+                      </span>
+                    </th>
+                    <td className="py-1.5 text-right font-semibold tabular-nums text-content">{d.value}</td>
+                    <td className="py-1.5 pl-4 text-right tabular-nums text-content-muted">
+                      {occTotal > 0 ? Math.round((d.value / occTotal) * 100) : 0}%
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </Card>
 
@@ -323,53 +347,64 @@ export default function DashboardPage() {
             </Card>
           ) : (
             // The wrapper stretches the table's frame to the column's height.
-            // Phones show tenant and amount (date beneath it) only, so the 520px
-            // floor the extra columns need applies from sm up.
+            // Tenant and unit share one two-line cell, so no column is left
+            // stretched over empty space. Phones show tenant + amount only.
             <div className="flex flex-1 flex-col [&>div]:flex-1">
-              <Table className="sm:min-w-[520px]">
+              <Table>
                 <THead>
                   <TR>
-                    <TH className="px-3 sm:px-5">Tenant</TH>
-                    <TH className="hidden sm:table-cell">Building / Unit</TH>
-                    <TH className="hidden md:table-cell">Method</TH>
-                    <TH className="px-3 text-right sm:px-5">Amount</TH>
-                    <TH className="hidden text-right sm:table-cell">Date</TH>
+                    <TH className="px-3 sm:px-4">Tenant</TH>
+                    <TH className="hidden px-3 sm:table-cell">Date</TH>
+                    <TH className="hidden px-3 xl:table-cell">Method</TH>
+                    <TH className="px-3 text-right sm:px-4">Amount</TH>
+                    <TH className="hidden px-3 sm:table-cell sm:pr-4">Status</TH>
                   </TR>
                 </THead>
                 <TBody>
                   {recent_payments.slice(0, 6).map((p) => (
                     <TR key={p.id}>
-                      <TD className="px-3 sm:px-5">
-                        <div className="flex items-center gap-3 sm:w-max">
+                      <TD className="px-3 sm:px-4">
+                        <div className="flex items-center gap-3">
                           <img
                             src={avatarFor(p.tenant_name)}
                             alt=""
                             aria-hidden
-                            className="hidden h-9 w-9 rounded-full ring-1 ring-border sm:block"
+                            className="hidden h-8 w-8 shrink-0 rounded-full ring-1 ring-border sm:block"
                           />
-                          <span
-                            className="block max-w-[10rem] truncate font-medium text-content sm:max-w-none"
-                            title={p.tenant_name}
-                          >
-                            {p.tenant_name}
-                          </span>
+                          <div className="min-w-0">
+                            <p
+                              className="max-w-[10rem] truncate font-medium text-content sm:max-w-[13rem]"
+                              title={p.tenant_name}
+                            >
+                              {p.tenant_name}
+                            </p>
+                            <p
+                              className="max-w-[10rem] truncate text-xs text-content-muted sm:max-w-[13rem]"
+                              title={`${p.building_name} · ${p.unit_label}`}
+                            >
+                              {p.building_name} · {p.unit_label}
+                            </p>
+                          </div>
                         </div>
                       </TD>
-                      <TD className="hidden text-content-muted sm:table-cell">
-                        {p.building_name} · {p.unit_label}
+                      <TD className="hidden px-3 text-sm tabular-nums text-content-secondary sm:table-cell">
+                        {p.payment_date}
                       </TD>
-                      <TD className="hidden md:table-cell">
+                      <TD className="hidden px-3 xl:table-cell">
                         <Badge tone="neutral">{p.source || "—"}</Badge>
                       </TD>
-                      <TD className="px-3 text-right font-semibold tabular-nums text-content sm:px-5">
-                        <span className="text-content-muted">KES </span>
-                        {Number(p.amount).toLocaleString()}
-                        <span className="block text-[11px] font-normal uppercase tracking-wider text-content-muted sm:hidden">
+                      <TD className="px-3 text-right font-semibold tabular-nums text-content sm:px-4">
+                        {KES(p.amount)}
+                        <span className="block text-[11px] font-normal tabular-nums text-content-muted sm:hidden">
                           {p.payment_date}
                         </span>
                       </TD>
-                      <TD className="hidden text-right text-xs uppercase tracking-wider text-content-muted sm:table-cell">
-                        {p.payment_date}
+                      <TD className="hidden px-3 sm:table-cell sm:pr-4">
+                        {p.voided ? (
+                          <Badge tone="vacant">Voided</Badge>
+                        ) : (
+                          <Badge tone="paid" withDot>Received</Badge>
+                        )}
                       </TD>
                     </TR>
                   ))}
@@ -404,7 +439,7 @@ export default function DashboardPage() {
                 <Link
                   key={b.id}
                   to={b.id ? `/buildings/${b.id}` : "/buildings"}
-                  className="group relative block overflow-hidden rounded-2xl bg-surface shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md dark:border dark:border-border"
+                  className="group relative block overflow-hidden rounded-2xl border border-border bg-surface shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md"
                 >
                   <div className="relative h-44 w-full overflow-hidden">
                     <BuildingThumb
@@ -549,7 +584,7 @@ function CollectedHero({ month, pct, received, expected }: CollectedHeroProps) {
         <p className="text-xl font-bold leading-none tabular-nums tracking-tight sm:text-2xl">
           {KES(received)}
         </p>
-        <span className="mb-0.5 inline-flex items-center gap-1 rounded-full bg-teal-500/20 px-2 py-0.5 text-[11px] font-semibold text-teal-300">
+        <span className="mb-0.5 inline-flex items-center gap-1 rounded-full bg-success px-2 py-0.5 text-[11px] font-semibold text-white">
           {pct}%
         </span>
       </div>
@@ -564,7 +599,7 @@ const KPI_ICON: Record<KpiTone, string> = {
   navy: "bg-navy-800/[0.07] text-navy-700 dark:bg-navy-500/15 dark:text-navy-500",
   teal: "bg-info-soft text-teal-700 dark:text-teal-500",
   success: "bg-success-soft text-success",
-  alert: "bg-orange-500/12 text-orange-700 dark:text-orange-500",
+  alert: "bg-danger-soft text-danger",
   neutral: "bg-surface-sunk text-content-secondary",
 };
 
@@ -605,7 +640,7 @@ function Kpi({ icon: Icon, label, value, caption, progress, tone = "neutral", co
         className={cn(
           "font-bold leading-tight tabular-nums tracking-tight",
           compact ? "mt-2 text-xl sm:text-2xl" : "mt-2.5 text-2xl sm:text-3xl",
-          alert ? "text-orange-700 dark:text-orange-500" : "text-content"
+          alert ? "text-danger" : "text-content"
         )}
       >
         {value}
@@ -623,7 +658,7 @@ function Kpi({ icon: Icon, label, value, caption, progress, tone = "neutral", co
           className={cn(
             "text-xs",
             compact ? "mt-1.5" : "mt-2",
-            alert ? "text-orange-700 dark:text-orange-500" : "text-content-muted"
+            alert ? "text-danger" : "text-content-muted"
           )}
         >
           {caption}
@@ -684,57 +719,79 @@ function QuickAction({ to, icon: Icon, label, hint, ariaLabel, tone }: QuickActi
   );
 }
 
+// Solid red is reserved for overdue money, the one thing to act on today.
+// Everything else gets a quiet secondary button.
 const ALERT_TONE = {
-  danger: "bg-danger-soft text-danger",
-  warning: "bg-warning-soft text-warning",
-  attention: "bg-orange-500/10 text-orange-700 dark:text-orange-500",
-  neutral: "bg-surface-sunk text-content-secondary",
+  danger: "bg-danger text-white hover:bg-danger/90",
+  warning: "bg-warning-soft text-warning hover:bg-warning-soft/70",
+  neutral: "bg-surface-sunk text-content-secondary hover:text-content",
 } as const;
 
-/** What to do about an alert, and where to go to do it. Alerts that name a
- *  tenant open that tenant's page, where the balance, notice or lease lives. */
 /** "This morning" keeps to a short list; the rest open in View all. */
 const ALERTS_SHOWN = 5;
 
 function AlertRow({ alert, onNavigate }: { alert: DashboardAlert; onNavigate?: () => void }) {
   const action = alertAction(alert);
   return (
-    <li>
+    <li className="flex items-start gap-3 px-3 py-3 text-sm">
+      <AlertSeverityDot type={alert.type} />
+      <div className="min-w-0 flex-1">
+        {alert.title ? (
+          <>
+            <p className="truncate font-semibold text-content" title={alert.title}>
+              {alert.title}
+            </p>
+            {alert.unit && (
+              <p className="truncate text-xs text-content-muted" title={alert.unit}>
+                {alert.unit}
+              </p>
+            )}
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+              {alert.amount != null && (
+                <span className="rounded-full bg-danger px-2 py-0.5 font-semibold tabular-nums text-white">
+                  {KES(alert.amount)}
+                </span>
+              )}
+              {alert.date && (
+                <span className="tabular-nums text-content-muted">
+                  {alert.date_label ?? "Date"} {alert.date}
+                </span>
+              )}
+              {alert.detail && <span className="text-content-secondary">{alert.detail}</span>}
+            </div>
+          </>
+        ) : (
+          // An older API without the structured fields.
+          <p className="line-clamp-2 break-words leading-snug text-content-secondary">{alert.message}</p>
+        )}
+      </div>
       <Link
         to={action.to}
         onClick={onNavigate}
-        className="group flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-colors hover:bg-surface-sunk focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/40"
+        aria-label={alert.title ? `${action.label}: ${alert.title}` : action.label}
+        className={cn(
+          "inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/40",
+          action.tone
+        )}
       >
-        <AlertSeverityDot type={alert.type} />
-        <p className="line-clamp-2 min-w-0 flex-1 break-words leading-snug text-content-secondary group-hover:text-content">
-          {alert.message}
-        </p>
-        <span
-          className={cn(
-            "hidden shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider sm:inline-flex",
-            action.tone
-          )}
-        >
-          {action.label}
-        </span>
-        <ChevronRight
-          aria-hidden
-          className="h-4 w-4 shrink-0 text-content-muted transition-transform group-hover:translate-x-0.5 group-hover:text-content"
-        />
+        {action.label}
+        <ChevronRight aria-hidden className="h-3.5 w-3.5" />
       </Link>
     </li>
   );
 }
 
+/** What to do about an alert, and where to go to do it. Alerts that name a
+ *  tenant open that tenant's page, where the balance, notice or lease lives. */
 function alertAction(a: DashboardAlert): { label: string; to: string; tone: string } {
   const tenant = a.tenant_id ? `/tenants/${a.tenant_id}` : null;
   switch (a.type) {
     case "overdue":
-      return { label: "Collect rent", to: tenant ?? "/tenants?payment_status=in_arrears", tone: ALERT_TONE.danger };
+      return { label: "Collect", to: tenant ?? "/tenants?payment_status=in_arrears", tone: ALERT_TONE.danger };
     case "partial":
       return { label: "Chase balance", to: tenant ?? "/units", tone: ALERT_TONE.warning };
     case "move_out":
-      return { label: "Plan move-out", to: tenant ?? "/tenants", tone: ALERT_TONE.attention };
+      return { label: "Plan move-out", to: tenant ?? "/tenants", tone: ALERT_TONE.neutral };
     case "expiring_lease":
       return { label: "Renew lease", to: tenant ?? "/tenants", tone: ALERT_TONE.warning };
     default:
@@ -748,8 +805,6 @@ function AlertSeverityDot({ type }: { type: string }) {
       ? "bg-danger"
       : type === "partial" || type === "expiring_lease"
       ? "bg-warning"
-      : type === "move_out"
-      ? "bg-orange-600"
       : "bg-neutral-300";
   return (
     <span

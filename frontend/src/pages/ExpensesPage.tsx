@@ -20,6 +20,7 @@ import { getErrorMessage } from "@/lib/apiError";
 import { cn } from "@/lib/cn";
 import { toDayFirst } from "@/lib/dates";
 import { AccountingSuite } from "@/pages/AccountingPage";
+import { formatKESWhole } from "@/lib/money";
 
 const expenseSchema = z.object({
   date: z.string().min(1, "Date is required"),
@@ -192,7 +193,7 @@ export default function ExpensesPage() {
               {filterYear}
             </p>
             <p className="mt-1 font-display text-4xl font-semibold text-status-unpaid">
-              KES {total.toLocaleString()}
+              {formatKESWhole(total)}
             </p>
             <p className="mt-1 text-xs text-ink-500">
               Across {expenses?.length ?? 0} entr{(expenses?.length ?? 0) === 1 ? "y" : "ies"}
