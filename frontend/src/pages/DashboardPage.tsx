@@ -10,6 +10,7 @@ import {
   Wallet,
   type LucideIcon,
 } from "lucide-react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import {
   Cell,
@@ -24,6 +25,7 @@ import {
   Card,
   EmptyState,
   ErrorState,
+  Modal,
   Skeleton,
   TBody,
   TD,
@@ -32,7 +34,7 @@ import {
   TR,
   Table,
 } from "@/components/ui";
-import SmsBalanceCard from "@/components/SmsBalanceCard";
+import { SmsCreditWidget } from "@/components/SmsBalanceCard";
 import { cn } from "@/lib/cn";
 import { useBuildingPhotoSrc, useBuildings } from "@/hooks/useBuildings";
 import { useDashboard, type DashboardAlert } from "@/hooks/useDashboard";
@@ -72,6 +74,7 @@ function BuildingThumb({ id, name, className }: { id: number | undefined; name: 
 
 export default function DashboardPage() {
   const { data, isLoading, isError, refetch } = useDashboard();
+  const [allAlertsOpen, setAllAlertsOpen] = useState(false);
 
   const today = new Date();
   const dateLine = format(today, "EEEE, d MMMM").toUpperCase();
@@ -131,7 +134,11 @@ export default function DashboardPage() {
   return (
     <div className="space-y-10 lg:space-y-12">
       {/* ── Masthead with actions ─────────────────────────────────────────── */}
-      <Masthead dateLine={dateLine} greeting={greeting} />
+      <Masthead dateLine={dateLine} greeting={greeting}>
+        {/* The SMS wallet, up where it is seen: a dry balance silently stops
+            rent reminders and receipts going out. */}
+        <SmsCreditWidget className="w-full sm:w-auto sm:min-w-[19rem]" />
+      </Masthead>
 
       {/* ── KPI tiles — glanceable ────────────────────────────────────────── */}
       <section className="-mt-4 grid gap-5 sm:grid-cols-2 lg:-mt-6 lg:grid-cols-4 lg:items-stretch lg:gap-6">
@@ -229,18 +236,31 @@ export default function DashboardPage() {
         </Card>
 
         {/* min-w-0: a grid item otherwise grows to its widest content (a long
-            alert, the payments table) and pushes the page sideways on phones. */}
-        <div className="min-w-0 lg:col-span-2">
-          <div className="mb-4 flex items-baseline justify-between">
-            <h2 className="text-lg font-semibold text-content">This morning</h2>
-            <Badge tone={alerts.length === 0 ? "sage" : "coral"} withDot>
-              {alerts.length === 0
-                ? "Nothing pressing"
-                : `${alerts.length} ${alerts.length === 1 ? "item" : "items"}`}
-            </Badge>
+            alert, the payments table) and pushes the page sideways on phones.
+            Both columns are flex columns whose card fills them, so on desktop
+            the two cards end level whichever is taller. */}
+        <div className="flex min-w-0 flex-col lg:col-span-2">
+          <div className="mb-4 flex items-baseline justify-between gap-3">
+            <div className="flex items-baseline gap-3">
+              <h2 className="text-lg font-semibold text-content">This morning</h2>
+              <Badge tone={alerts.length === 0 ? "sage" : "coral"} withDot>
+                {alerts.length === 0
+                  ? "Nothing pressing"
+                  : `${alerts.length} ${alerts.length === 1 ? "item" : "items"}`}
+              </Badge>
+            </div>
+            {alerts.length > ALERTS_SHOWN && (
+              <button
+                type="button"
+                onClick={() => setAllAlertsOpen(true)}
+                className="whitespace-nowrap text-sm font-medium text-teal-700 transition-colors hover:text-teal-800"
+              >
+                View all →
+              </button>
+            )}
           </div>
           {alerts.length === 0 ? (
-            <Card padding="lg">
+            <Card padding="lg" className="flex-1">
               <p className="text-base font-medium leading-snug text-content">
                 Nothing demands your attention.
               </p>
@@ -249,51 +269,40 @@ export default function DashboardPage() {
               </p>
             </Card>
           ) : (
-            <Card padding="none">
-              <ul className="px-3 py-2">
-                {alerts.slice(0, 6).map((a, i) => {
-                  const action = alertAction(a);
-                  return (
-                    <li key={i}>
-                      <Link
-                        to={action.to}
-                        className="group flex items-start gap-3 rounded-xl px-3 py-3 text-sm transition-colors hover:bg-surface-sunk focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/40"
-                      >
-                        <AlertSeverityDot type={a.type} />
-                        <div className="min-w-0 flex-1">
-                          <span
-                            className={cn(
-                              "inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider",
-                              action.tone
-                            )}
-                          >
-                            {action.label}
-                          </span>
-                          <p className="mt-1.5 break-words leading-snug text-content-secondary group-hover:text-content">
-                            {a.message}
-                          </p>
-                        </div>
-                        <ChevronRight
-                          aria-hidden
-                          className="mt-0.5 h-4 w-4 shrink-0 text-content-muted transition-transform group-hover:translate-x-0.5 group-hover:text-content"
-                        />
-                      </Link>
-                    </li>
-                  );
-                })}
-                {alerts.length > 6 && (
-                  <li className="px-3 py-3 text-xs text-content-muted">+{alerts.length - 6} more items</li>
-                )}
+            <Card padding="none" className="flex flex-1 flex-col">
+              <ul className="divide-y divide-border px-2 py-1.5">
+                {alerts.slice(0, ALERTS_SHOWN).map((a, i) => (
+                  <AlertRow key={i} alert={a} />
+                ))}
               </ul>
+              {alerts.length > ALERTS_SHOWN && (
+                <button
+                  type="button"
+                  onClick={() => setAllAlertsOpen(true)}
+                  className="mt-auto border-t border-border px-5 py-3 text-left text-sm font-medium text-content-secondary transition-colors hover:bg-surface-sunk hover:text-content"
+                >
+                  View all {alerts.length} items
+                </button>
+              )}
             </Card>
           )}
 
-          {/* SMS wallet — sits with the morning alerts because a dry balance
-              silently stops rent reminders and receipts going out. */}
-          <SmsBalanceCard compact className="mt-6" />
+          <Modal
+            open={allAlertsOpen}
+            onClose={() => setAllAlertsOpen(false)}
+            title="This morning"
+            eyebrow={`${alerts.length} items`}
+            size="md"
+          >
+            <ul className="-mx-3 divide-y divide-border">
+              {alerts.map((a, i) => (
+                <AlertRow key={i} alert={a} onNavigate={() => setAllAlertsOpen(false)} />
+              ))}
+            </ul>
+          </Modal>
         </div>
 
-        <div className="min-w-0 lg:col-span-3">
+        <div className="flex min-w-0 flex-col lg:col-span-3">
           <div className="mb-4 flex items-baseline justify-between">
             <h2 className="text-lg font-semibold text-content">Recent payments</h2>
             <Link
@@ -304,7 +313,7 @@ export default function DashboardPage() {
             </Link>
           </div>
           {recent_payments.length === 0 ? (
-            <Card padding="lg">
+            <Card padding="lg" className="flex-1">
               <p className="text-base font-medium leading-snug text-content">
                 No payments recorded yet.
               </p>
@@ -313,57 +322,60 @@ export default function DashboardPage() {
               </p>
             </Card>
           ) : (
+            // The wrapper stretches the table's frame to the column's height.
             // Phones show tenant and amount (date beneath it) only, so the 520px
             // floor the extra columns need applies from sm up.
-            <Table className="sm:min-w-[520px]">
-              <THead>
-                <TR>
-                  <TH className="px-3 sm:px-5">Tenant</TH>
-                  <TH className="hidden sm:table-cell">Building / Unit</TH>
-                  <TH className="hidden md:table-cell">Method</TH>
-                  <TH className="px-3 text-right sm:px-5">Amount</TH>
-                  <TH className="hidden text-right sm:table-cell">Date</TH>
-                </TR>
-              </THead>
-              <TBody>
-                {recent_payments.slice(0, 6).map((p) => (
-                  <TR key={p.id}>
-                    <TD className="px-3 sm:px-5">
-                      <div className="flex items-center gap-3 sm:w-max">
-                        <img
-                          src={avatarFor(p.tenant_name)}
-                          alt=""
-                          aria-hidden
-                          className="hidden h-9 w-9 rounded-full ring-1 ring-border sm:block"
-                        />
-                        <span
-                          className="block max-w-[10rem] truncate font-medium text-content sm:max-w-none"
-                          title={p.tenant_name}
-                        >
-                          {p.tenant_name}
-                        </span>
-                      </div>
-                    </TD>
-                    <TD className="hidden text-content-muted sm:table-cell">
-                      {p.building_name} · {p.unit_label}
-                    </TD>
-                    <TD className="hidden md:table-cell">
-                      <Badge tone="neutral">{p.source || "—"}</Badge>
-                    </TD>
-                    <TD className="px-3 text-right font-semibold tabular-nums text-content sm:px-5">
-                      <span className="text-content-muted">KES </span>
-                      {Number(p.amount).toLocaleString()}
-                      <span className="block text-[11px] font-normal uppercase tracking-wider text-content-muted sm:hidden">
-                        {p.payment_date}
-                      </span>
-                    </TD>
-                    <TD className="hidden text-right text-xs uppercase tracking-wider text-content-muted sm:table-cell">
-                      {p.payment_date}
-                    </TD>
+            <div className="flex flex-1 flex-col [&>div]:flex-1">
+              <Table className="sm:min-w-[520px]">
+                <THead>
+                  <TR>
+                    <TH className="px-3 sm:px-5">Tenant</TH>
+                    <TH className="hidden sm:table-cell">Building / Unit</TH>
+                    <TH className="hidden md:table-cell">Method</TH>
+                    <TH className="px-3 text-right sm:px-5">Amount</TH>
+                    <TH className="hidden text-right sm:table-cell">Date</TH>
                   </TR>
-                ))}
-              </TBody>
-            </Table>
+                </THead>
+                <TBody>
+                  {recent_payments.slice(0, 6).map((p) => (
+                    <TR key={p.id}>
+                      <TD className="px-3 sm:px-5">
+                        <div className="flex items-center gap-3 sm:w-max">
+                          <img
+                            src={avatarFor(p.tenant_name)}
+                            alt=""
+                            aria-hidden
+                            className="hidden h-9 w-9 rounded-full ring-1 ring-border sm:block"
+                          />
+                          <span
+                            className="block max-w-[10rem] truncate font-medium text-content sm:max-w-none"
+                            title={p.tenant_name}
+                          >
+                            {p.tenant_name}
+                          </span>
+                        </div>
+                      </TD>
+                      <TD className="hidden text-content-muted sm:table-cell">
+                        {p.building_name} · {p.unit_label}
+                      </TD>
+                      <TD className="hidden md:table-cell">
+                        <Badge tone="neutral">{p.source || "—"}</Badge>
+                      </TD>
+                      <TD className="px-3 text-right font-semibold tabular-nums text-content sm:px-5">
+                        <span className="text-content-muted">KES </span>
+                        {Number(p.amount).toLocaleString()}
+                        <span className="block text-[11px] font-normal uppercase tracking-wider text-content-muted sm:hidden">
+                          {p.payment_date}
+                        </span>
+                      </TD>
+                      <TD className="hidden text-right text-xs uppercase tracking-wider text-content-muted sm:table-cell">
+                        {p.payment_date}
+                      </TD>
+                    </TR>
+                  ))}
+                </TBody>
+              </Table>
+            </div>
           )}
         </div>
       </section>
@@ -681,6 +693,39 @@ const ALERT_TONE = {
 
 /** What to do about an alert, and where to go to do it. Alerts that name a
  *  tenant open that tenant's page, where the balance, notice or lease lives. */
+/** "This morning" keeps to a short list; the rest open in View all. */
+const ALERTS_SHOWN = 5;
+
+function AlertRow({ alert, onNavigate }: { alert: DashboardAlert; onNavigate?: () => void }) {
+  const action = alertAction(alert);
+  return (
+    <li>
+      <Link
+        to={action.to}
+        onClick={onNavigate}
+        className="group flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-colors hover:bg-surface-sunk focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/40"
+      >
+        <AlertSeverityDot type={alert.type} />
+        <p className="line-clamp-2 min-w-0 flex-1 break-words leading-snug text-content-secondary group-hover:text-content">
+          {alert.message}
+        </p>
+        <span
+          className={cn(
+            "hidden shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider sm:inline-flex",
+            action.tone
+          )}
+        >
+          {action.label}
+        </span>
+        <ChevronRight
+          aria-hidden
+          className="h-4 w-4 shrink-0 text-content-muted transition-transform group-hover:translate-x-0.5 group-hover:text-content"
+        />
+      </Link>
+    </li>
+  );
+}
+
 function alertAction(a: DashboardAlert): { label: string; to: string; tone: string } {
   const tenant = a.tenant_id ? `/tenants/${a.tenant_id}` : null;
   switch (a.type) {
@@ -708,7 +753,7 @@ function AlertSeverityDot({ type }: { type: string }) {
       : "bg-neutral-300";
   return (
     <span
-      className={"mt-1.5 inline-block h-2 w-2 shrink-0 rounded-full " + color}
+      className={"inline-block h-2 w-2 shrink-0 rounded-full " + color}
       aria-hidden
     />
   );
