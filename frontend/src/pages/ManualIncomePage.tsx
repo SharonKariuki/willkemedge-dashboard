@@ -23,6 +23,7 @@ import {
 } from "@/hooks/useManualIncome";
 import { getErrorMessage } from "@/lib/apiError";
 import { toDayFirst } from "@/lib/dates";
+import { formatKESWhole } from "@/lib/money";
 
 const inputCls =
   "w-full rounded-md bg-surface-raised hairline px-3 py-2.5 text-sm text-ink-900 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-sage-500/40";
@@ -147,7 +148,7 @@ export default function ManualIncomePage() {
 
       <Card variant="glass" padding="md">
         <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-ink-500">Total recorded</p>
-        <p className="mt-1 font-display text-4xl font-semibold text-sage-600">KES {total.toLocaleString()}</p>
+        <p className="mt-1 font-display text-4xl font-semibold text-sage-600">{formatKESWhole(total)}</p>
       </Card>
 
       {isLoading ? (

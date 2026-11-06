@@ -41,6 +41,7 @@ import { cn } from "@/lib/cn";
 import { toDayFirst, todayIso } from "@/lib/dates";
 import { downloadPdf } from "@/lib/downloadPdf";
 import { avatarFor } from "@/lib/images";
+import { formatKESWhole } from "@/lib/money";
 
 const SOURCES = [
   { value: "", label: "All" },
@@ -234,9 +235,9 @@ export default function PaymentsPage() {
                 Monthly collection · {progress.period_month}/{progress.period_year}
               </p>
               <p className="mt-1 font-display text-3xl font-semibold text-ink-900 sm:text-4xl">
-                KES {Number(progress.collected).toLocaleString()}
+                {formatKESWhole(progress.collected)}
                 <span className="ml-2 text-lg text-ink-400">
-                  of {Number(progress.expected).toLocaleString()}
+                  of {Math.round(Number(progress.expected)).toLocaleString()}
                 </span>
               </p>
             </div>
