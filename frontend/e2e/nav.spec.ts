@@ -70,3 +70,43 @@ test("on the icon rail a parent opens a flyout with its views", async ({ page },
   await expect(page).toHaveURL(/\/reports\?tab=landlord$/);
   await expect(flyout).toBeHidden();
 });
+
+test("sidebar groups fold away, and the group holding the page reopens itself", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "the sidebar is hidden on the phone viewport");
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/dashboard");
+
+  const nav = page.getByRole("navigation", { name: "Main" });
+  const books = nav.getByRole("button", { name: "Books" });
+  await expect(books).toHaveAttribute("aria-expanded", "true");
+  await books.click();
+  await expect(books).toHaveAttribute("aria-expanded", "false");
+  await expect(nav.getByRole("button", { name: "Reports" })).toBeHidden();
+
+  // Main items are never folded away.
+  await expect(nav.getByRole("link", { name: "Payments" })).toBeVisible();
+
+  await page.goto("/reports?tab=aging");
+  await expect(books).toHaveAttribute("aria-expanded", "true");
+  await expect(nav.getByRole("link", { name: "Aging Balances" })).toHaveAttribute("aria-current", "page");
+});
+
+test("below lg the expand button floats the full sidebar over the page", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "the sidebar is hidden on the phone viewport");
+  await page.setViewportSize({ width: 900, height: 800 });
+  await page.goto("/dashboard");
+
+  const expand = page.getByRole("button", { name: "Expand sidebar" });
+  await expect(expand).toBeVisible();
+  await expand.click();
+
+  const nav = page.getByRole("navigation", { name: "Main" });
+  await expect(nav.getByRole("button", { name: "Money" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("button", { name: "Expand sidebar" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Expand sidebar" }).click();
+  await nav.getByRole("link", { name: "Tenants" }).click();
+  await expect(page).toHaveURL(/\/tenants$/);
+  await expect(page.getByRole("button", { name: "Expand sidebar" })).toBeVisible();
+});
