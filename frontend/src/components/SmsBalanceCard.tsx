@@ -1,7 +1,7 @@
-import { Check, Copy, RefreshCw } from "lucide-react";
+import { Check, Copy, MessageSquare, Plus, RefreshCw } from "lucide-react";
 import { useState } from "react";
 
-import { Card, Skeleton } from "@/components/ui";
+import { Button, Card, Modal, Skeleton } from "@/components/ui";
 import { useRefreshSmsBalance, useSmsBalance, type SmsBalance } from "@/hooks/useNotifications";
 import { cn } from "@/lib/cn";
 
@@ -268,5 +268,105 @@ export default function SmsBalanceCard({ compact = false, className }: Props) {
         </div>
       )}
     </Card>
+  );
+}
+
+/**
+ * The dashboard's account widget: the balance at a glance and a Top up button
+ * that opens the meter and the paybill slip. The full card lives on
+ * Notifications and in Settings.
+ */
+export function SmsCreditWidget({ className }: { className?: string }) {
+  const { data, isLoading, isFetching } = useSmsBalance();
+  const refresh = useRefreshSmsBalance();
+  const [open, setOpen] = useState(false);
+
+  const busy = isFetching || refresh.isPending;
+  const amount = data?.balance != null ? Number(data.balance) : null;
+  const low = Boolean(data?.low && amount != null);
+  const threshold = Number(data?.low_threshold ?? 0);
+  const money =
+    amount != null
+      ? `${data?.currency || "KES"} ${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+      : null;
+
+  return (
+    <>
+      <div
+        className={cn(
+          "flex items-center gap-3 rounded-2xl border bg-surface py-2 pl-2.5 pr-2 shadow-sm",
+          low ? "border-warning/40" : "border-border",
+          className
+        )}
+      >
+        <span
+          className={cn(
+            "flex h-9 w-9 shrink-0 items-center justify-center rounded-xl",
+            low ? "bg-warning-soft text-warning" : "bg-teal-700/10 text-teal-800 dark:text-teal-600"
+          )}
+        >
+          <MessageSquare className="h-4 w-4" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-content-muted">
+            SMS credit{low && <span className="ml-1.5 text-warning">· Low</span>}
+          </p>
+          {isLoading ? (
+            <Skeleton className="mt-1 h-4 w-24" />
+          ) : (
+            <p
+              className={cn(
+                "truncate text-sm font-semibold tabular-nums",
+                money == null ? "text-content-muted" : low ? "text-warning" : "text-content"
+              )}
+            >
+              {money ?? "Unavailable"}
+              {data?.sms_remaining != null && (
+                <span className="font-normal text-content-muted"> · ≈ {data.sms_remaining.toLocaleString()} SMS</span>
+              )}
+            </p>
+          )}
+        </div>
+        <Button size="sm" variant="secondary" className="rounded-xl" onClick={() => setOpen(true)}>
+          <Plus className="h-3.5 w-3.5" />
+          Top up
+        </Button>
+      </div>
+
+      <Modal
+        open={open}
+        onClose={() => setOpen(false)}
+        title="Top up SMS credit"
+        size="sm"
+        headerActions={
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            onClick={() => refresh.mutate()}
+            disabled={busy}
+            aria-label={busy ? "Checking SMS balance" : "Refresh SMS balance"}
+          >
+            <RefreshCw className={cn("h-3.5 w-3.5", busy && "animate-spin")} />
+          </Button>
+        }
+      >
+        <div className="space-y-5">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-content-muted">Balance</p>
+            <p className={cn("mt-1 text-2xl font-semibold tabular-nums", low ? "text-warning" : "text-content")}>
+              {money ?? "Unavailable"}
+            </p>
+            {amount != null && <Meter balance={amount} threshold={threshold} low={low} />}
+            <p className="mt-2 text-xs text-content-secondary">
+              {data?.sms_remaining != null && <>≈ {data.sms_remaining.toLocaleString()} messages left</>}
+              {low && <> · below KES {threshold.toLocaleString()}, reminders may stop</>}
+              {amount == null && (data?.error ?? "Balance unavailable right now.")}
+            </p>
+          </div>
+          {data?.topup && <TopupSlip topup={data.topup} low={low} />}
+          {data?.topup?.note && <p className="text-[11px] leading-relaxed text-content-muted">{data.topup.note}</p>}
+        </div>
+      </Modal>
+    </>
   );
 }

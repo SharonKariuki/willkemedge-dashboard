@@ -8,14 +8,15 @@ import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useNavTree } from "@/hooks/useNavTree";
 import { cn } from "@/lib/cn";
 import { displayName } from "@/lib/displayName";
-import { NAV_CHILDREN, childHref, isChildActive, isUnder, type NavItem } from "@/lib/nav";
+import { NAV_CHILDREN, childHref, groupKey, isChildActive, isUnder, type NavItem } from "@/lib/nav";
 
 const STORAGE_KEY = "willkemedge-sidebar-collapsed";
 
 export default function Sidebar() {
   // Below lg the expanded rail costs 224px of a 768px viewport, which leaves
-  // the tables and filters too little room to lay out. Force the icon rail
-  // there; the saved preference applies from lg up.
+  // the tables and filters too little room to lay out. The rail stays there,
+  // and expanding it floats the full menu over the page instead of pushing
+  // the page aside; the saved preference applies from lg up.
   const roomToExpand = useMediaQuery("(min-width: 1024px)");
 
   const [preferCollapsed, setPreferCollapsed] = useState<boolean>(() => {
@@ -34,8 +35,10 @@ export default function Sidebar() {
     }
   }, [preferCollapsed]);
 
-  const collapsed = preferCollapsed || !roomToExpand;
-  const toggle = () => setPreferCollapsed((c) => !c);
+  const [peek, setPeek] = useState(false);
+  const overlay = !roomToExpand && peek;
+  const collapsed = roomToExpand ? preferCollapsed : !peek;
+  const toggle = () => (roomToExpand ? setPreferCollapsed((c) => !c) : setPeek((p) => !p));
 
   const { user, logout } = useAuth();
   const { sections, footer, isOpen, toggle: toggleParent } = useNavTree();
@@ -45,6 +48,14 @@ export default function Sidebar() {
   const closeFlyout = useCallback(() => setFlyout(null), []);
   const { pathname, search } = useLocation();
   useEffect(closeFlyout, [pathname, search, collapsed, closeFlyout]);
+  useEffect(() => setPeek(false), [pathname, search, roomToExpand]);
+
+  useEffect(() => {
+    if (!overlay) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setPeek(false);
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [overlay]);
 
   const handle = displayName(user?.email?.split("@")[0] ?? "");
   const initials =
@@ -74,18 +85,32 @@ export default function Sidebar() {
   return (
     <aside
       className={cn(
-        "hidden shrink-0 transition-[width] duration-300 ease-out md:sticky md:top-0 md:flex md:h-screen md:flex-col",
-        collapsed ? "md:w-[72px]" : "md:w-56"
+        "hidden shrink-0 transition-[width] duration-300 ease-out md:sticky md:top-0 md:z-40 md:flex md:h-screen md:flex-col",
+        collapsed || overlay ? "md:w-[72px]" : "md:w-56"
       )}
     >
-      <div className="sidebar-shell relative flex h-full flex-col px-3 py-4">
-        {/* Collapse toggle — pill straddling the right divider. Hidden below lg,
-            where the rail is the only layout that leaves room for the page. */}
+      {overlay && (
+        <button
+          type="button"
+          aria-label="Close sidebar"
+          className="fixed inset-0 z-40 bg-ink-900/30 backdrop-blur-[2px]"
+          onClick={() => setPeek(false)}
+        />
+      )}
+      <div
+        className={cn(
+          "sidebar-shell flex h-full flex-col px-3 py-4",
+          overlay ? "fixed inset-y-0 left-0 z-50 w-56 shadow-float animate-fade-up" : "relative"
+        )}
+      >
+        {/* Collapse toggle — pill straddling the right divider, at every width.
+            Below lg it floats the full menu over the page. */}
         <button
           type="button"
           onClick={toggle}
           aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-          className="absolute -right-3 top-1/2 z-10 hidden h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full bg-teal-600 text-white shadow-md ring-2 ring-sidebar transition-all hover:scale-110 hover:bg-teal-500 lg:flex"
+          aria-expanded={!collapsed}
+          className="absolute -right-3 top-1/2 z-10 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full bg-teal-600 text-white shadow-md ring-2 ring-sidebar transition-all hover:scale-110 hover:bg-teal-500"
         >
           {collapsed ? (
             <ChevronRight className="h-3.5 w-3.5" />
@@ -99,19 +124,46 @@ export default function Sidebar() {
           aria-label="Main"
           className="sidebar-nav flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto overflow-x-hidden pt-1"
         >
-          {sections.map((section, i) => (
-            <div key={section.label ?? i} className="flex flex-col gap-1">
-              {section.label &&
-                (collapsed ? (
-                  <div aria-hidden className="mx-2 my-1.5 h-px bg-white/[0.08]" />
-                ) : (
-                  <p className="px-3 pb-0.5 pt-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/35">
-                    {section.label}
-                  </p>
-                ))}
-              {section.items.map(renderItem)}
-            </div>
-          ))}
+          {sections.map((section, i) => {
+            // The main items, and every item on the icon rail, are always on show.
+            if (!section.label || collapsed)
+              return (
+                <div key={section.label ?? i} className="flex flex-col gap-1">
+                  {section.label && <div aria-hidden className="mx-2 my-1.5 h-px bg-white/[0.08]" />}
+                  {section.items.map(renderItem)}
+                </div>
+              );
+            const key = groupKey(section.label);
+            const open = isOpen(key);
+            const listId = `nav-group-${section.label.toLowerCase()}`;
+            return (
+              <div key={section.label} className="flex flex-col gap-1">
+                <button
+                  type="button"
+                  aria-expanded={open}
+                  aria-controls={listId}
+                  onClick={() => toggleParent(key)}
+                  className={cn(
+                    "mt-2 flex items-center gap-2 rounded-md px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] transition-colors hover:bg-white/5",
+                    section.active ? "text-white/85" : "text-white/40 hover:text-white/70"
+                  )}
+                >
+                  <span className="flex-1 text-left">{section.label}</span>
+                  {/* A folded group still shows that it holds the page on screen */}
+                  {section.active && !open && <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-ochre-400" />}
+                  <ChevronDown
+                    aria-hidden
+                    className={cn("h-3.5 w-3.5 shrink-0 transition-transform duration-200", !open && "-rotate-90")}
+                  />
+                </button>
+                {open && (
+                  <div id={listId} className="flex flex-col gap-1">
+                    {section.items.map(renderItem)}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </nav>
 
         {/* Activity, settings, profile + logout — pinned to the bottom */}
@@ -202,10 +254,16 @@ function ParentItem({
   open: boolean;
   onToggle: (anchor: DOMRect) => void;
 }) {
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
   const active = isUnder(item, pathname);
   const { label, icon: Icon } = item;
   const listId = `nav-children-${item.key}`;
+
+  // Reports has eighteen views; bring the one on screen into the menu's view.
+  useEffect(() => {
+    if (!open || !active || collapsed) return;
+    document.getElementById(listId)?.querySelector('[aria-current="page"]')?.scrollIntoView({ block: "nearest" });
+  }, [open, active, collapsed, listId, pathname, search]);
 
   return (
     <div>
@@ -217,9 +275,10 @@ function ParentItem({
         aria-expanded={open}
         aria-controls={collapsed ? undefined : listId}
         onClick={(e) => onToggle(e.currentTarget.getBoundingClientRect())}
-        className={rowClass(collapsed, active)}
+        // Open, the active child carries the highlight and the parent just reads white.
+        className={cn(rowClass(collapsed, active && (collapsed || !open)), active && open && !collapsed && "text-white")}
       >
-        {active && <ActiveBar collapsed={collapsed} />}
+        {active && (collapsed || !open) && <ActiveBar collapsed={collapsed} />}
         <Icon className={iconClass(active)} />
         {collapsed ? (
           <ChevronRight aria-hidden className="absolute right-0.5 h-3 w-3 text-white/35" />
@@ -236,14 +295,14 @@ function ParentItem({
 
       {!collapsed && open && (
         <div id={listId} className="ml-[21px] mt-0.5 border-l border-white/[0.08] pb-1 pl-2">
-          <ChildLinks item={item} />
+          <ChildLinks item={item} tree />
         </div>
       )}
     </div>
   );
 }
 
-function ChildLinks({ item }: { item: NavItem }) {
+function ChildLinks({ item, tree = false }: { item: NavItem; tree?: boolean }) {
   const { pathname, search } = useLocation();
   return (
     <>
@@ -262,10 +321,17 @@ function ChildLinks({ item }: { item: NavItem }) {
                 to={childHref(item, child)}
                 aria-current={active ? "page" : undefined}
                 className={cn(
-                  "truncate rounded-md px-2.5 py-1.5 text-[13px] transition-colors",
-                  active ? "bg-white/[0.07] font-medium text-ochre-300" : "text-white/55 hover:bg-white/5 hover:text-white"
+                  "relative truncate rounded-md px-2.5 py-1.5 text-[13px] transition-colors",
+                  active ? "bg-white/[0.08] font-medium text-white" : "text-white/55 hover:bg-white/5 hover:text-white"
                 )}
               >
+                {/* Marks the active view on the tree line itself (the flyout has none) */}
+                {tree && active && (
+                  <span
+                    aria-hidden
+                    className="absolute -left-[9px] top-1/2 h-4 w-[2px] -translate-y-1/2 rounded-full bg-ochre-400"
+                  />
+                )}
                 {child.label}
               </Link>
             );

@@ -132,20 +132,25 @@ export const NAV_CHILDREN: Partial<Record<ViewKey, NavChildGroup[]>> = {
 };
 
 export interface NavSection {
-  /** Heading above the section; the first section (Dashboard) has none. */
+  /**
+   * Heading of a collapsible group. The first section has none: it holds the
+   * main items, always on show (the same four the phone's bottom bar carries,
+   * plus Notifications).
+   */
   label?: string;
   keys: ViewKey[];
 }
 
 /** The menu, top to bottom. Every page in NAV_ITEMS appears exactly once here or in NAV_FOOTER. */
 export const NAV_SECTIONS: NavSection[] = [
-  { keys: ["dashboard"] },
-  { label: "Property", keys: ["buildings", "units", "tenants"] },
-  { label: "Money in", keys: ["payments", "reconciliation", "water", "income"] },
-  { label: "Money out", keys: ["expenses"] },
+  { keys: ["dashboard", "units", "tenants", "payments", "notifications"] },
+  { label: "Property", keys: ["buildings", "water"] },
+  { label: "Money", keys: ["reconciliation", "income", "expenses"] },
   { label: "Books", keys: ["accounting", "reports"] },
-  { label: "Messaging", keys: ["notifications"] },
 ];
+
+/** The open/closed key of a collapsible group, kept beside the parents' keys. */
+export const groupKey = (label: string) => `group:${label}`;
 
 /** Pinned below the scrolling menu, beside the profile. */
 export const NAV_FOOTER: ViewKey[] = ["activity", "settings"];
