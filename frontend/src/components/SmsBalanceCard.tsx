@@ -1,5 +1,5 @@
-import { Check, Copy, MessageSquare, Plus, RefreshCw } from "lucide-react";
-import { useState } from "react";
+import { Check, ChevronRight, Copy, MessageSquare, Plus, RefreshCw } from "lucide-react";
+import { useState, type ReactNode } from "react";
 
 import { Button, Card, Modal, Skeleton } from "@/components/ui";
 import { useRefreshSmsBalance, useSmsBalance, type SmsBalance } from "@/hooks/useNotifications";
@@ -18,21 +18,20 @@ import { cn } from "@/lib/cn";
  * which is why the paybill and account number come from the server rather than
  * being written into three templates that can drift apart.
  *
- * Deliberately quiet: neutral surface and a teal accent while healthy, amber
+ * Deliberately quiet: neutral surface and a teal accent while healthy, red
  * only once the balance drops below the server's low threshold, so the card is
  * ignorable until it needs attention.
  */
 
 /**
  * The meter has no natural "full", so it is drawn against the one number the
- * server does define: the low threshold sits at a fixed point on the track and
+ * server does define: the low threshold sits a quarter of the way along, and
  * the fill shows how far above (or below) that line the wallet is.
  */
 const LOW_MARK = 0.25;
 
-function CopyField({ label, value, grow = false }: { label: string; value: string; grow?: boolean }) {
+function useCopy(value: string) {
   const [copied, setCopied] = useState(false);
-
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(value);
@@ -44,228 +43,250 @@ function CopyField({ label, value, grow = false }: { label: string; value: strin
       // interrupting anyone over.
     }
   };
+  return { copied, copy };
+}
 
+/** One value to type into M-Pesa, with its own copy button. */
+function CopyTile({ label, value }: { label: string; value: string }) {
+  const { copied, copy } = useCopy(value);
   return (
-    <button
-      type="button"
-      onClick={copy}
-      aria-label={`Copy ${label}: ${value}`}
-      className={cn(
-        "group flex min-w-0 items-center justify-between gap-2 rounded-lg px-3 py-2 text-left",
-        grow ? "flex-1" : "shrink-0",
-        " transition-colors hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-      )}
-    >
-      <span className="min-w-0">
-        <span className="block text-[10px] font-semibold uppercase tracking-[0.12em] text-content-muted">
-          {label}
-        </span>
-        <span className="block break-all font-mono text-sm font-semibold tabular-nums text-content">
-          {value || "—"}
-        </span>
+    <div className="mt-2 flex items-center justify-between gap-3 rounded-xl border border-border bg-surface-sunk py-2 pl-3.5 pr-2">
+      <span className="min-w-0 break-all text-base font-semibold tabular-nums tracking-wide text-content">
+        {value || "—"}
       </span>
-      <span
-        aria-hidden
+      <button
+        type="button"
+        onClick={copy}
+        aria-label={`Copy ${label}: ${value}`}
         className={cn(
-          "flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-all",
+          "inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg px-3 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:ring-offset-1",
           copied
             ? "bg-success-soft text-success"
-            : "text-content-muted opacity-40 group-hover:bg-hover group-hover:opacity-100"
+            : "bg-teal-700 text-white shadow-sm hover:bg-teal-800"
         )}
       >
         {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-      </span>
+        {copied ? "Copied" : "Copy"}
+      </button>
       <span className="sr-only" aria-live="polite">
         {copied ? `${label} copied` : ""}
       </span>
-    </button>
+    </div>
   );
 }
 
-/** Paybill + account number, the two things needed to load airtime. */
-function TopupSlip({ topup, low }: { topup: SmsBalance["topup"]; low: boolean }) {
+function Step({ n, title, last = false, children }: { n: number; title: string; last?: boolean; children?: ReactNode }) {
   return (
-    <div className="max-w-md">
-      <p className="mb-1.5 text-[11px] font-medium text-content-muted">
-        {low ? "Top up now via M-Pesa" : "Top up via M-Pesa"}
-      </p>
-      <div
-        className={cn(
-          "flex items-stretch rounded-xl p-0.5 ring-1 ring-inset",
-          low ? "bg-warning-soft/60 ring-warning/20" : "bg-surface-sunk ring-border/60"
-        )}
-      >
-        <CopyField label="Paybill" value={topup.paybill} />
-        <span aria-hidden className="my-2 w-px bg-border" />
-        <CopyField label="Account" value={topup.account} grow />
+    <li className={cn("relative flex gap-3", !last && "pb-5")}>
+      {/* The rail joining the step numbers */}
+      {!last && <span aria-hidden className="absolute bottom-1 left-3 top-8 w-px bg-border" />}
+      <span className="relative flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-teal-700/10 text-xs font-semibold tabular-nums text-teal-800 dark:text-teal-600">
+        {n}
+      </span>
+      <div className="min-w-0 flex-1 pt-0.5">
+        <p className="text-sm font-medium leading-5 text-content">{title}</p>
+        {children}
       </div>
-    </div>
+    </li>
+  );
+}
+
+function Crumb({ children }: { children: ReactNode }) {
+  return (
+    <span className="rounded-md border border-border bg-surface-sunk px-2 py-0.5 text-xs font-medium text-content-secondary">
+      {children}
+    </span>
+  );
+}
+
+/** How to load airtime: the M-Pesa menu path, then the two numbers to type. */
+function TopupSteps({ topup }: { topup: SmsBalance["topup"] }) {
+  return (
+    <ol className="max-w-md">
+      <Step n={1} title="Open M-Pesa">
+        <p className="mt-2 flex flex-wrap items-center gap-1.5">
+          <Crumb>Lipa na M-Pesa</Crumb>
+          <ChevronRight aria-hidden className="h-3.5 w-3.5 text-content-muted" />
+          <Crumb>Pay Bill</Crumb>
+        </p>
+      </Step>
+      <Step n={2} title="Enter business number">
+        <CopyTile label="business number" value={topup.paybill} />
+      </Step>
+      <Step n={3} title="Enter account number" last>
+        <CopyTile label="account number" value={topup.account} />
+      </Step>
+    </ol>
+  );
+}
+
+function LowPill() {
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full bg-danger-soft px-2 py-0.5 text-[11px] font-semibold normal-case tracking-normal text-danger">
+      <span className="h-1.5 w-1.5 rounded-full bg-danger" />
+      Low balance
+    </span>
+  );
+}
+
+function SectionLabel({ children }: { children: ReactNode }) {
+  return (
+    <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-content-muted">{children}</p>
   );
 }
 
 function Meter({ balance, threshold, low }: { balance: number; threshold: number; low: boolean }) {
   if (!(threshold > 0)) return null;
-  const fill = Math.min(1, Math.max(0.02, (balance / threshold) * LOW_MARK));
+  const fill = Math.min(1, Math.max(0.03, (balance / threshold) * LOW_MARK));
   return (
     <div
-      className="relative mt-3 h-1 rounded-full bg-surface-sunk"
+      className="h-2 overflow-hidden rounded-full bg-surface-sunk"
       role="img"
       aria-label={`Balance is ${low ? "below" : "above"} the low-credit line of KES ${threshold.toLocaleString()}`}
     >
       <div
         className={cn(
           "h-full rounded-full transition-[width] duration-700 ease-out",
-          low ? "bg-warning" : "bg-gradient-to-r from-teal-800 to-teal-700"
+          low ? "bg-danger" : "bg-teal-700"
         )}
         style={{ width: `${fill * 100}%` }}
-      />
-      {/* The low-credit line */}
-      <span
-        aria-hidden
-        className="absolute -top-1 h-3 w-0.5 rounded-full bg-content-muted/40"
-        style={{ left: `${LOW_MARK * 100}%` }}
       />
     </div>
   );
 }
 
+/** "KES 2,340.50" in the bold slate of the rest of the money on screen. */
+function Money({ amount, currency, className }: { amount: number; currency?: string; className?: string }) {
+  return (
+    <p className={cn("font-bold leading-none tracking-tight tabular-nums text-content", className)}>
+      <span className="mr-1.5 text-[0.5em] font-semibold text-content-muted">{currency || "KES"}</span>
+      {amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+    </p>
+  );
+}
+
+const FOOTNOTE = "Credits reflect instantly after payment confirmation.";
+
 interface Props {
-  /** Dashboard placement: tighter spacing, no note or "last checked" line. */
+  /** Tighter spacing, no footnote or "last checked" line. */
   compact?: boolean;
   className?: string;
 }
 
+function RefreshButton({ busy, onClick }: { busy: boolean; onClick: () => void }) {
+  return (
+    <Button
+      size="icon-sm"
+      variant="ghost"
+      onClick={onClick}
+      disabled={busy}
+      aria-label={busy ? "Checking SMS balance" : "Refresh SMS balance"}
+      title="Refresh"
+    >
+      <RefreshCw className={cn("h-3.5 w-3.5", busy && "animate-spin")} />
+    </Button>
+  );
+}
+
+/** Balance, meter and message estimate — the top half of both views. */
+function BalanceBlock({ data, size }: { data: SmsBalance | undefined; size: "md" | "lg" }) {
+  const amount = data?.balance != null ? Number(data.balance) : null;
+  const low = Boolean(data?.low && amount != null);
+  if (amount == null) {
+    return <p className="text-sm text-content-secondary">{data?.error ?? "Balance unavailable right now."}</p>;
+  }
+  return (
+    <div>
+      <div className="flex items-end justify-between gap-3">
+        <Money amount={amount} currency={data?.currency} className={size === "lg" ? "text-[34px]" : "text-3xl"} />
+        {data?.sms_remaining != null && (
+          <p className="pb-0.5 text-xs text-content-muted">
+            <span className="font-semibold tabular-nums text-content-secondary">
+              ≈ {data.sms_remaining.toLocaleString()}
+            </span>{" "}
+            SMS left
+          </p>
+        )}
+      </div>
+      <div className="mt-4">
+        <Meter balance={amount} threshold={Number(data?.low_threshold ?? 0)} low={low} />
+      </div>
+    </div>
+  );
+}
+
+function Fact({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <dt className="text-content-muted">{label}</dt>
+      <dd className="mt-0.5 truncate font-semibold tabular-nums text-content">{value}</dd>
+    </div>
+  );
+}
+
+/**
+ * The full wallet card, on Notifications and in Settings: balance, meter and
+ * the top-up steps all on show.
+ */
 export default function SmsBalanceCard({ compact = false, className }: Props) {
   const { data, isLoading, isFetching } = useSmsBalance();
   const refresh = useRefreshSmsBalance();
 
   const busy = isFetching || refresh.isPending;
-  const amount = data?.balance != null ? Number(data.balance) : null;
-  const low = Boolean(data?.low && amount != null);
-  const threshold = Number(data?.low_threshold ?? 0);
-
-  const [whole, fraction] =
-    amount != null
-      ? amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).split(".")
-      : ["", ""];
+  const low = Boolean(data?.low && data?.balance != null);
 
   return (
-    <Card
-      variant="glass"
-      padding={compact ? "sm" : "md"}
-      className={cn("relative overflow-hidden", className)}
-    >
-      {/* A faint wash of the state colour in the corner — enough to tell
-          healthy from low at a glance without shouting. */}
-      <div
-        aria-hidden
-        className={cn(
-          "pointer-events-none absolute -right-16 -top-16 h-40 w-40 rounded-full blur-3xl",
-          low ? "bg-warning/15" : "bg-teal-700/10"
-        )}
-      />
+    <Card variant="glass" padding={compact ? "sm" : "md"} className={className}>
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <SectionLabel>SMS credit</SectionLabel>
+          {low && <LowPill />}
+        </div>
+        <RefreshButton busy={busy} onClick={() => refresh.mutate()} />
+      </div>
 
       {isLoading ? (
         <div className="space-y-3">
-          <Skeleton className="h-4 w-24" />
           <Skeleton className="h-8 w-40" />
-          <Skeleton className="h-14" />
+          <Skeleton className="h-2" />
         </div>
       ) : (
-        <div className="relative">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-content-muted">
-                SMS credit
-              </p>
-              {amount != null && (
-                <span
-                  className={cn(
-                    "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium",
-                    low ? "bg-warning-soft text-warning" : "bg-teal-700/10 text-teal-800 dark:text-teal-600"
-                  )}
-                >
-                  <span className="relative flex h-1.5 w-1.5">
-                    {low && (
-                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-warning opacity-60 motion-reduce:hidden" />
-                    )}
-                    <span className={cn("relative h-1.5 w-1.5 rounded-full", low ? "bg-warning" : "bg-teal-700")} />
-                  </span>
-                  {low ? "Low" : "Healthy"}
-                </span>
-              )}
+        <div className="grid gap-6 md:grid-cols-[minmax(0,1fr)_minmax(0,28rem)] md:gap-10">
+          <div>
+            <SectionLabel>Current balance</SectionLabel>
+            <div className="mt-3">
+              <BalanceBlock data={data} size="lg" />
             </div>
-            <button
-              type="button"
-              onClick={() => refresh.mutate()}
-              disabled={busy}
-              aria-label={busy ? "Checking SMS balance" : "Refresh SMS balance"}
-              title="Refresh"
-              className="-mr-1.5 rounded-lg p-1.5 text-content-muted transition-colors hover:bg-hover hover:text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:opacity-60"
-            >
-              <RefreshCw className={cn("h-3.5 w-3.5", busy && "animate-spin")} />
-            </button>
+            {!compact && (
+              <dl className="mt-6 grid grid-cols-3 gap-4 text-xs">
+                <Fact label="Low-credit line" value={`KES ${Number(data?.low_threshold ?? 0).toLocaleString()}`} />
+                <Fact label="Cost per SMS" value={`KES ${data?.unit_cost ?? "—"}`} />
+                <Fact
+                  label="Last checked"
+                  value={
+                    data?.checked_at
+                      ? new Date(data.checked_at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })
+                      : "—"
+                  }
+                />
+              </dl>
+            )}
           </div>
-
-          {amount != null ? (
-            <>
-              <p className="mt-2 flex items-baseline gap-1.5 tabular-nums text-content">
-                <span className="text-sm font-medium text-content-muted">{data?.currency || "KES"}</span>
-                <span
-                  className={cn(
-                    "font-semibold leading-none tracking-tight",
-                    compact ? "text-[28px]" : "text-[34px]"
-                  )}
-                >
-                  {whole}
-                  <span className="text-[0.55em] font-medium text-content-muted">.{fraction}</span>
-                </span>
-              </p>
-
-              <Meter balance={amount} threshold={threshold} low={low} />
-
-              <p className="mt-2 text-xs text-content-secondary">
-                {data?.sms_remaining != null && (
-                  <>
-                    <span className="font-semibold tabular-nums text-content">
-                      ≈ {data.sms_remaining.toLocaleString()}
-                    </span>{" "}
-                    messages left
-                  </>
-                )}
-                {low && (
-                  <span className="text-content-muted">
-                    {data?.sms_remaining != null ? " · " : ""}
-                    below KES {threshold.toLocaleString()}, reminders may stop
-                  </span>
-                )}
-              </p>
-            </>
-          ) : (
-            <p className="mt-2 text-sm text-content-secondary">
-              {data?.error ?? "Balance unavailable right now."}
-            </p>
-          )}
-
           {data?.topup && (
-            <div className={compact ? "mt-4" : "mt-5"}>
-              <TopupSlip topup={data.topup} low={low} />
+            <div className="border-t border-border pt-5 md:border-l md:border-t-0 md:pl-10 md:pt-0">
+              <SectionLabel>How to top up</SectionLabel>
+              <div className="mt-4">
+                <TopupSteps topup={data.topup} />
+              </div>
             </div>
-          )}
-
-          {!compact && (data?.topup?.note || data?.checked_at) && (
-            <p className="mt-3 text-[11px] leading-relaxed text-content-muted">
-              {data?.topup?.note}
-              {data?.topup?.note && data?.checked_at && " · "}
-              {data?.checked_at && (
-                <>
-                  Checked {new Date(data.checked_at).toLocaleString()}
-                  {data.cached && " (cached)"}
-                </>
-              )}
-            </p>
           )}
         </div>
+      )}
+
+      {!compact && !isLoading && (
+        <p className="mt-5 border-t border-border pt-3 text-xs text-content-muted">
+          {FOOTNOTE}
+        </p>
       )}
     </Card>
   );
@@ -273,7 +294,7 @@ export default function SmsBalanceCard({ compact = false, className }: Props) {
 
 /**
  * The dashboard's account widget: the balance at a glance and a Top up button
- * that opens the meter and the paybill slip. The full card lives on
+ * that opens the meter and the top-up steps. The full card lives on
  * Notifications and in Settings.
  */
 export function SmsCreditWidget({ className }: { className?: string }) {
@@ -284,50 +305,45 @@ export function SmsCreditWidget({ className }: { className?: string }) {
   const busy = isFetching || refresh.isPending;
   const amount = data?.balance != null ? Number(data.balance) : null;
   const low = Boolean(data?.low && amount != null);
-  const threshold = Number(data?.low_threshold ?? 0);
-  const money =
-    amount != null
-      ? `${data?.currency || "KES"} ${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-      : null;
 
   return (
     <>
       <div
         className={cn(
-          "flex items-center gap-3 rounded-2xl border bg-surface py-2 pl-2.5 pr-2 shadow-sm",
-          low ? "border-warning/40" : "border-border",
+          "flex items-center gap-3 rounded-2xl border border-border bg-surface py-2 pl-2 pr-2",
           className
         )}
       >
-        <span
-          className={cn(
-            "flex h-9 w-9 shrink-0 items-center justify-center rounded-xl",
-            low ? "bg-warning-soft text-warning" : "bg-teal-700/10 text-teal-800 dark:text-teal-600"
-          )}
-        >
+        {/* Navy at rest; only the "Low" tag turns red, so the masthead beside the
+            greeting does not read as an alarm. */}
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-navy-800/[0.07] text-navy-700 dark:bg-navy-500/15 dark:text-navy-500">
           <MessageSquare className="h-4 w-4" />
         </span>
         <div className="min-w-0 flex-1">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-content-muted">
-            SMS credit{low && <span className="ml-1.5 text-warning">· Low</span>}
-          </p>
+          <div className="flex items-center gap-2">
+            <SectionLabel>SMS credit</SectionLabel>
+            {low && (
+              <span className="rounded bg-danger-soft px-1.5 py-px text-[10px] font-semibold uppercase tracking-wider text-danger">
+                Low
+              </span>
+            )}
+          </div>
           {isLoading ? (
             <Skeleton className="mt-1 h-4 w-24" />
           ) : (
-            <p
-              className={cn(
-                "truncate text-sm font-semibold tabular-nums",
-                money == null ? "text-content-muted" : low ? "text-warning" : "text-content"
+            <p className="truncate text-sm font-bold tabular-nums text-content">
+              {amount != null ? (
+                `${data?.currency || "KES"} ${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+              ) : (
+                <span className="font-medium text-content-muted">Unavailable</span>
               )}
-            >
-              {money ?? "Unavailable"}
               {data?.sms_remaining != null && (
                 <span className="font-normal text-content-muted"> · ≈ {data.sms_remaining.toLocaleString()} SMS</span>
               )}
             </p>
           )}
         </div>
-        <Button size="sm" variant="secondary" className="rounded-xl" onClick={() => setOpen(true)}>
+        <Button size="sm" variant="primary" className="rounded-xl" onClick={() => setOpen(true)}>
           <Plus className="h-3.5 w-3.5" />
           Top up
         </Button>
@@ -336,35 +352,37 @@ export function SmsCreditWidget({ className }: { className?: string }) {
       <Modal
         open={open}
         onClose={() => setOpen(false)}
-        title="Top up SMS credit"
         size="sm"
-        headerActions={
-          <Button
-            size="icon-sm"
-            variant="ghost"
-            onClick={() => refresh.mutate()}
-            disabled={busy}
-            aria-label={busy ? "Checking SMS balance" : "Refresh SMS balance"}
-          >
-            <RefreshCw className={cn("h-3.5 w-3.5", busy && "animate-spin")} />
-          </Button>
+        ariaLabel="Top up SMS credit"
+        title={
+          <span className="flex flex-wrap items-center gap-2.5">
+            Top up SMS credit
+            {low && <LowPill />}
+          </span>
         }
+        headerActions={<RefreshButton busy={busy} onClick={() => refresh.mutate()} />}
       >
-        <div className="space-y-5">
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-content-muted">Balance</p>
-            <p className={cn("mt-1 text-2xl font-semibold tabular-nums", low ? "text-warning" : "text-content")}>
-              {money ?? "Unavailable"}
-            </p>
-            {amount != null && <Meter balance={amount} threshold={threshold} low={low} />}
-            <p className="mt-2 text-xs text-content-secondary">
-              {data?.sms_remaining != null && <>≈ {data.sms_remaining.toLocaleString()} messages left</>}
-              {low && <> · below KES {threshold.toLocaleString()}, reminders may stop</>}
-              {amount == null && (data?.error ?? "Balance unavailable right now.")}
-            </p>
-          </div>
-          {data?.topup && <TopupSlip topup={data.topup} low={low} />}
-          {data?.topup?.note && <p className="text-[11px] leading-relaxed text-content-muted">{data.topup.note}</p>}
+        <div className="space-y-6">
+          <section>
+            <div className="mb-3">
+              <SectionLabel>Current balance</SectionLabel>
+            </div>
+            <BalanceBlock data={data} size="md" />
+          </section>
+
+          {data?.topup && (
+            <section className="border-t border-border pt-6">
+              <div className="mb-4">
+                <SectionLabel>How to top up</SectionLabel>
+              </div>
+              <TopupSteps topup={data.topup} />
+            </section>
+          )}
+
+          <p className="flex items-center gap-2 rounded-lg bg-surface-sunk px-3 py-2.5 text-xs text-content-secondary">
+            <Check aria-hidden className="h-3.5 w-3.5 shrink-0 text-success" />
+            {FOOTNOTE}
+          </p>
         </div>
       </Modal>
     </>
