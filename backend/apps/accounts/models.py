@@ -21,6 +21,7 @@ class Role(models.TextChoices):
     """
     OWNER = "owner", "Owner / Director"
     ACCOUNTANT = "accountant", "Accountant"
+    AUDITOR = "auditor", "Auditor (read-only)"
     CARETAKER = "caretaker", "Caretaker"
     VIEWER = "viewer", "Viewer (read-only)"
 
@@ -45,6 +46,25 @@ class User(AbstractUser):
         ),
     )
 
+    # Nobody signs themselves up. The owner or the superadmin invites a person
+    # by email; the account exists but cannot sign in until they open the
+    # emailed link and choose their own password (see AccountInvite).
+    invited_by = models.ForeignKey(
+        "self", null=True, blank=True, on_delete=models.SET_NULL, related_name="+",
+    )
+    invited_at = models.DateTimeField(null=True, blank=True)
+    invite_accepted_at = models.DateTimeField(null=True, blank=True)
+    #: Set when the account is switched off. Accounts are never deleted: the
+    #: activity log and every payment they recorded still name them.
+    deactivated_at = models.DateTimeField(null=True, blank=True)
+
+    #: The buildings a caretaker looks after. A caretaker sees and works on
+    #: these only; every other role sees the whole portfolio.
+    buildings = models.ManyToManyField("buildings.Building", blank=True, related_name="caretakers")
+    #: Access ends at the start of this day (Nairobi time). Required for an
+    #: auditor - an audit is a visit, not a job - optional for anyone else.
+    access_expires_on = models.DateField(null=True, blank=True)
+
     USERNAME_FIELD = "email"
     REQUIRED_FIELDS = ["username"]
 
@@ -54,14 +74,47 @@ class User(AbstractUser):
     def __str__(self) -> str:
         return self.email
 
-    # A superuser is the break-glass account and always carries owner rights.
+    @property
+    def access_expired(self) -> bool:
+        return bool(self.access_expires_on) and timezone.localdate() >= self.access_expires_on
+
+    @property
+    def status(self) -> str:
+        """active | invited | expired | deactivated - what the Users page shows."""
+        if self.deactivated_at:
+            return "deactivated"
+        if self.invited_at and not self.invite_accepted_at and not self.is_active:
+            return "invited"
+        if not self.is_active:
+            return "deactivated"
+        return "expired" if self.access_expired else "active"
+
+    # What each role may do lives in apps.accounts.access; these read it, so
+    # existing callers keep working. A superuser is the break-glass account
+    # and carries every capability.
+    def can(self, capability: str) -> bool:
+        from .access import has_capability
+
+        return has_capability(self, capability)
+
+    @property
+    def can_manage_users(self) -> bool:
+        """Invite people, change their role, switch accounts off. Owner and superadmin."""
+        from .access import Cap
+
+        return self.can(Cap.MANAGE_USERS)
+
     @property
     def can_record_money(self) -> bool:
-        return self.is_superuser or self.role in ROLES_RECORD_MONEY
+        from .access import Cap
+
+        return self.can(Cap.RECORD_MONEY)
 
     @property
     def can_forgive_money(self) -> bool:
-        return self.is_superuser or self.role in ROLES_FORGIVE_MONEY
+        from .access import Cap
+
+        return self.can(Cap.FORGIVE_MONEY)
 
 
 class AuditKind(models.TextChoices):
@@ -200,3 +253,40 @@ class PasswordResetToken(models.Model):
     def is_valid(self) -> bool:
         expiry = self.created_at + timedelta(minutes=self.EXPIRY_MINUTES)
         return not self.used and timezone.now() < expiry
+
+
+class AccountInvite(models.Model):
+    """The emailed link that lets an invited person choose their password.
+
+    Single-use and short-lived, like a password reset, but longer: an invite
+    may sit in an inbox over a weekend. Re-sending an invite retires the old
+    link. Whoever holds the link sets the password, so the person who sent it
+    never knows it.
+    """
+
+    user = models.ForeignKey("accounts.User", on_delete=models.CASCADE, related_name="invites")
+    token = models.CharField(max_length=64, unique=True, db_index=True)
+    created_by = models.ForeignKey(
+        "accounts.User", null=True, blank=True, on_delete=models.SET_NULL, related_name="+",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    used = models.BooleanField(default=False)
+
+    EXPIRY_HOURS = 72
+
+    class Meta:
+        db_table = "accounts_account_invite"
+
+    @classmethod
+    def issue(cls, user, *, created_by=None) -> "AccountInvite":
+        """A fresh link for ``user``; any earlier unused link stops working."""
+        cls.objects.filter(user=user, used=False).update(used=True)
+        return cls.objects.create(user=user, token=secrets.token_urlsafe(48), created_by=created_by)
+
+    @property
+    def expires_at(self):
+        return self.created_at + timedelta(hours=self.EXPIRY_HOURS)
+
+    @property
+    def is_valid(self) -> bool:
+        return not self.used and timezone.now() < self.expires_at and self.user.deactivated_at is None

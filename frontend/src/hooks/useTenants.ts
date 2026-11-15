@@ -75,14 +75,15 @@ export interface TenantPaymentHistory {
   }[];
 }
 
-export function usePaymentHistory(id: number | string | null) {
+/** `enabled: false` for someone whose role doesn't include the financial records. */
+export function usePaymentHistory(id: number | string | null, enabled = true) {
   return useQuery<TenantPaymentHistory>({
     queryKey: ["tenants", id, "payment-history"],
     queryFn: async () => {
       const { data } = await api.get(`/tenants/${id}/payment-history/`);
       return data;
     },
-    enabled: !!id,
+    enabled: !!id && enabled,
   });
 }
 

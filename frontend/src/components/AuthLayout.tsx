@@ -1,7 +1,9 @@
-import { Outlet, useLocation } from "react-router-dom";
+import { Navigate, Outlet, useLocation } from "react-router-dom";
 
 import { useAuth } from "@/hooks/useAuth";
+import { CAP, type Capability, can } from "@/lib/access";
 import { avatarFor } from "@/lib/images";
+import { homePath, pageRequirement } from "@/lib/nav";
 
 import ErrorBoundary from "./ErrorBoundary";
 import GlobalSearch from "./GlobalSearch";
@@ -19,6 +21,15 @@ export default function AuthLayout() {
       .filter(Boolean)
       .join(" ") || "Wilson Osoro";
 
+  // A page outside this person's role sends them to the first one they can
+  // use (a caretaker lands on Properties). The API refuses regardless; this
+  // just saves them a screen of errors.
+  const allowed = (cap: Capability) => can(user, cap);
+  const need = pageRequirement(location.pathname);
+  if (user && need && !allowed(need)) {
+    return <Navigate to={homePath(allowed)} replace />;
+  }
+
   return (
     <div className="relative min-h-screen">
       <div className="relative z-10 flex">
@@ -28,7 +39,8 @@ export default function AuthLayout() {
           {/* Topbar — search, notifications, profile */}
           <header className="sticky top-0 z-30 flex items-center justify-end gap-2 border-b border-border/70 bg-app/80 px-2 py-1.5 backdrop-blur-md sm:px-4 lg:px-6">
             <GlobalSearch />
-            <NotificationBell />
+            {/* The bell reads the collections summary - money. */}
+            {allowed(CAP.VIEW_FINANCE) && <NotificationBell />}
             <button
               className="flex items-center gap-2.5 rounded-full py-0.5 pl-0.5 pr-2 transition-colors hover:bg-hover"
               aria-label="Account"

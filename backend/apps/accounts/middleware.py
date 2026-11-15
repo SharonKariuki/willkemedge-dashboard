@@ -83,12 +83,15 @@ class AuditContextMiddleware:
 
     @staticmethod
     def _record_denied(request) -> None:
-        user = getattr(request, "user", None)
+        # The access policy refuses during sign-in, which leaves request.user
+        # anonymous; it hands over who it refused instead.
+        user = getattr(request, "refused_user", None) or getattr(request, "user", None)
         if not getattr(user, "is_authenticated", False):
             return
         from . import audit
 
         audit.record(
+            actor=user,
             kind="denied",
             action="access.denied",
             object_type="request",

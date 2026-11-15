@@ -19,10 +19,13 @@ import {
   Settings,
   ShieldCheck,
   Sprout,
+  UserCog,
   Users,
   Wallet,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+
+import { CAP, type Capability, subRouteRequirement } from "@/lib/access";
 
 export type ViewKey =
   | "dashboard"
@@ -38,6 +41,7 @@ export type ViewKey =
   | "notifications"
   | "reports"
   | "activity"
+  | "users"
   | "settings";
 
 export interface NavItem {
@@ -46,27 +50,44 @@ export interface NavItem {
   label: string;
   icon: LucideIcon;
   togglable: boolean;
-  /** Shown only to the owner/director (`can_forgive_money`). */
-  ownerOnly?: boolean;
+  /** What the person needs to see this page (lib/access.ts). None: everyone. */
+  requires?: Capability;
   description?: string;
 }
 
+const F = CAP.VIEW_FINANCE;
+const P = CAP.VIEW_PROPERTY;
+
 export const NAV_ITEMS: NavItem[] = [
-  { key: "dashboard", to: "/dashboard", label: "Dashboard", icon: LayoutDashboard, togglable: false },
-  { key: "buildings", to: "/buildings", label: "Properties", icon: Building2, togglable: true, description: "Manage your properties and bank details" },
-  { key: "units", to: "/units", label: "Units", icon: Home, togglable: true, description: "Track unit availability and rent" },
-  { key: "tenants", to: "/tenants", label: "Tenants", icon: Users, togglable: true, description: "Tenant directory and KYC" },
-  { key: "payments", to: "/payments", label: "Payments", icon: CreditCard, togglable: true, description: "Rent collection, M-Pesa, receipts" },
-  { key: "reconciliation", to: "/reconciliation", label: "Reconciliation", icon: Scale, togglable: true, description: "Assign unmatched bank credits to tenants" },
-  { key: "expenses", to: "/expenses", label: "Expenses", icon: Receipt, togglable: true, description: "Operating costs and disbursements" },
-  { key: "income", to: "/income", label: "Other Income", icon: Sprout, togglable: true, description: "Manual income (farm produce, non-tenant)" },
-  { key: "water", to: "/water", label: "Water Management", icon: Droplets, togglable: true, description: "Meter readings and water billing" },
-  { key: "accounting", to: "/accounting", label: "Accounting", icon: Calculator, togglable: true, description: "Chart of accounts, P&L, balance sheet" },
-  { key: "notifications", to: "/notifications", label: "Notifications", icon: Bell, togglable: true, description: "Reminders and alerts" },
-  { key: "reports", to: "/reports", label: "Reports", icon: BarChart3, togglable: true, description: "Statements and analytics" },
-  { key: "activity", to: "/activity", label: "Activity Log", icon: History, togglable: false, ownerOnly: true },
+  { key: "dashboard", to: "/dashboard", label: "Dashboard", icon: LayoutDashboard, togglable: false, requires: F },
+  { key: "buildings", to: "/buildings", label: "Properties", icon: Building2, togglable: true, requires: P, description: "Manage your properties and bank details" },
+  { key: "units", to: "/units", label: "Units", icon: Home, togglable: true, requires: P, description: "Track unit availability and rent" },
+  { key: "tenants", to: "/tenants", label: "Tenants", icon: Users, togglable: true, requires: P, description: "Tenant directory and KYC" },
+  { key: "payments", to: "/payments", label: "Payments", icon: CreditCard, togglable: true, requires: F, description: "Rent collection, M-Pesa, receipts" },
+  { key: "reconciliation", to: "/reconciliation", label: "Reconciliation", icon: Scale, togglable: true, requires: F, description: "Assign unmatched bank credits to tenants" },
+  { key: "expenses", to: "/expenses", label: "Expenses", icon: Receipt, togglable: true, requires: F, description: "Operating costs and disbursements" },
+  { key: "income", to: "/income", label: "Other Income", icon: Sprout, togglable: true, requires: F, description: "Manual income (farm produce, non-tenant)" },
+  { key: "water", to: "/water", label: "Water Management", icon: Droplets, togglable: true, requires: P, description: "Meter readings and water billing" },
+  { key: "accounting", to: "/accounting", label: "Accounting", icon: Calculator, togglable: true, requires: F, description: "Chart of accounts, P&L, balance sheet" },
+  { key: "notifications", to: "/notifications", label: "Notifications", icon: Bell, togglable: true, requires: F, description: "Reminders and alerts" },
+  { key: "reports", to: "/reports", label: "Reports", icon: BarChart3, togglable: true, requires: F, description: "Statements and analytics" },
+  { key: "activity", to: "/activity", label: "Activity Log", icon: History, togglable: false, requires: CAP.VIEW_ACTIVITY },
+  { key: "users", to: "/users", label: "Users", icon: UserCog, togglable: false, requires: CAP.MANAGE_USERS },
   { key: "settings", to: "/settings", label: "Settings", icon: Settings, togglable: false },
 ];
+
+/** What a URL needs: a money screen hanging off a tenant, else its menu page's own. */
+export function pageRequirement(pathname: string): Capability | undefined {
+  const sub = subRouteRequirement(pathname);
+  if (sub) return sub;
+  const item = NAV_ITEMS.find((i) => pathname === i.to || pathname.startsWith(`${i.to}/`));
+  return item?.requires;
+}
+
+/** Where someone lands: the first page in the menu they may see (the dashboard for most). */
+export function homePath(allowed: (cap: Capability) => boolean): string {
+  return NAV_ITEMS.find((i) => !i.requires || allowed(i.requires))?.to ?? "/settings";
+}
 
 /**
  * The menu, as one tree read by the desktop sidebar, the icon rail's flyouts
@@ -162,7 +183,7 @@ export const NAV_TREE: NavNode[] = [
   },
   {
     kind: "group", id: "admin", label: "Administration", icon: ShieldCheck,
-    children: [page("activity"), page("settings")],
+    children: [page("users"), page("activity"), page("settings")],
   },
 ];
 

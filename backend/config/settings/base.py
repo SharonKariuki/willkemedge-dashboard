@@ -118,7 +118,8 @@ AUTH_PASSWORD_VALIDATORS = [
 # ---------------------------------------------------------------------------
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
-        "rest_framework_simplejwt.authentication.JWTAuthentication",
+        # JWT sign-in plus the role access policy (apps/accounts/access.py).
+        "apps.accounts.authentication.AccessPolicyAuthentication",
     ),
     "DEFAULT_PERMISSION_CLASSES": (
         "rest_framework.permissions.IsAuthenticated",

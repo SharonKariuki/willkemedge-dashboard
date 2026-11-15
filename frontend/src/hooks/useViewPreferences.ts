@@ -20,6 +20,7 @@ const DEFAULTS: ViewPreferences = {
   notifications: true,
   reports: true,
   activity: true,
+  users: true,
   settings: true,
 };
 

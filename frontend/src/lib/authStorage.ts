@@ -15,8 +15,18 @@ export interface StoredUser {
   username: string;
   first_name?: string;
   last_name?: string;
-  role?: "owner" | "accountant" | "caretaker" | "viewer";
+  role?: "owner" | "accountant" | "auditor" | "caretaker" | "viewer";
   role_display?: string;
+  /** Everything this person may do - see lib/access.ts. */
+  capabilities?: string[];
+  /** The buildings a caretaker looks after; empty for everyone else. */
+  buildings?: { id: number; name: string }[];
+  /** ISO date access ends (an auditor's always has one). */
+  access_expires_on?: string | null;
+  /** The superadmin (break-glass) account. */
+  is_superuser?: boolean;
+  /** May invite people, change roles and switch accounts off. Owner and superadmin. */
+  can_manage_users?: boolean;
   /** May record receipts. Owner and accountant. */
   can_record_money?: boolean;
   /** May waive arrears or void a payment. Owner only. */

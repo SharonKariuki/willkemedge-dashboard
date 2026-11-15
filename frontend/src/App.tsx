@@ -1,6 +1,8 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 
 import AuthLayout from "@/components/AuthLayout";
+import AcceptInvitePage from "@/pages/AcceptInvitePage";
+import UsersPage from "@/pages/UsersPage";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import AccountingPage from "@/pages/AccountingPage";
 import ActivityPage from "@/pages/ActivityPage";
@@ -36,6 +38,7 @@ export default function App() {
       <Route path="/login" element={<LoginPage />} />
       <Route path="/reset-password" element={<PasswordResetPage />} />
       <Route path="/reset-password/confirm/:token" element={<PasswordResetConfirmPage />} />
+      <Route path="/invite/:token" element={<AcceptInvitePage />} />
 
       <Route
         element={
@@ -65,6 +68,7 @@ export default function App() {
         <Route path="/notifications" element={<NotificationsPage />} />
         <Route path="/reports" element={<ReportsPage />} />
         <Route path="/activity" element={<ActivityPage />} />
+        <Route path="/users" element={<UsersPage />} />
         <Route path="/settings" element={<SettingsPage />} />
       </Route>
 

@@ -31,6 +31,10 @@ class LoginSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 {"detail": "Account is disabled."}
             )
+        if user.access_expired:
+            raise serializers.ValidationError(
+                {"detail": "Your access has ended. Ask the owner to extend it."}
+            )
 
         refresh = RefreshToken.for_user(user)
         # One id per sign-in. simplejwt copies custom claims onto every access
@@ -72,14 +76,98 @@ class UserSerializer(serializers.ModelSerializer):
     role_display = serializers.CharField(source="get_role_display", read_only=True)
     can_record_money = serializers.BooleanField(read_only=True)
     can_forgive_money = serializers.BooleanField(read_only=True)
+    can_manage_users = serializers.BooleanField(read_only=True)
+    #: Everything this person may do (apps/accounts/access.py). The menu and
+    #: page guards read it; the API enforces it regardless.
+    capabilities = serializers.SerializerMethodField()
+    buildings = serializers.SerializerMethodField()
 
     class Meta:
         model = User
         fields = (
-            "id", "email", "username", "date_joined", "last_login",
-            "role", "role_display", "can_record_money", "can_forgive_money",
+            "id", "email", "username", "first_name", "last_name", "date_joined", "last_login",
+            "role", "role_display", "is_superuser",
+            "can_record_money", "can_forgive_money", "can_manage_users",
+            "capabilities", "buildings", "access_expires_on",
         )
         read_only_fields = fields
+
+    def get_capabilities(self, obj):
+        from .access import capabilities
+
+        return sorted(capabilities(obj))
+
+    def get_buildings(self, obj):
+        return [{"id": b.pk, "name": b.name} for b in obj.buildings.order_by("name")]
+
+
+class ManagedUserSerializer(serializers.ModelSerializer):
+    """One account as the Users page lists it."""
+
+    full_name = serializers.SerializerMethodField()
+    role_display = serializers.CharField(source="get_role_display", read_only=True)
+    status = serializers.CharField(read_only=True)
+    invited_by_email = serializers.SerializerMethodField()
+    invite_expires_at = serializers.SerializerMethodField()
+    is_self = serializers.SerializerMethodField()
+    buildings = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = (
+            "id", "email", "first_name", "last_name", "full_name", "role", "role_display",
+            "status", "is_superuser", "last_login", "date_joined", "invited_at",
+            "invited_by_email", "invite_expires_at", "deactivated_at", "is_self",
+            "buildings", "access_expires_on",
+        )
+        read_only_fields = fields
+
+    def get_buildings(self, obj):
+        return [{"id": b.pk, "name": b.name} for b in sorted(obj.buildings.all(), key=lambda b: b.name)]
+
+    def get_full_name(self, obj):
+        return obj.get_full_name()
+
+    def get_invited_by_email(self, obj):
+        return obj.invited_by.email if obj.invited_by_id and obj.invited_by else None
+
+    def get_invite_expires_at(self, obj):
+        if obj.status != "invited":
+            return None
+        live = [i for i in obj.invites.all() if not i.used]
+        return max(i.expires_at for i in live) if live else None
+
+    def get_is_self(self, obj):
+        request = self.context.get("request")
+        return bool(request and request.user.pk == obj.pk)
+
+
+def _buildings_field(**kwargs):
+    from apps.buildings.models import Building
+
+    return serializers.PrimaryKeyRelatedField(many=True, queryset=Building.objects.all(), **kwargs)
+
+
+class InviteUserSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    role = serializers.CharField()
+    first_name = serializers.CharField(required=False, allow_blank=True, default="", max_length=150)
+    last_name = serializers.CharField(required=False, allow_blank=True, default="", max_length=150)
+    buildings = _buildings_field(required=False, default=list)
+    access_expires_on = serializers.DateField(required=False, allow_null=True, default=None)
+
+
+class UpdateUserSerializer(serializers.Serializer):
+    role = serializers.CharField(required=False)
+    first_name = serializers.CharField(required=False, allow_blank=True, max_length=150)
+    last_name = serializers.CharField(required=False, allow_blank=True, max_length=150)
+    buildings = _buildings_field(required=False)
+    access_expires_on = serializers.DateField(required=False, allow_null=True)
+
+
+class AcceptInviteSerializer(serializers.Serializer):
+    token = serializers.CharField()
+    new_password = serializers.CharField(write_only=True, min_length=12, trim_whitespace=False)
 
 
 # ---------------------------------------------------------------------------
