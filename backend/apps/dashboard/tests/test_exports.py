@@ -110,9 +110,10 @@ def test_xlsx_lines_fold_under_their_heading():
 
 
 def test_xlsx_keeps_the_letterhead_title_and_notes():
-    ws = _book(_rent_roll())
+    raw = to_xlsx(_rent_roll())
+    assert b"xl/media/image1.png" in raw  # the Wilkem logo heads the sheet
+    ws = load_workbook(io.BytesIO(raw)).active
     values = [c.value for row in ws.iter_rows() for c in row if c.value is not None]
-    assert "WILKEM VENTURES COMPANY LIMITED" in values
     assert "Rent roll" in values and "November 2026" in values
     assert "Balances include VAT." in values
     assert "Billed (KES)" in values and "Paid (KES)" in values
@@ -125,6 +126,10 @@ def test_pdf_is_portrait_unless_the_columns_need_room():
     wide = _rent_roll()
     wide.columns = wide.columns + [Column(f"x{i}", f"X{i}", width=12) for i in range(4)]
     assert b"/MediaBox [ 0 0 841.8898 595.2756 ]" in to_pdf(wide)
+
+
+def test_pdf_carries_the_logo():
+    assert b"/Subtype /Image" in to_pdf(_rent_roll())
 
 
 def test_pdf_pages_a_long_report():

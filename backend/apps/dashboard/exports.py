@@ -85,6 +85,18 @@ class Sheet:
     section_label: str = "Section"
 
 
+def _logo_path() -> str:
+    """The Wilkem logo the tenant statements carry (1200 x 448 px)."""
+    from pathlib import Path
+
+    import apps.payments
+
+    return str(Path(apps.payments.__file__).parent / "static" / "payments" / "wilkem_logo.png")
+
+
+LOGO_ASPECT = 1200 / 448
+
+
 def _letterhead() -> dict:
     """The company details the tenant statements carry, so every document agrees."""
     from apps.payments import statement_service as s
@@ -237,8 +249,12 @@ def to_xlsx(sheet: Sheet) -> bytes:
         else:
             ws.write_string(r, 0, text, f)
 
-    # Letterhead
-    band(0, head["name"].upper(), fmt(bold=True, font_size=9, font_color=TEAL))
+    # Letterhead: the logo in the first row, the title beneath it.
+    ws.set_row(0, 40)
+    ws.insert_image(0, 0, _logo_path(), {
+        "x_scale": 0.11, "y_scale": 0.11, "x_offset": 2, "y_offset": 4,
+        "object_position": 3, "description": head["name"],
+    })
     band(1, sheet.title, fmt(bold=True, font_size=16, font_color=NAVY))
     ws.set_row(1, 24)
     r = 2
@@ -535,18 +551,21 @@ def to_pdf(sheet: Sheet) -> bytes:
 
     def chrome(canvas, page, total):
         canvas.saveState()
-        # Letterhead: the company on the left, how to reach it on the right,
-        # a teal rule beneath.
+        # Letterhead: the logo on the left, how to reach the company on the
+        # right, a teal rule beneath.
+        logo_h = 30
+        canvas.drawImage(_logo_path(), margin, top - logo_h, width=logo_h * LOGO_ASPECT, height=logo_h,
+                         mask="auto")
+        canvas.setFont("Helvetica-Bold", 7.5)
         canvas.setFillColor(C(NAVY))
-        canvas.setFont("Helvetica-Bold", 10)
-        canvas.drawString(margin, top - 10, head["name"].upper(), charSpace=0.6)
+        canvas.drawRightString(width - margin, top - 6, head["name"])
         canvas.setFont("Helvetica", 7.5)
         canvas.setFillColor(C(MUTED))
-        canvas.drawRightString(width - margin, top - 4, head["postal"])
-        canvas.drawRightString(width - margin, top - 14, f"Tel {head['phone']}  ·  {head['email']}")
+        canvas.drawRightString(width - margin, top - 16, head["postal"])
+        canvas.drawRightString(width - margin, top - 26, f"Tel {head['phone']}  ·  {head['email']}")
         canvas.setStrokeColor(C(TEAL))
         canvas.setLineWidth(1.4)
-        canvas.line(margin, top - 21, width - margin, top - 21)
+        canvas.line(margin, top - logo_h - 6, width - margin, top - logo_h - 6)
         # Footer
         canvas.setStrokeColor(C(RULE))
         canvas.setLineWidth(0.5)
@@ -562,7 +581,7 @@ def to_pdf(sheet: Sheet) -> bytes:
     # much lines the title and table up with the letterhead at ``margin``.
     pad = 6
     doc = SimpleDocTemplate(out, pagesize=pagesize, leftMargin=margin - pad, rightMargin=margin - pad,
-                            topMargin=margin + 32, bottomMargin=1.7 * cm,
+                            topMargin=margin + 46, bottomMargin=1.7 * cm,
                             title=sheet.title, author=head["name"])
     doc.build(story, canvasmaker=_canvas_class(chrome))
     return out.getvalue()
