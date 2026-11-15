@@ -13,6 +13,13 @@ from .views import (
 )
 from .views_audit import ActivityLogView
 from .views_settings import LoginAuditView
+from .views_users import (
+    InviteAcceptView,
+    InviteDetailView,
+    UserActionView,
+    UserDetailView,
+    UserListView,
+)
 
 app_name = "accounts"
 
@@ -27,4 +34,9 @@ urlpatterns = [
     path("login-audit/",             LoginAuditView.as_view(),           name="login-audit"),
     path("activity/",                ActivityLogView.as_view(),          name="activity"),
     path("client-ip/",               ClientIpDebugView.as_view(),        name="client-ip"),
+    path("users/",                   UserListView.as_view(),             name="users"),
+    path("users/<int:pk>/",          UserDetailView.as_view(),           name="user-detail"),
+    path("users/<int:pk>/<str:action>/", UserActionView.as_view(), name="user-action"),
+    path("invite/accept/",           InviteAcceptView.as_view(),         name="invite-accept"),
+    path("invite/<str:token>/",      InviteDetailView.as_view(),         name="invite-detail"),
 ]

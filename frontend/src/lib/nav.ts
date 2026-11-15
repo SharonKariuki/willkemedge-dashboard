@@ -19,6 +19,7 @@ import {
   Settings,
   ShieldCheck,
   Sprout,
+  UserCog,
   Users,
   Wallet,
 } from "lucide-react";
@@ -38,6 +39,7 @@ export type ViewKey =
   | "notifications"
   | "reports"
   | "activity"
+  | "users"
   | "settings";
 
 export interface NavItem {
@@ -65,6 +67,7 @@ export const NAV_ITEMS: NavItem[] = [
   { key: "notifications", to: "/notifications", label: "Notifications", icon: Bell, togglable: true, description: "Reminders and alerts" },
   { key: "reports", to: "/reports", label: "Reports", icon: BarChart3, togglable: true, description: "Statements and analytics" },
   { key: "activity", to: "/activity", label: "Activity Log", icon: History, togglable: false, ownerOnly: true },
+  { key: "users", to: "/users", label: "Users", icon: UserCog, togglable: false, ownerOnly: true },
   { key: "settings", to: "/settings", label: "Settings", icon: Settings, togglable: false },
 ];
 
@@ -162,7 +165,7 @@ export const NAV_TREE: NavNode[] = [
   },
   {
     kind: "group", id: "admin", label: "Administration", icon: ShieldCheck,
-    children: [page("activity"), page("settings")],
+    children: [page("users"), page("activity"), page("settings")],
   },
 ];
 

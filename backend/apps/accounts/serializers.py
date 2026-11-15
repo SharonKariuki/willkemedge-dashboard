@@ -72,14 +72,70 @@ class UserSerializer(serializers.ModelSerializer):
     role_display = serializers.CharField(source="get_role_display", read_only=True)
     can_record_money = serializers.BooleanField(read_only=True)
     can_forgive_money = serializers.BooleanField(read_only=True)
+    can_manage_users = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = User
         fields = (
-            "id", "email", "username", "date_joined", "last_login",
-            "role", "role_display", "can_record_money", "can_forgive_money",
+            "id", "email", "username", "first_name", "last_name", "date_joined", "last_login",
+            "role", "role_display", "is_superuser",
+            "can_record_money", "can_forgive_money", "can_manage_users",
         )
         read_only_fields = fields
+
+
+class ManagedUserSerializer(serializers.ModelSerializer):
+    """One account as the Users page lists it."""
+
+    full_name = serializers.SerializerMethodField()
+    role_display = serializers.CharField(source="get_role_display", read_only=True)
+    status = serializers.CharField(read_only=True)
+    invited_by_email = serializers.SerializerMethodField()
+    invite_expires_at = serializers.SerializerMethodField()
+    is_self = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = (
+            "id", "email", "first_name", "last_name", "full_name", "role", "role_display",
+            "status", "is_superuser", "last_login", "date_joined", "invited_at",
+            "invited_by_email", "invite_expires_at", "deactivated_at", "is_self",
+        )
+        read_only_fields = fields
+
+    def get_full_name(self, obj):
+        return obj.get_full_name()
+
+    def get_invited_by_email(self, obj):
+        return obj.invited_by.email if obj.invited_by_id and obj.invited_by else None
+
+    def get_invite_expires_at(self, obj):
+        if obj.status != "invited":
+            return None
+        live = [i for i in obj.invites.all() if not i.used]
+        return max(i.expires_at for i in live) if live else None
+
+    def get_is_self(self, obj):
+        request = self.context.get("request")
+        return bool(request and request.user.pk == obj.pk)
+
+
+class InviteUserSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    role = serializers.CharField()
+    first_name = serializers.CharField(required=False, allow_blank=True, default="", max_length=150)
+    last_name = serializers.CharField(required=False, allow_blank=True, default="", max_length=150)
+
+
+class UpdateUserSerializer(serializers.Serializer):
+    role = serializers.CharField(required=False)
+    first_name = serializers.CharField(required=False, allow_blank=True, max_length=150)
+    last_name = serializers.CharField(required=False, allow_blank=True, max_length=150)
+
+
+class AcceptInviteSerializer(serializers.Serializer):
+    token = serializers.CharField()
+    new_password = serializers.CharField(write_only=True, min_length=12, trim_whitespace=False)
 
 
 # ---------------------------------------------------------------------------
