@@ -110,9 +110,13 @@ def process_payment(
     idempotency_key: str = "",
     payment_type: str = PaymentType.RENT,
     created_by=None,
+    split: dict | None = None,
 ) -> Payment:
     """
     Record a payment, compute VAT, persist a Transaction, and update arrears.
+
+    ``split`` carries the ``split_*`` fields when this row is one part of a
+    payment shared across tenancies (see ``record_split_payment``).
 
     Flow
     ----
@@ -158,6 +162,7 @@ def process_payment(
             idempotency_key=idempotency_key,
             payment_type=payment_type,
             created_by=created_by,
+            split=split,
         )
     except IntegrityError:
         # A concurrent retry won the race and inserted the row first; return it
@@ -204,6 +209,7 @@ def _process_payment_atomic(
     idempotency_key: str,
     payment_type: str = PaymentType.RENT,
     created_by=None,
+    split: dict | None = None,
 ) -> Payment:
     unit = tenant.unit
     classification = unit.classification  # the trigger field
@@ -232,6 +238,7 @@ def _process_payment_atomic(
         notes=notes,
         idempotency_key=idempotency_key,
         created_by=created_by,
+        **(split or {}),
     )
 
     # --- Immutable Transaction (net / VAT / gross stored at write time) ---
@@ -622,7 +629,15 @@ def live_credit_rows(payment: Payment):
     Grouped on tenant + reference because that is what a single credit shares
     after FIFO allocation splits it. A blank reference groups nothing — manual
     cash entries have no shared key, so each stands alone.
+
+    A payment split across tenancies (``record_split_payment``) is grouped on
+    its ``split_group`` instead, across every tenancy it paid: one cheque is
+    one payment, and unwinding half of it would leave the rest booked.
     """
+    if payment.split_group:
+        return Payment.objects.filter(
+            split_group=payment.split_group, voided_at__isnull=True,
+        ).order_by("split_index", "pk")
     if not payment.reference:
         return Payment.objects.filter(pk=payment.pk, voided_at__isnull=True)
     return Payment.objects.filter(
@@ -902,3 +917,76 @@ def get_collection_progress(period_month: int, period_year: int) -> dict:
         "period_month": period_month,
         "period_year": period_year,
     }
+
+
+# -- One payment, several tenancies -------------------------------------------
+
+class SplitPaymentError(ValueError):
+    """The parts of a split payment don't describe the money received."""
+
+
+@transaction.atomic
+def record_split_payment(
+    *,
+    amount: Decimal,
+    payment_date,
+    parts: list[dict],
+    source: str = "cash",
+    reference: str = "",
+    notes: str = "",
+    created_by=None,
+) -> list[Payment]:
+    """Book one cheque or transfer across several tenancies, all or nothing.
+
+    ``parts`` is ``[{tenant, amount, period_month, period_year[, payment_type]}]``
+    and must add up to ``amount`` exactly. Each part is an ordinary payment on
+    its tenancy - VAT, the Transaction, arrears and the ledger all run through
+    ``process_payment`` as before - and the parts share a ``split_group`` so the
+    payments list shows them together and a void takes them all.
+
+    A referenced split is de-duplicated part by part on ``<reference>#<i>/<n>``,
+    so a double-submitted form books nothing twice.
+    """
+    import uuid
+
+    total = Decimal(str(amount)).quantize(Decimal("0.01"))
+    if total <= ZERO:
+        raise SplitPaymentError("The amount received must be greater than 0.")
+    if len(parts) < 2:
+        raise SplitPaymentError("A split needs at least two parts.")
+    amounts = [Decimal(str(p["amount"])).quantize(Decimal("0.01")) for p in parts]
+    if any(a <= ZERO for a in amounts):
+        raise SplitPaymentError("Every part must be greater than 0.")
+    allocated = sum(amounts, ZERO)
+    if allocated != total:
+        raise SplitPaymentError(
+            f"The parts add up to KES {allocated:,.2f} but KES {total:,.2f} was received "
+            f"({'short by' if allocated < total else 'over by'} KES {abs(total - allocated):,.2f})."
+        )
+
+    group = uuid.uuid4().hex
+    count = len(parts)
+    label = f"{reference} " if reference else ""
+    payments = []
+    for index, (part, part_amount) in enumerate(zip(parts, amounts, strict=True), start=1):
+        part_note = f"Part {index} of {count} of {label}KES {total:,.2f} received {payment_date:%d %b %Y}."
+        payments.append(process_payment(
+            tenant=part["tenant"],
+            amount=part_amount,
+            payment_date=payment_date,
+            period_month=part["period_month"],
+            period_year=part["period_year"],
+            source=source,
+            payment_type=part.get("payment_type") or PaymentType.RENT,
+            reference=reference,
+            notes=f"{part_note} {notes}".strip(),
+            idempotency_key=f"{reference[:88]}#{index}/{count}" if reference else "",
+            created_by=created_by,
+            split={
+                "split_group": group,
+                "split_index": index,
+                "split_count": count,
+                "split_total": total,
+            },
+        ))
+    return payments

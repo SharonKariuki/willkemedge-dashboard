@@ -24,6 +24,8 @@ import {
   THead,
   TR,
 } from "@/components/ui";
+import { SplitParts } from "@/features/payments/SplitParts";
+import { allocate, newRow, type SplitRow } from "@/features/payments/splitMath";
 import { TenantPicker } from "@/features/payments/TenantPicker";
 import { toChoices } from "@/features/payments/tenantChoices";
 import { VoidPaymentModal } from "@/features/payments/VoidPaymentModal";
@@ -34,6 +36,7 @@ import {
   useCreatePayment,
   usePayments,
   useResendReceipt,
+  useSplitPayment,
 } from "@/hooks/usePayments";
 import { useTenants } from "@/hooks/useTenants";
 import { getErrorMessage } from "@/lib/apiError";
@@ -60,7 +63,9 @@ const PAYMENT_TYPES = [
 const now = new Date();
 
 const schema = z.object({
-  tenant: z.coerce.number().min(1, "Select a tenant"),
+  // Required unless the payment is split - each part then names its own
+  // tenancy, so the check lives in onSubmit rather than here.
+  tenant: z.coerce.number(),
   amount: z.string()
     .min(1, "Required")
     .refine((v) => Number(v) > 0, "Amount must be greater than 0"),
@@ -92,6 +97,22 @@ function SourceChip({ source, label }: { source: string; label: string }) {
     <Badge tone={config.tone}>
       <Icon className="h-3 w-3" />
       {label}
+    </Badge>
+  );
+}
+
+/** "Split 1/2" on each part of a payment shared across tenancies. */
+function SplitBadge({ payment }: { payment: Payment }) {
+  if (!payment.split_group || !payment.split_count) return null;
+  const total = payment.split_total ? `KES ${Number(payment.split_total).toLocaleString()}` : "one payment";
+  return (
+    <Badge
+      tone="peri"
+      title={`Part ${payment.split_index} of ${payment.split_count} of ${total}${
+        payment.reference ? ` (ref ${payment.reference})` : ""
+      }`}
+    >
+      Split {payment.split_index}/{payment.split_count}
     </Badge>
   );
 }
@@ -174,11 +195,24 @@ export default function PaymentsPage() {
 
   const hasTenants = (tenants?.length ?? 0) > 0;
 
+  // One cheque or transfer shared across tenancies (e.g. Sidai's Healthcare
+  // and Office & Physio). Off by default: most payments are one tenancy.
+  const splitPayment = useSplitPayment();
+  const [split, setSplit] = useState(false);
+  const defaultPeriod = { month: now.getMonth() + 1, year: now.getFullYear() };
+  const freshRows = () => [
+    newRow(defaultPeriod.month, defaultPeriod.year),
+    newRow(defaultPeriod.month, defaultPeriod.year),
+  ];
+  const [splitRows, setSplitRows] = useState<SplitRow[]>(freshRows);
+
   const {
     control,
     register,
     handleSubmit,
     reset,
+    setError,
+    watch,
     formState: { errors },
   } = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -195,12 +229,52 @@ export default function PaymentsPage() {
     },
   });
 
+  const allocation = allocate(watch("amount") ?? "", splitRows);
+
+  const closeForm = () => {
+    reset();
+    setSplit(false);
+    setSplitRows(freshRows());
+    setShowForm(false);
+  };
+
   const onSubmit = async (values: FormValues) => {
+    if (split) {
+      if (allocation.problems.length) {
+        toast.error(allocation.problems[0]);
+        return;
+      }
+      try {
+        const parts = await splitPayment.mutateAsync({
+          amount: values.amount.replace(/,/g, ""),
+          payment_date: values.payment_date,
+          source: values.source,
+          reference: values.reference,
+          notes: values.notes,
+          parts: splitRows.map((r) => ({
+            tenant: r.tenant as number,
+            amount: r.amount.replace(/,/g, ""),
+            period_month: r.period_month,
+            period_year: r.period_year,
+            payment_type: values.payment_type,
+          })),
+        });
+        toast.success(`Payment split across ${parts.length} tenancies`);
+        closeForm();
+      } catch (e) {
+        toast.error(getErrorMessage(e, "Failed to record the split payment"));
+      }
+      return;
+    }
+
+    if (!values.tenant) {
+      setError("tenant", { message: "Select a tenant" });
+      return;
+    }
     try {
       await createPayment.mutateAsync(values);
       toast.success("Payment recorded");
-      reset();
-      setShowForm(false);
+      closeForm();
     } catch (e) {
       toast.error(getErrorMessage(e, "Failed to record payment"));
     }
@@ -216,7 +290,7 @@ export default function PaymentsPage() {
           <div className="flex flex-wrap gap-2">
             <Button
               variant="gold"
-              onClick={() => setShowForm((v) => !v)}
+              onClick={() => (showForm ? closeForm() : setShowForm(true))}
             >
               {showForm ? <X className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
               {showForm ? "Cancel" : "Record Payment"}
@@ -294,7 +368,26 @@ export default function PaymentsPage() {
             </div>
           ) : (
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
+            <div className="flex items-start gap-2.5">
+              <input
+                id="split-payment-toggle"
+                type="checkbox"
+                checked={split}
+                onChange={(e) => setSplit(e.target.checked)}
+                aria-describedby="split-payment-hint"
+                className="mt-0.5 h-4 w-4 cursor-pointer accent-sage-600"
+              />
+              <div>
+                <label htmlFor="split-payment-toggle" className="cursor-pointer text-sm font-medium text-ink-900">
+                  Split across tenancies
+                </label>
+                <p id="split-payment-hint" className="text-xs text-ink-500">
+                  One cheque or transfer that pays for more than one tenancy.
+                </p>
+              </div>
+            </div>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              {!split && (
               <div className="sm:col-span-2">
                 <Field label="Tenant *" error={errors.tenant?.message}>
                   <Controller
@@ -312,8 +405,9 @@ export default function PaymentsPage() {
                   />
                 </Field>
               </div>
-              <Field label="Amount (KES) *" error={errors.amount?.message}>
-                <input {...register("amount")} className={inputCls} />
+              )}
+              <Field label={split ? "Amount received (KES) *" : "Amount (KES) *"} error={errors.amount?.message}>
+                <input {...register("amount")} inputMode="decimal" className={inputCls} />
               </Field>
               <DatePicker
                 label="Payment date"
@@ -326,6 +420,7 @@ export default function PaymentsPage() {
                   <option value="cash">Cash</option>
                   <option value="mpesa">M-Pesa</option>
                   <option value="bank">Bank transfer</option>
+                  <option value="cheque">Cheque</option>
                 </select>
               </Field>
               <Field label="Type">
@@ -335,24 +430,52 @@ export default function PaymentsPage() {
                   ))}
                 </select>
               </Field>
-              <Field label="Period month">
-                <input type="number" min={1} max={12} {...register("period_month")} className={inputCls} />
-              </Field>
-              <Field label="Period year">
-                <input type="number" min={2020} {...register("period_year")} className={inputCls} />
-              </Field>
+              {!split && (
+                <>
+                  <Field label="Period month">
+                    <input type="number" min={1} max={12} {...register("period_month")} className={inputCls} />
+                  </Field>
+                  <Field label="Period year">
+                    <input type="number" min={2020} {...register("period_year")} className={inputCls} />
+                  </Field>
+                </>
+              )}
               <Field label="Reference">
                 <input
                   {...register("reference")}
-                  placeholder="M-Pesa code, receipt #"
+                  placeholder={split ? "Cheque number" : "M-Pesa code, receipt #"}
                   className={inputCls}
                 />
               </Field>
             </div>
+            {split && (
+              <div className="border-t border-ink-200/70 pt-4">
+                <p className="mb-3 text-[11px] font-medium uppercase tracking-[0.14em] text-ink-500">
+                  How it is shared
+                </p>
+                <SplitParts
+                  rows={splitRows}
+                  onChange={setSplitRows}
+                  choices={activeChoices}
+                  allocation={allocation}
+                  defaultPeriod={defaultPeriod}
+                  disabled={tenantsLoading || splitPayment.isPending}
+                />
+                <p className="mt-3 text-[11px] leading-relaxed text-ink-500">
+                  Each tenancy gets its own payment, receipt and statement line, all carrying
+                  the same reference. Voiding any part voids the whole payment.
+                </p>
+              </div>
+            )}
             <div className="flex justify-end">
-              <Button type="submit" loading={createPayment.isPending}>
+              <Button
+                type="submit"
+                loading={createPayment.isPending || splitPayment.isPending}
+                disabled={split && allocation.problems.length > 0}
+                title={split ? allocation.problems[0] : undefined}
+              >
                 <CreditCard className="h-4 w-4" />
-                Record payment
+                {split ? `Record split payment` : "Record payment"}
               </Button>
             </div>
           </form>
@@ -475,6 +598,7 @@ export default function PaymentsPage() {
                         {p.is_void && (
                           <Badge tone="unpaid" title={p.void_reason}>Void</Badge>
                         )}
+                        <SplitBadge payment={p} />
                       </div>
                     </TD>
                     <TD className="text-ink-500">
@@ -548,6 +672,7 @@ export default function PaymentsPage() {
                         <div className="flex items-center gap-2">
                           <p className="truncate font-medium text-ink-900">{p.tenant_name}</p>
                           {p.is_void && <Badge tone="unpaid">Void</Badge>}
+                          <SplitBadge payment={p} />
                         </div>
                         <p className="truncate text-[11px] text-ink-500">
                           {p.building_name} · {p.unit_label}
