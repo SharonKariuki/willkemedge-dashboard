@@ -68,6 +68,16 @@ def test_a_rent_change_on_the_dashboard_names_who_what_and_which_sign_in(owner, 
     assert row.user_agent == "Chrome/Android"
 
 
+def test_the_superadmin_is_recorded_as_superadmin_not_by_their_role_field(owner, unit):
+    owner.is_superuser = True
+    owner.save(update_fields=["is_superuser"])
+    client, _ = _signed_in(owner.email)
+
+    res = client.patch(f"/api/units/{unit.pk}/", {"monthly_rent": "22000"}, format="json")
+    assert res.status_code == 200, res.content
+    assert AuditLog.objects.get(kind="change", action="unit.update").actor_role == "superadmin"
+
+
 def test_the_sign_in_itself_is_logged_under_the_same_session(owner):
     _client, sid = _signed_in(owner.email)
 

@@ -19,7 +19,7 @@ from rest_framework.permissions import AllowAny, BasePermission
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from . import user_admin
+from . import access, user_admin
 from .models import Role, User
 from .serializers import (
     AcceptInviteSerializer,
@@ -59,7 +59,20 @@ class UserListView(APIView):
     def get(self, request):
         data = ManagedUserSerializer(_users(), many=True, context={"request": request}).data
         roles = [{"value": r, "label": Role(r).label} for r in user_admin.assignable_roles(request.user)]
-        return Response({"users": data, "assignable_roles": roles})
+        grantable = access.grantable(request.user)
+        return Response({
+            "users": data,
+            "assignable_roles": roles,
+            # Everything the Access dialog needs to draw the checklist the
+            # same way the API will judge it.
+            "permissions": [
+                {"value": cap, "area": area, "label": label, "hint": hint,
+                 "requires": sorted(access.REQUIRES.get(cap, ())), "grantable": cap in grantable}
+                for cap, area, label, hint in access.PERMISSIONS
+            ],
+            "role_capabilities": {r: sorted(caps) for r, caps in access.ROLE_CAPABILITIES.items()},
+            "scoped_roles": sorted(access.SCOPED_ROLES),
+        })
 
     def post(self, request):
         s = InviteUserSerializer(data=request.data)

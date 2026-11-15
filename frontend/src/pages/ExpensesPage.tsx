@@ -11,6 +11,7 @@ import {
   PageHeader, Skeleton, Table, TBody, TD, TH, THead, TR,
 } from "@/components/ui";
 import { useBuildings } from "@/hooks/useBuildings";
+import { useOpenFromLink } from "@/hooks/useOpenFromLink";
 import {
   useCreateExpense,
   useDeleteExpense, useExpenseCategories, useExpenses,
@@ -80,6 +81,7 @@ export default function ExpensesPage() {
   const [filterBuilding, setFilterBuilding] = useState<"" | "none" | string>("");
   const [filterUnit, setFilterUnit] = useState<"" | "none" | string>("");
   const [showForm, setShowForm] = useState(false);
+  useOpenFromLink(() => setShowForm(true));
 
   const buildingParam: number | "none" | null =
     filterBuilding === "" ? null : filterBuilding === "none" ? "none" : Number(filterBuilding);

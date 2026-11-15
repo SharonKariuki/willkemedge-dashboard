@@ -111,6 +111,8 @@ class ManagedUserSerializer(serializers.ModelSerializer):
     invite_expires_at = serializers.SerializerMethodField()
     is_self = serializers.SerializerMethodField()
     buildings = serializers.SerializerMethodField()
+    #: What they can actually do, with their own changes applied.
+    capabilities = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -119,8 +121,15 @@ class ManagedUserSerializer(serializers.ModelSerializer):
             "status", "is_superuser", "last_login", "date_joined", "invited_at",
             "invited_by_email", "invite_expires_at", "deactivated_at", "is_self",
             "buildings", "access_expires_on",
+            "extra_capabilities", "removed_capabilities", "capabilities",
         )
         read_only_fields = fields
+
+    def get_capabilities(self, obj):
+        from .access import Cap, effective
+
+        return sorted(Cap.ALL if obj.is_superuser else
+                      effective(obj.role, obj.extra_capabilities, obj.removed_capabilities))
 
     def get_buildings(self, obj):
         return [{"id": b.pk, "name": b.name} for b in sorted(obj.buildings.all(), key=lambda b: b.name)]
@@ -155,6 +164,8 @@ class InviteUserSerializer(serializers.Serializer):
     last_name = serializers.CharField(required=False, allow_blank=True, default="", max_length=150)
     buildings = _buildings_field(required=False, default=list)
     access_expires_on = serializers.DateField(required=False, allow_null=True, default=None)
+    extra_capabilities = serializers.ListField(child=serializers.CharField(), required=False, default=list)
+    removed_capabilities = serializers.ListField(child=serializers.CharField(), required=False, default=list)
 
 
 class UpdateUserSerializer(serializers.Serializer):
@@ -163,6 +174,8 @@ class UpdateUserSerializer(serializers.Serializer):
     last_name = serializers.CharField(required=False, allow_blank=True, max_length=150)
     buildings = _buildings_field(required=False)
     access_expires_on = serializers.DateField(required=False, allow_null=True)
+    extra_capabilities = serializers.ListField(child=serializers.CharField(), required=False)
+    removed_capabilities = serializers.ListField(child=serializers.CharField(), required=False)
 
 
 class AcceptInviteSerializer(serializers.Serializer):

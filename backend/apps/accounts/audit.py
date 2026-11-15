@@ -120,7 +120,12 @@ def record(
         common = {
             "actor": user,
             "actor_label": actor_label(user) if user else "",
-            "actor_role": getattr(user, "role", "") if user else "",
+            # The superadmin is labelled as such, not by the role field
+            # their account happens to carry.
+            "actor_role": (
+                "superadmin" if getattr(user, "is_superuser", False)
+                else getattr(user, "role", "")
+            ) if user else "",
             "source": ctx.source,
             "source_detail": ctx.source_detail[:120],
             "request_id": ctx.request_id,
