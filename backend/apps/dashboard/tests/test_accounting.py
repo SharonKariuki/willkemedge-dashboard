@@ -166,11 +166,15 @@ class AccountingTests(APITestCase):
     def test_ledger_downloads_in_every_format(self):
         params = {"tab": "ledger", "start": "2026-09-01", "end": "2026-09-30", "account": "1020"}
 
-        text = self._download("csv", **params).content.decode("utf-8-sig")
-        rows = list(csv.reader(io.StringIO(text)))
-        assert "General Ledger" in rows[0][0]
-        assert any("01 Sep 2026 to 30 Sep 2026" in r[0] for r in rows[:4] if r)
-        assert any(len(r) > 6 and r[2] == "Closing balance — 1020" and r[-1] == "68400.00" for r in rows)
+        resp = self._download("csv", **params)
+        # The CSV is the bare table; what it is and when it covers are in its name.
+        assert "general-ledger-2026-09-01-to-2026-09-30.csv" in resp["Content-Disposition"]
+        rows = list(csv.reader(io.StringIO(resp.content.decode("utf-8-sig"))))
+        assert rows[0][:4] == ["Account", "Date", "Reference", "Description"]
+        assert rows[0][-1] == "Balance (KES)"
+        assert any(r[0].startswith("1020") and r[3] == "Closing balance — 1020" and r[-1] == "68400.00"
+                   for r in rows[1:])
+        assert not any(r[3] == "Total of lines shown" for r in rows[1:])
 
         wb = load_workbook(io.BytesIO(self._download("xlsx", **params).content))
         cells = [c for row in wb.active.iter_rows(values_only=True) for c in row]

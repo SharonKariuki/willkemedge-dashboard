@@ -232,7 +232,7 @@ class AccountingDashboardView(APIView):
                  "zero on 1 January."]
         if data["filtered"]:
             notes.append("Filtered view: running balances still count every line in the period.")
-        return Sheet(title, cols, rows, subtitle, notes)
+        return Sheet(title, cols, rows, subtitle, notes, section_label="Account")
 
     def _tab_ledger(self, request):
         view = request.query_params.get("view", "account")
@@ -257,7 +257,7 @@ class AccountingDashboardView(APIView):
                           "credit": ln["credit"] or None} for ln in e["lines"]]
             rows.append({"_style": "total", "description": f"{len(data['entries'])} entries",
                          "debit": data["total"], "credit": data["total"]})
-            return {"view": view, **data}, Sheet("Journal", cols, rows, subtitle)
+            return {"view": view, **data}, Sheet("Journal", cols, rows, subtitle, section_label="Entry")
 
         data = gl.general_ledger(self.start, self.end, building_id=self.building_id,
                                  account_codes=accounts, sources=sources, search=search)
