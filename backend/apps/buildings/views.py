@@ -5,11 +5,12 @@ from django.db.models import Count, Prefetch, Q, Sum
 from django.http import HttpResponse
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from apps.accounts import audit
+from apps.accounts import access, audit
 from apps.accounts.permissions import CanRecordMoney
 
 from . import photos, spaces
@@ -48,7 +49,8 @@ class BuildingViewSet(viewsets.ModelViewSet):
                 queryset=Unit.objects.select_related("combined_into")
                 .prefetch_related("combined_units", "combined_into__combined_units"),
             ))
-        return qs
+        # A caretaker sees the buildings they look after, nothing else.
+        return access.scope(qs, self.request.user, "pk")
 
     def get_serializer_class(self):
         if self.action in ("retrieve", "bulk_create_units"):
@@ -226,11 +228,11 @@ class UnitViewSet(viewsets.ModelViewSet):
         unit_type = self.request.query_params.get("unit_type")
         if unit_type:
             qs = qs.filter(unit_type=unit_type)
-        return qs
+        return access.scope(qs, self.request.user, "building")
 
     @action(detail=False, methods=["get"], url_path="status-summary")
     def status_summary(self, request):
-        qs = Unit.objects.all()
+        qs = access.scope(Unit.objects.all(), request.user, "building")
         building_id = request.query_params.get("building")
         if building_id:
             qs = qs.filter(building_id=building_id)
@@ -340,9 +342,25 @@ class MaintenanceRequestViewSet(viewsets.ModelViewSet):
         req_status = self.request.query_params.get("status")
         if req_status:
             qs = qs.filter(status=req_status)
-        return qs.order_by("-reported_date")
+        return access.scope(qs, self.request.user, "unit__building").order_by("-reported_date")
+
+    def _check_scope_and_cost(self, serializer):
+        """A caretaker logs work on their own buildings, and doesn't spend money.
+
+        A cost on a maintenance request books an Expense, so putting one on
+        is recording money - the accountant's or the owner's job.
+        """
+        user = self.request.user
+        unit = serializer.validated_data.get("unit")
+        if unit is not None and not access.scope(Unit.objects.filter(pk=unit.pk), user, "building").exists():
+            raise PermissionDenied("That unit isn't in a building you look after.")
+        cost = serializer.validated_data.get("cost")
+        current = getattr(serializer.instance, "cost", 0) or 0
+        if cost is not None and cost != current and not user.can(access.Cap.RECORD_MONEY):
+            raise PermissionDenied("Only staff who record money can put a cost on maintenance.")
 
     def perform_create(self, serializer):
+        self._check_scope_and_cost(serializer)
         with transaction.atomic():
             instance = serializer.save()
             sync_maintenance_expense(instance)
@@ -353,6 +371,7 @@ class MaintenanceRequestViewSet(viewsets.ModelViewSet):
                 unit.save(update_fields=["status"])
 
     def perform_update(self, serializer):
+        self._check_scope_and_cost(serializer)
         with transaction.atomic():
             instance = serializer.save()
             # If marked done, revert unit to vacant if no active tenant

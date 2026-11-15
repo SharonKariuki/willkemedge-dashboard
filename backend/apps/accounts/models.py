@@ -21,6 +21,7 @@ class Role(models.TextChoices):
     """
     OWNER = "owner", "Owner / Director"
     ACCOUNTANT = "accountant", "Accountant"
+    AUDITOR = "auditor", "Auditor (read-only)"
     CARETAKER = "caretaker", "Caretaker"
     VIEWER = "viewer", "Viewer (read-only)"
 
@@ -57,6 +58,13 @@ class User(AbstractUser):
     #: activity log and every payment they recorded still name them.
     deactivated_at = models.DateTimeField(null=True, blank=True)
 
+    #: The buildings a caretaker looks after. A caretaker sees and works on
+    #: these only; every other role sees the whole portfolio.
+    buildings = models.ManyToManyField("buildings.Building", blank=True, related_name="caretakers")
+    #: Access ends at the start of this day (Nairobi time). Required for an
+    #: auditor - an audit is a visit, not a job - optional for anyone else.
+    access_expires_on = models.DateField(null=True, blank=True)
+
     USERNAME_FIELD = "email"
     REQUIRED_FIELDS = ["username"]
 
@@ -67,27 +75,46 @@ class User(AbstractUser):
         return self.email
 
     @property
+    def access_expired(self) -> bool:
+        return bool(self.access_expires_on) and timezone.localdate() >= self.access_expires_on
+
+    @property
     def status(self) -> str:
-        """active | invited | deactivated - what the Users page shows."""
+        """active | invited | expired | deactivated - what the Users page shows."""
         if self.deactivated_at:
             return "deactivated"
         if self.invited_at and not self.invite_accepted_at and not self.is_active:
             return "invited"
-        return "active" if self.is_active else "deactivated"
+        if not self.is_active:
+            return "deactivated"
+        return "expired" if self.access_expired else "active"
+
+    # What each role may do lives in apps.accounts.access; these read it, so
+    # existing callers keep working. A superuser is the break-glass account
+    # and carries every capability.
+    def can(self, capability: str) -> bool:
+        from .access import has_capability
+
+        return has_capability(self, capability)
 
     @property
     def can_manage_users(self) -> bool:
         """Invite people, change their role, switch accounts off. Owner and superadmin."""
-        return self.is_superuser or self.role == Role.OWNER
+        from .access import Cap
 
-    # A superuser is the break-glass account and always carries owner rights.
+        return self.can(Cap.MANAGE_USERS)
+
     @property
     def can_record_money(self) -> bool:
-        return self.is_superuser or self.role in ROLES_RECORD_MONEY
+        from .access import Cap
+
+        return self.can(Cap.RECORD_MONEY)
 
     @property
     def can_forgive_money(self) -> bool:
-        return self.is_superuser or self.role in ROLES_FORGIVE_MONEY
+        from .access import Cap
+
+        return self.can(Cap.FORGIVE_MONEY)
 
 
 class AuditKind(models.TextChoices):

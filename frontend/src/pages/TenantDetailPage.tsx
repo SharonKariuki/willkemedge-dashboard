@@ -34,6 +34,7 @@ import {
   useEmailStatement, usePaymentHistory, useMoveOutNotice, useMoveOutTenant, useTenant,
   useUpdateTenant,
 } from "@/hooks/useTenants";
+import { CAP, can } from "@/lib/access";
 import { getErrorMessage } from "@/lib/apiError";
 import { cn } from "@/lib/cn";
 import { toDayFirst, todayIso } from "@/lib/dates";
@@ -100,7 +101,13 @@ export default function TenantDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { data: tenant, isLoading, isError, refetch } = useTenant(id ?? null);
-  const { data: history } = usePaymentHistory(id ?? null);
+  const { user } = useAuth();
+  // A caretaker sees the tenancy, not the money: the API refuses the
+  // financial endpoints, so don't ask for them.
+  const canSeeFinance = can(user, CAP.VIEW_FINANCE);
+  const canManageProperty = can(user, CAP.MANAGE_PROPERTY);
+  const canMessage = can(user, CAP.SEND_MESSAGES);
+  const { data: history } = usePaymentHistory(id ?? null, canSeeFinance);
   // Which months of the rent roll to show. Kept in the URL so a reload, the
   // back button or a shared link opens on the same view; the default (last
   // three months) is left out so a plain /tenants/:id link stays plain.
@@ -188,11 +195,10 @@ export default function TenantDetailPage() {
   const [reminding, setReminding] = useState(false);
   // Credits and refunds forgive or pay out money: owner-only, the same
   // privilege as waiving arrears or voiding a payment.
-  const { user } = useAuth();
-  const canManageCredit = Boolean(user?.can_forgive_money);
+  const canManageCredit = can(user, CAP.FORGIVE_MONEY);
   // Voiding is owner-only on the API (CanForgiveMoney), same as credits.
   const [voidTarget, setVoidTarget] = useState<Payment | null>(null);
-  const { data: creditPosition } = useCreditPosition(id ?? null);
+  const { data: creditPosition } = useCreditPosition(id ?? null, canSeeFinance);
   const refundable = Number(creditPosition?.refundable ?? 0);
   const creditsHeld = Number(creditPosition?.credits_held ?? 0);
   const refundsToSend = Number(creditPosition?.refunds_to_send ?? 0);
@@ -300,26 +306,32 @@ export default function TenantDetailPage() {
         <div className="flex flex-wrap items-center gap-2">
           {isActive && mode === "view" && (
             <>
-              {inArrears && (
+              {inArrears && canMessage && (
                 <Button variant="outline" onClick={() => setReminding(true)}>
                   <BellRing className="h-4 w-4" /> Remind
                 </Button>
               )}
-              <Button variant="outline" onClick={() => setMode("edit")}><Pencil className="h-4 w-4" /> Edit</Button>
-              <Button variant="outline" onClick={handleStatement} loading={downloading}>
-                <Download className="h-4 w-4" /> Statement PDF
-              </Button>
-              <Button
-                variant="outline"
-                onClick={handleEmailStatement}
-                loading={emailStatement.isPending}
-                disabled={!tenant.email}
-                title={tenant.email
-                  ? `Email the statement to ${tenant.email}`
-                  : "No email address on file — add one under Edit"}
-              >
-                <Mail className="h-4 w-4" /> Email Statement
-              </Button>
+              {canManageProperty && (
+                <Button variant="outline" onClick={() => setMode("edit")}><Pencil className="h-4 w-4" /> Edit</Button>
+              )}
+              {canSeeFinance && (
+                <Button variant="outline" onClick={handleStatement} loading={downloading}>
+                  <Download className="h-4 w-4" /> Statement PDF
+                </Button>
+              )}
+              {canMessage && (
+                <Button
+                  variant="outline"
+                  onClick={handleEmailStatement}
+                  loading={emailStatement.isPending}
+                  disabled={!tenant.email}
+                  title={tenant.email
+                    ? `Email the statement to ${tenant.email}`
+                    : "No email address on file — add one under Edit"}
+                >
+                  <Mail className="h-4 w-4" /> Email Statement
+                </Button>
+              )}
               {canManageCredit && (
                 <>
                   <Button variant="outline" onClick={() => navigate(`/tenants/${id}/charges/new`)}>
@@ -330,13 +342,17 @@ export default function TenantDetailPage() {
                   </Button>
                 </>
               )}
-              <Button variant="outline" onClick={() => setMode("notice")}><AlertTriangle className="h-4 w-4" /> Notice</Button>
-              <Button variant="danger" onClick={() => setMode("moveout")}><LogOut className="h-4 w-4" /> Move Out</Button>
+              {canManageProperty && (
+                <>
+                  <Button variant="outline" onClick={() => setMode("notice")}><AlertTriangle className="h-4 w-4" /> Notice</Button>
+                  <Button variant="danger" onClick={() => setMode("moveout")}><LogOut className="h-4 w-4" /> Move Out</Button>
+                </>
+              )}
             </>
           )}
           {!isActive && mode === "view" && (
             <>
-              {canMoveInAgain && (
+              {canMoveInAgain && canManageProperty && (
                 <Button onClick={() => setMode("movein")}><LogIn className="h-4 w-4" /> Move In Again</Button>
               )}
               {/* Damage found at handover is still recharged to a tenant who has left. */}
@@ -351,9 +367,11 @@ export default function TenantDetailPage() {
                   <Plus className="h-4 w-4" /> Add Credit
                 </Button>
               )}
-              <Button variant="outline" onClick={handleStatement} loading={downloading}>
-                <Download className="h-4 w-4" /> Statement PDF
-              </Button>
+              {canSeeFinance && (
+                <Button variant="outline" onClick={handleStatement} loading={downloading}>
+                  <Download className="h-4 w-4" /> Statement PDF
+                </Button>
+              )}
             </>
           )}
           {mode !== "view" && (
@@ -598,6 +616,7 @@ export default function TenantDetailPage() {
         {/* Balance: what the tenant owes, or the Credit on Account they hold.
             A credit is the other side of the same figure, so it lives here
             rather than on a card of its own. */}
+        {canSeeFinance && (
         <Card padding="md">
           <p className="text-xs uppercase tracking-wider text-content-muted">
             {owedNow < 0 ? "Credit on Account" : "Balance"}
@@ -623,6 +642,7 @@ export default function TenantDetailPage() {
             </div>
           )}
         </Card>
+        )}
       </div>
 
       {/* Contact. The statement names a contact person against the phone number
@@ -648,6 +668,7 @@ export default function TenantDetailPage() {
       </Card>
 
       {/* Payment history */}
+      {canSeeFinance && (
       <Card padding="none">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-hairline px-5 py-4">
           <div>
@@ -758,6 +779,7 @@ export default function TenantDetailPage() {
           </p>
         )}
       </Card>
+      )}
 
       {voidTarget && (
         <VoidPaymentModal payment={voidTarget} onClose={() => setVoidTarget(null)} />
@@ -765,15 +787,18 @@ export default function TenantDetailPage() {
 
       {/* Combined commercial space — the units this tenancy occupies. Changing
           it moves the rent, so it takes the record-money privilege. */}
-      <SpacePanel tenant={tenant} canManage={Boolean(user?.can_record_money)} />
+      <SpacePanel tenant={tenant} canManage={can(user, CAP.RECORD_MONEY)} />
 
       {/* Credits & refunds — Credit History, Refund Credit, Void. */}
-      <CreditsPanel tenantId={tenant.id} tenantName={tenant.full_name} canManage={canManageCredit} />
+      {canSeeFinance && (
+        <CreditsPanel tenantId={tenant.id} tenantName={tenant.full_name} canManage={canManageCredit} />
+      )}
 
       {/* Monthly rent roll — one row per month, extends itself as billing posts.
           VAT gets its own column for commercial units, matching the statement;
           residential is exempt, so the column is hidden rather than showing a
           row of dashes. */}
+      {canSeeFinance && (
       <Card padding="none">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-hairline px-5 py-4">
           <div>
@@ -868,6 +893,7 @@ export default function TenantDetailPage() {
           </p>
         )}
       </Card>
+      )}
 
       {/* KYC last. It is reviewed once at onboarding, while the money above it
           is what anyone opening this page is usually here to read. */}

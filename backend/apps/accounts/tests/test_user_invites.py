@@ -49,7 +49,14 @@ def owner(db):
 
 
 def _invite(actor, email="jane@example.com", role=Role.CARETAKER):
-    return _client(actor).post(USERS, {"email": email, "role": role, "first_name": "Jane"}, format="json")
+    from apps.buildings.models import Building
+
+    payload = {"email": email, "role": role, "first_name": "Jane"}
+    if role == Role.CARETAKER:
+        # A caretaker looks after named buildings; the API refuses one without.
+        building, _ = Building.objects.get_or_create(name="Block A", defaults={"address": "Nairobi"})
+        payload["buildings"] = [building.pk]
+    return _client(actor).post(USERS, payload, format="json")
 
 
 # ── inviting ────────────────────────────────────────────────────────────────

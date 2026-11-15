@@ -2,7 +2,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
 
-export type UserStatus = "active" | "invited" | "deactivated";
+export type UserStatus = "active" | "invited" | "deactivated" | "expired";
+
+export interface BuildingRef {
+  id: number;
+  name: string;
+}
 
 export interface ManagedUser {
   id: number;
@@ -21,6 +26,17 @@ export interface ManagedUser {
   invite_expires_at: string | null;
   deactivated_at: string | null;
   is_self: boolean;
+  /** Caretakers only: the buildings they look after. */
+  buildings: BuildingRef[];
+  /** Auditors: the last day before access ends (ISO date), or null for no end. */
+  access_expires_on: string | null;
+}
+
+/** Who looks after what, and until when - sent with an invite or an edit. */
+export interface AccessFields {
+  role: string;
+  buildings?: number[];
+  access_expires_on?: string | null;
 }
 
 export interface RoleOption {
@@ -49,9 +65,8 @@ function useUserMutation<TVars>(fn: (vars: TVars) => Promise<ManagedUser>) {
   });
 }
 
-export interface InvitePayload {
+export interface InvitePayload extends AccessFields {
   email: string;
-  role: string;
   first_name?: string;
   last_name?: string;
 }
@@ -59,8 +74,10 @@ export interface InvitePayload {
 export const useInviteUser = () =>
   useUserMutation(async (payload: InvitePayload) => (await api.post("/auth/users/", payload)).data);
 
+export type UpdatePayload = { id: number; first_name?: string; last_name?: string } & Partial<AccessFields>;
+
 export const useUpdateUser = () =>
-  useUserMutation(async ({ id, ...patch }: { id: number; role?: string; first_name?: string; last_name?: string }) =>
+  useUserMutation(async ({ id, ...patch }: UpdatePayload) =>
     (await api.patch(`/auth/users/${id}/`, patch)).data);
 
 export type UserAction = "resend" | "deactivate" | "reactivate";

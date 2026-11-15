@@ -44,7 +44,7 @@ def _refused(exc: user_admin.UserAdminError) -> Response:
 
 def _users():
     return (
-        User.objects.select_related("invited_by").prefetch_related("invites")
+        User.objects.select_related("invited_by").prefetch_related("invites", "buildings")
         # Superadmin and owners first, then the rest by name.
         .annotate(rank=Case(When(is_superuser=True, then=Value(0)),
                             When(role=Role.OWNER, then=Value(1)), default=Value(2),

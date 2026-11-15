@@ -9,6 +9,7 @@ from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from apps.accounts import access
 from apps.buildings.unit_order import unit_sort_key
 from apps.payments import books
 
@@ -121,7 +122,8 @@ class TenantViewSet(viewsets.ModelViewSet):
                 | models.Q(phone__icontains=search)
             )
 
-        return qs
+        # A caretaker sees the tenants in the buildings they look after.
+        return access.scope(qs, self.request.user, "unit__building")
 
     def get_serializer_context(self):
         """Price the whole page's balances in one go.
