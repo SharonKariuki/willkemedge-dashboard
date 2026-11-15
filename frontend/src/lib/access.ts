@@ -6,6 +6,32 @@
  * enforces the same rules on every request whatever the browser shows.
  */
 import type { StoredUser } from "@/lib/authStorage";
+import { displayName } from "@/lib/displayName";
+
+const ROLE_NAMES: Record<string, string> = {
+  owner: "Owner",
+  accountant: "Accountant",
+  auditor: "Auditor",
+  caretaker: "Caretaker",
+  viewer: "Viewer",
+};
+
+/** The role to show under someone's name: the superadmin first, then their role. */
+export function roleLabel(user: StoredUser | null | undefined): string {
+  if (!user) return "";
+  if (user.is_superuser) return "Superadmin";
+  return ROLE_NAMES[user.role ?? ""] ?? "User";
+}
+
+/** Their name if the account has one; otherwise the superadmin is "Superadmin"
+ *  and anyone else goes by the front of their email. */
+export function userName(user: StoredUser | null | undefined): string {
+  if (!user) return "";
+  const full = [user.first_name, user.last_name].map((s) => s?.trim()).filter(Boolean).join(" ");
+  if (full) return full;
+  if (user.is_superuser) return "Superadmin";
+  return displayName(user.email?.split("@")[0] ?? "") || roleLabel(user);
+}
 
 export const CAP = {
   VIEW_FINANCE: "view_finance",

@@ -1,7 +1,7 @@
 import { Navigate, Outlet, useLocation } from "react-router-dom";
 
 import { useAuth } from "@/hooks/useAuth";
-import { CAP, type Capability, can } from "@/lib/access";
+import { CAP, type Capability, can, roleLabel, userName } from "@/lib/access";
 import { avatarFor } from "@/lib/images";
 import { homePath, pageRequirement } from "@/lib/nav";
 
@@ -15,11 +15,10 @@ export default function AuthLayout() {
   const { user } = useAuth();
   const location = useLocation();
 
-  const fullName =
-    [user?.first_name, user?.last_name]
-      .map((s) => s?.trim())
-      .filter(Boolean)
-      .join(" ") || "Wilson Osoro";
+  // Whoever is signed in - never a stand-in name, now that each person has
+  // their own account.
+  const fullName = userName(user) || "Account";
+  const role = roleLabel(user);
 
   // A page outside this person's role sends them to the first one they can
   // use (a caretaker lands on Properties). The API refuses regardless; this
@@ -43,7 +42,7 @@ export default function AuthLayout() {
             {allowed(CAP.VIEW_FINANCE) && <NotificationBell />}
             <button
               className="flex items-center gap-2.5 rounded-full py-0.5 pl-0.5 pr-2 transition-colors hover:bg-hover"
-              aria-label="Account"
+              aria-label={role ? `Account: ${fullName}, ${role}` : "Account"}
             >
               <img
                 src={avatarFor(fullName)}
@@ -51,8 +50,11 @@ export default function AuthLayout() {
                 aria-hidden
                 className="h-8 w-8 rounded-full ring-1 ring-border"
               />
-              <span className="hidden text-sm font-medium text-content sm:block">
-                {fullName}
+              <span className="hidden flex-col items-start text-left leading-tight sm:flex">
+                <span className="text-sm font-medium text-content">{fullName}</span>
+                {role && role !== fullName && (
+                  <span className="text-[10px] uppercase tracking-[0.14em] text-content-muted">{role}</span>
+                )}
               </span>
             </button>
           </header>

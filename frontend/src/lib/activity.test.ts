@@ -73,6 +73,11 @@ describe("whoDidIt", () => {
     );
   });
 
+  it("labels the superadmin and the auditor", () => {
+    expect(whoDidIt(row(1, { actor_label: "Sharon", actor_role: "superadmin" }))).toBe("Sharon (Superadmin)");
+    expect(whoDidIt(row(1, { actor_label: "Ann", actor_role: "auditor" }))).toBe("Ann (Auditor)");
+  });
+
   it("says what the system was doing when nobody was signed in", () => {
     expect(whoDidIt(row(1, { source: "command", source_detail: "reconcile_donholm" }))).toBe(
       "Server command: reconcile_donholm",

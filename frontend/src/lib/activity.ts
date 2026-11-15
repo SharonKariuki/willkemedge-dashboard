@@ -74,8 +74,10 @@ export const SOURCE_LABELS: Record<ActivitySource, string> = {
 };
 
 const ROLE_LABELS: Record<string, string> = {
+  superadmin: "Superadmin",
   owner: "Owner",
   accountant: "Accountant",
+  auditor: "Auditor",
   caretaker: "Caretaker",
   viewer: "Viewer",
 };
