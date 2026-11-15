@@ -40,3 +40,7 @@ xhtml2pdf>=0.2.17
 # arrives with xhtml2pdf but is used directly, so it is pinned here.
 openpyxl>=3.1
 reportlab>=4.0
+# Writes the Excel downloads. Unlike openpyxl it stores a formula's result
+# with the formula, so a SUM total still shows in a phone or email preview
+# that doesn't recalculate. openpyxl stays for reading uploaded sheets.
+XlsxWriter>=3.2

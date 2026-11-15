@@ -1,13 +1,28 @@
 """Turn any report table into a CSV, Excel or PDF download.
 
-A report describes itself once as a :class:`Sheet` — title, the period and
-filters it was run for, columns, rows and totals — and :func:`file_response`
+A report describes itself once as a :class:`Sheet` - title, the period and
+filters it was run for, columns, rows and totals - and :func:`file_response`
 writes that same sheet in whichever format was asked for. The figures in the
 file are therefore exactly the figures on screen, in all three formats.
 
 Rows are dicts keyed by column. A row may carry ``"_style"`` to set it apart:
 ``heading`` (an account or section title), ``opening`` / ``closing`` (a
 ledger's carried balances), ``subtotal`` and ``total``.
+
+Each format is shaped for what people do with it:
+
+* **PDF** is for reading and filing: the company letterhead, the app's navy
+  and teal, 8.5pt type, portrait unless the columns need landscape, and
+  "Page x of y".
+* **Excel** is for working the numbers: the same letterhead and styling,
+  sections that collapse, a print layout, and subtotals and totals written as
+  ``SUM`` formulas - but only where the formula gives exactly the figure on
+  screen, with that figure stored as the cell's result so a phone or email
+  preview that doesn't calculate still shows it.
+* **CSV** is for sorting, filtering and importing: one header row and one row
+  per line, nothing else. Section headings become a column, totals are left
+  out (they would be summed twice), and the title and period are in the
+  filename.
 """
 from __future__ import annotations
 
@@ -31,6 +46,21 @@ FORMATS = {
 
 COMPANY = "Wilkem Ventures"
 
+# The app's own palette (frontend/src/index.css), so a download looks like the
+# screen it came from.
+NAVY = "#0F2A43"
+TEAL = "#0D9488"
+INK = "#0F172A"
+SLATE = "#334155"
+MUTED = "#64748B"
+RULE = "#CBD5E1"
+HAIR = "#E2E8F0"
+BAND = "#F1F5F9"
+
+STRONG = ("heading", "closing", "subtotal", "total")
+SUMMED = ("subtotal", "total")
+CENT = Decimal("0.01")
+
 
 @dataclass
 class Column:
@@ -51,6 +81,27 @@ class Sheet:
     subtitle: list[str] = field(default_factory=list)
     #: Short lines printed after the table (a basis note, a balance check).
     notes: list[str] = field(default_factory=list)
+    #: CSV column that carries each ``heading`` row's text onto its lines.
+    section_label: str = "Section"
+
+
+def _letterhead() -> dict:
+    """The company details the tenant statements carry, so every document agrees."""
+    from apps.payments import statement_service as s
+
+    return {
+        "name": s.DEFAULT_ENTITY_NAME,
+        "postal": s.DEFAULT_POSTAL_ADDRESS,
+        "phone": s.DEFAULT_CONTACT_PHONE,
+        "email": s.DEFAULT_CONTACT_EMAIL,
+    }
+
+
+def _label(col: Column) -> str:
+    """A money column says what it is counted in."""
+    if col.kind == "money" and "KES" not in col.label.upper():
+        return f"{col.label} (KES)"
+    return col.label
 
 
 def _plain(value, kind: str):
@@ -58,7 +109,7 @@ def _plain(value, kind: str):
     if value is None or value == "":
         return ""
     if kind == "money":
-        return Decimal(str(value)).quantize(Decimal("0.01"))
+        return Decimal(str(value)).quantize(CENT)
     if kind == "date" and isinstance(value, str):
         try:
             return _dt.date.fromisoformat(value)
@@ -72,11 +123,14 @@ def _printed(value, kind: str) -> str:
     if value is None or value == "":
         return ""
     if kind == "money":
-        amount = Decimal(str(value)).quantize(Decimal("0.01"))
+        amount = Decimal(str(value)).quantize(CENT)
         text = f"{abs(amount):,.2f}"
         return f"({text})" if amount < 0 else text
     if kind == "date":
-        day = value if isinstance(value, _dt.date) else _dt.date.fromisoformat(str(value))
+        try:
+            day = value if isinstance(value, _dt.date) else _dt.date.fromisoformat(str(value))
+        except ValueError:
+            return str(value)
         return day.strftime("%d %b %Y")
     return str(value)
 
@@ -85,36 +139,38 @@ def _stamp() -> str:
     return timezone.localtime().strftime("%d %b %Y %H:%M")
 
 
-def _xlsx_cell(ws, row: int, column: int, value):
-    """Write a cell, keeping text that starts with ``=`` as text.
+def _sectioned(sheet: Sheet) -> bool:
+    return any(r.get("_style") == "heading" for r in sheet.rows)
 
-    openpyxl stores any string beginning ``=`` as a live formula, so a tenant
-    name or description typed as ``=HYPERLINK(...)`` would run when the
-    workbook is opened. Unlike CSV, Excel keeps a cell's type, so storing it
-    as a string is enough and the value reads exactly as typed.
-    """
-    cell = ws.cell(row=row, column=column, value=value)
-    if isinstance(value, str) and value.startswith("="):
-        cell.data_type = "s"
-    return cell
+
+def _section_text(row: dict, columns: list[Column]) -> str:
+    """A heading row in one line: '1020 Bank Account · asset'."""
+    parts = (_printed(row.get(c.key), c.kind) for c in columns if c.kind != "money")
+    return " · ".join(p for p in parts if p)
 
 
 # ── CSV ──────────────────────────────────────────────────────────────────────
 
 def to_csv(sheet: Sheet) -> bytes:
+    """One header row, then one row per line - a table Excel can sort and pivot."""
     out = io.StringIO()
     writer = csv.writer(out)
-    # Text cells go through csv_safe so a spreadsheet cannot execute them.
-    # Money and dates are left alone: they are not text, and a negative figure
-    # must stay a number.
-    writer.writerow([csv_safe(f"{COMPANY} — {sheet.title}")])
-    for line in sheet.subtitle:
-        writer.writerow([csv_safe(line)])
-    writer.writerow([f"Printed {_stamp()}"])
-    writer.writerow([])
-    writer.writerow([csv_safe(c.label) for c in sheet.columns])
+    sectioned = _sectioned(sheet)
+    header = ([sheet.section_label] if sectioned else []) + [_label(c) for c in sheet.columns]
+    writer.writerow([csv_safe(h) for h in header])
+
+    section = ""
     for row in sheet.rows:
-        cells = []
+        style = row.get("_style", "")
+        if style == "heading":
+            section = _section_text(row, sheet.columns)
+            continue
+        if style in SUMMED:
+            continue
+        # Text cells go through csv_safe so a spreadsheet cannot execute them.
+        # Money and dates are left alone: they are not text, and a negative
+        # figure must stay a number.
+        cells = [csv_safe(section)] if sectioned else []
         for c in sheet.columns:
             value = _plain(row.get(c.key), c.kind)
             if isinstance(value, _dt.date):
@@ -123,89 +179,236 @@ def to_csv(sheet: Sheet) -> bytes:
                 value = csv_safe(value)
             cells.append(value)
         writer.writerow(cells)
-    if sheet.notes:
-        writer.writerow([])
-        for note in sheet.notes:
-            writer.writerow([csv_safe(note)])
     # BOM so Excel opens the UTF-8 (KES, em dashes, names) correctly.
     return ("﻿" + out.getvalue()).encode("utf-8")
 
 
 # ── Excel ────────────────────────────────────────────────────────────────────
 
+def _ranges(col_letter: str, excel_rows: list[int]) -> list[str]:
+    """[8, 9, 10, 14] -> ['D8:D10', 'D14']."""
+    out, start, prev = [], None, None
+    for n in excel_rows:
+        if start is None:
+            start = prev = n
+        elif n == prev + 1:
+            prev = n
+        else:
+            out.append(f"{col_letter}{start}:{col_letter}{prev}" if prev != start else f"{col_letter}{start}")
+            start = prev = n
+    if start is not None:
+        out.append(f"{col_letter}{start}:{col_letter}{prev}" if prev != start else f"{col_letter}{start}")
+    return out
+
+
 def to_xlsx(sheet: Sheet) -> bytes:
-    from openpyxl import Workbook
-    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
-    from openpyxl.utils import get_column_letter
+    import xlsxwriter
+    from xlsxwriter.utility import xl_col_to_name
 
-    wb = Workbook()
-    ws = wb.active
-    ws.title = re.sub(r"[\[\]:*?/\\]", "", sheet.title)[:31] or "Report"
+    head = _letterhead()
+    out = io.BytesIO()
+    # Never turn a typed string into a formula, link or number: a tenant name
+    # or description of "=HYPERLINK(...)" must stay text. Every cell below is
+    # written with an explicit type as well.
+    wb = xlsxwriter.Workbook(out, {
+        "in_memory": True,
+        "strings_to_formulas": False,
+        "strings_to_urls": False,
+        "strings_to_numbers": False,
+    })
+    wb.set_properties({"title": sheet.title, "author": COMPANY, "company": head["name"]})
+    ws = wb.add_worksheet(re.sub(r"[\[\]:*?/\\]", "", sheet.title)[:31] or "Report")
 
-    ncols = len(sheet.columns)
-    _xlsx_cell(ws, 1, 1, f"{COMPANY} — {sheet.title}").font = Font(bold=True, size=14)
+    cols = sheet.columns
+    last = max(len(cols) - 1, 0)
+    sectioned = _sectioned(sheet)
+    base = {"font_name": "Calibri", "font_size": 10, "font_color": INK, "valign": "top"}
+    formats: dict[tuple, object] = {}
+
+    def fmt(**props):
+        key = tuple(sorted(props.items()))
+        if key not in formats:
+            formats[key] = wb.add_format({**base, **props})
+        return formats[key]
+
+    def band(r, text, f):
+        if last:
+            ws.merge_range(r, 0, r, last, text, f)
+        else:
+            ws.write_string(r, 0, text, f)
+
+    # Letterhead
+    band(0, head["name"].upper(), fmt(bold=True, font_size=9, font_color=TEAL))
+    band(1, sheet.title, fmt(bold=True, font_size=16, font_color=NAVY))
+    ws.set_row(1, 24)
     r = 2
-    for line in [*sheet.subtitle, f"Printed {_stamp()}"]:
-        _xlsx_cell(ws, r, 1, line).font = Font(color="636776", size=10)
+    for line in sheet.subtitle:
+        band(r, line, fmt(font_color=SLATE))
         r += 1
-    r += 1
+    band(r, f"Printed {_stamp()}", fmt(font_size=9, italic=True, font_color=MUTED))
+    r += 2
 
     header_row = r
-    header_fill = PatternFill("solid", fgColor="F0EDE5")
-    for i, col in enumerate(sheet.columns, start=1):
-        cell = _xlsx_cell(ws, r, i, col.label)
-        cell.font = Font(bold=True, color="404554")
-        cell.fill = header_fill
-        cell.alignment = Alignment(horizontal="right" if col.kind in ("money", "number") else "left")
+    for i, col in enumerate(cols):
+        numeric = col.kind in ("money", "number")
+        ws.write_string(r, i, _label(col), fmt(
+            bold=True, font_color=NAVY, bg_color=BAND, bottom=2, bottom_color=NAVY,
+            text_wrap=True, valign="vcenter", align="right" if numeric else "left",
+        ))
+    ws.set_row(r, 20)
     r += 1
 
-    thin = Side(style="thin", color="999999")
-    styles = {
-        "heading": (Font(bold=True, size=11), PatternFill("solid", fgColor="F7F5F0"), None),
-        "opening": (Font(italic=True, color="555555"), None, None),
-        "closing": (Font(bold=True), None, Border(top=thin)),
-        "subtotal": (Font(bold=True), None, Border(top=thin)),
-        "total": (Font(bold=True), PatternFill("solid", fgColor="F0EDE5"), Border(top=thin, bottom=thin)),
-    }
+    def cell_format(style: str, col: Column, i: int):
+        props: dict = {}
+        if col.kind == "money":
+            props["num_format"] = '#,##0.00;(#,##0.00);"–"'
+        elif col.kind == "date":
+            props.update(num_format="dd mmm yyyy", align="left")
+        elif col.kind == "number":
+            props["align"] = "right"
+        if style == "heading":
+            props.update(bold=True, font_color=NAVY, bottom=1, bottom_color=RULE)
+        elif style == "opening":
+            props.update(italic=True, font_color=MUTED, bottom=1, bottom_color=HAIR)
+        elif style in ("closing", "subtotal"):
+            props.update(bold=True, top=1, top_color=SLATE)
+        elif style == "total":
+            props.update(bold=True, font_color=NAVY, bg_color=BAND, top=1, top_color=NAVY,
+                         bottom=6, bottom_color=NAVY)
+        else:
+            props.update(bottom=1, bottom_color=HAIR)
+        if sectioned and i == 0 and col.kind == "text" and style not in ("heading", "total"):
+            props["indent"] = 1
+        return fmt(**props)
+
+    def write_value(row_i, i, value, f):
+        if value == "" or value is None:
+            ws.write_blank(row_i, i, None, f)
+        elif isinstance(value, Decimal):
+            ws.write_number(row_i, i, float(value), f)
+        elif isinstance(value, (int, float)) and not isinstance(value, bool):
+            ws.write_number(row_i, i, value, f)
+        elif isinstance(value, _dt.date):
+            ws.write_datetime(row_i, i, _dt.datetime.combine(value, _dt.time()), f)
+        else:
+            ws.write_string(row_i, i, str(value), f)
+
+    # Rows a subtotal or total could be the sum of, by sheet row index.
+    block: list[int] = []        # plain lines since the last heading / subtotal / total
+    since_plain: list[int] = []  # plain lines since the last total
+    since_subs: list[int] = []   # subtotals since the last total
+    values: dict[int, dict] = {}
+
+    def summed(row: dict, candidates: list[int], i: int, col: Column, row_i: int, f) -> bool:
+        """Write ``=SUM(...)`` if it reproduces the figure exactly; say whether it did."""
+        target = _plain(row.get(col.key), col.kind)
+        if not candidates or not isinstance(target, Decimal):
+            return False
+        total = sum((values[c].get(col.key) or Decimal("0") for c in candidates), Decimal("0"))
+        if total.quantize(CENT) != target:
+            return False
+        letter = xl_col_to_name(i)
+        formula = "=SUM(" + ",".join(_ranges(letter, [c + 1 for c in candidates])) + ")"
+        if len(formula) > 8000:
+            return False
+        ws.write_formula(row_i, i, formula, f, float(target))
+        return True
+
+    def money_values(row):
+        return {c.key: _plain(row.get(c.key), c.kind) or None for c in cols if c.kind == "money"}
+
     for row in sheet.rows:
-        font, fill, border = styles.get(row.get("_style"), (None, None, None))
-        for i, col in enumerate(sheet.columns, start=1):
-            value = _plain(row.get(col.key), col.kind)
-            if isinstance(value, Decimal):
-                value = float(value)
-            cell = _xlsx_cell(ws, r, i, value if value != "" else None)
-            if col.kind == "money":
-                cell.number_format = '#,##0.00;(#,##0.00);"-"'
-            elif col.kind == "date" and isinstance(value, _dt.date):
-                cell.number_format = "dd mmm yyyy"
-            if font:
-                cell.font = font
-            if fill:
-                cell.fill = fill
-            if border:
-                cell.border = border
+        style = row.get("_style", "")
+        if style == "total":
+            candidates = since_subs or since_plain
+        elif style == "subtotal":
+            candidates = block
+        else:
+            candidates = []
+        for i, col in enumerate(cols):
+            f = cell_format(style, col, i)
+            if col.kind == "money" and style in SUMMED and summed(row, candidates, i, col, r, f):
+                continue
+            write_value(r, i, _plain(row.get(col.key), col.kind), f)
+
+        if style == "":
+            values[r] = money_values(row)
+            block.append(r)
+            since_plain.append(r)
+        elif style == "heading":
+            block = []
+        elif style == "subtotal":
+            values[r] = money_values(row)
+            since_subs.append(r)
+            block = []
+        elif style == "total":
+            block, since_plain, since_subs = [], [], []
+        # Lines and opening balances fold away under their heading; the
+        # heading, subtotal and closing rows stay as the collapsed summary.
+        if sectioned and style in ("", "opening"):
+            ws.set_row(r, None, None, {"level": 1})
         r += 1
+
+    if not sheet.rows:
+        band(r, "Nothing to report for this period.", fmt(italic=True, font_color=MUTED))
+        r += 1
+    last_data_row = r - 1
 
     if sheet.notes:
         r += 1
         for note in sheet.notes:
-            _xlsx_cell(ws, r, 1, note).font = Font(italic=True, color="636776", size=9)
+            ws.write_string(r, 0, note, fmt(font_size=9, italic=True, font_color=MUTED))
             r += 1
 
-    for i, col in enumerate(sheet.columns, start=1):
-        ws.column_dimensions[get_column_letter(i)].width = max(col.width, len(col.label) + 2)
-    ws.freeze_panes = ws.cell(row=header_row + 1, column=1)
-    ws.auto_filter.ref = f"A{header_row}:{get_column_letter(ncols)}{max(header_row, r - 1)}"
-    ws.page_setup.orientation = "landscape" if ncols > 5 else "portrait"
-    ws.page_setup.fitToWidth = 1
-    ws.print_title_rows = f"{header_row}:{header_row}"
+    for i, col in enumerate(cols):
+        ws.set_column(i, i, max(col.width, len(_label(col)) + 2))
+    ws.freeze_panes(header_row + 1, 0)
+    if sheet.rows:
+        ws.autofilter(header_row, 0, last_data_row, last)
+    ws.outline_settings(True, False, True, False)
+    ws.hide_gridlines(2)
 
-    out = io.BytesIO()
-    wb.save(out)
+    # Print: A4, one page wide, the header row on every page.
+    ws.set_paper(9)
+    if len(cols) > 5:
+        ws.set_landscape()
+    ws.fit_to_pages(1, 0)
+    ws.repeat_rows(header_row)
+    ws.set_margins(left=0.5, right=0.5, top=0.75, bottom=0.75)
+    # The letterhead is on the sheet itself; the footer names the report on
+    # every printed page. "&" is Excel's header/footer code character.
+    footer = f"{head['name']}  ·  {sheet.title}  ·  Printed {_stamp()}".replace("&", "&&")
+    ws.set_footer(f"&L&8{footer}&R&8Page &P of &N")
+
+    wb.close()
     return out.getvalue()
 
 
 # ── PDF ──────────────────────────────────────────────────────────────────────
+
+def _canvas_class(draw_chrome):
+    """A ReportLab canvas that knows the page count, for "Page x of y"."""
+    from reportlab.pdfgen.canvas import Canvas
+
+    class NumberedCanvas(Canvas):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._pages = []
+
+        def showPage(self):  # noqa: N802 - ReportLab's name
+            self._pages.append(dict(self.__dict__))
+            self._startPage()
+
+        def save(self):
+            total = len(self._pages)
+            for state in self._pages:
+                self.__dict__.update(state)
+                draw_chrome(self, self._pageNumber, total)
+                super().showPage()
+            super().save()
+
+    return NumberedCanvas
+
 
 def to_pdf(sheet: Sheet) -> bytes:
     """A4 PDF drawn with ReportLab's table layout.
@@ -222,41 +425,48 @@ def to_pdf(sheet: Sheet) -> bytes:
     from reportlab.lib.units import cm
     from reportlab.platypus import LongTable, Paragraph, SimpleDocTemplate, Spacer, TableStyle
 
-    wide = len(sheet.columns) > 5
+    C = colors.HexColor
+    head = _letterhead()
+    cols = sheet.columns
+    sectioned = _sectioned(sheet)
+
+    # Portrait reads best; landscape only when the columns need the room.
+    wide = len(cols) > 6 or sum(c.width for c in cols) > 105
     pagesize = landscape(A4) if wide else A4
-    margin = 1.2 * cm
+    margin = 1.4 * cm
     usable = pagesize[0] - 2 * margin
 
-    base = ParagraphStyle("cell", fontName="Helvetica", fontSize=7.5, leading=9)
+    base = ParagraphStyle("cell", fontName="Helvetica", fontSize=8.5, leading=10.5, textColor=C(INK))
     bold = ParagraphStyle("cellb", parent=base, fontName="Helvetica-Bold")
-    head = ParagraphStyle("head", parent=base, fontName="Helvetica-Bold", fontSize=7,
-                          textColor=colors.HexColor("#404554"))
-    title_style = ParagraphStyle("title", fontName="Helvetica-Bold", fontSize=15, leading=18)
-    brand_style = ParagraphStyle("brand", fontName="Helvetica", fontSize=8,
-                                 textColor=colors.HexColor("#636776"), leading=10)
-    sub_style = ParagraphStyle("sub", fontName="Helvetica", fontSize=8.5, leading=11,
-                               textColor=colors.HexColor("#444444"))
-    note_style = ParagraphStyle("note", parent=sub_style, fontSize=7.5, leading=10)
+    navy = ParagraphStyle("celln", parent=bold, textColor=C(NAVY))
+    italic = ParagraphStyle("celli", parent=base, fontName="Helvetica-Oblique", textColor=C(MUTED))
+    para_for = {"heading": navy, "total": navy, "closing": bold, "subtotal": bold, "opening": italic}
+    head_style = ParagraphStyle("head", fontName="Helvetica-Bold", fontSize=7, leading=9, textColor=C(NAVY))
+    head_right = ParagraphStyle("headr", parent=head_style, alignment=2)
+    title_style = ParagraphStyle("title", fontName="Helvetica-Bold", fontSize=17, leading=21,
+                                 textColor=C(NAVY), spaceAfter=3)
+    sub_style = ParagraphStyle("sub", fontName="Helvetica", fontSize=9, leading=12, textColor=C(SLATE))
+    note_style = ParagraphStyle("note", fontName="Helvetica-Oblique", fontSize=7.5, leading=10,
+                                textColor=C(MUTED))
 
-    total_width = sum(c.width for c in sheet.columns)
-    widths = [usable * c.width / total_width for c in sheet.columns]
-    numeric = [c.kind in ("money", "number") for c in sheet.columns]
+    total_width = sum(c.width for c in cols) or 1
+    widths = [usable * c.width / total_width for c in cols]
+    numeric = [c.kind in ("money", "number") for c in cols]
     # Long text wraps; short columns stay plain strings, which draw much faster.
     wraps = [not num and w > 3.2 * cm for num, w in zip(numeric, widths, strict=True)]
 
-    head_right = ParagraphStyle("headr", parent=head, alignment=2)
-    data = [[Paragraph(escape(c.label.upper()), head_right if num else head)
-             for c, num in zip(sheet.columns, numeric, strict=True)]]
+    data = [[Paragraph(escape(_label(c).upper()), head_right if num else head_style)
+             for c, num in zip(cols, numeric, strict=True)]]
     commands = [
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F0EDE5")),
-        ("LINEBELOW", (0, 0), (-1, 0), 0.75, colors.HexColor("#999999")),
-        ("FONT", (0, 1), (-1, -1), "Helvetica", 7.5),
+        ("LINEBELOW", (0, 0), (-1, 0), 1.2, C(NAVY)),
+        ("BOTTOMPADDING", (0, 0), (-1, 0), 5),
+        ("FONT", (0, 1), (-1, -1), "Helvetica", 8.5),
+        ("TEXTCOLOR", (0, 1), (-1, -1), C(INK)),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("TOPPADDING", (0, 0), (-1, -1), 2.5),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 2.5),
-        ("LEFTPADDING", (0, 0), (-1, -1), 3),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 3),
-        ("LINEBELOW", (0, 1), (-1, -1), 0.25, colors.HexColor("#E1E1E6")),
+        ("TOPPADDING", (0, 1), (-1, -1), 3.5),
+        ("BOTTOMPADDING", (0, 1), (-1, -1), 3.5),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
     ]
     for i, num in enumerate(numeric):
         if num:
@@ -264,52 +474,97 @@ def to_pdf(sheet: Sheet) -> bytes:
 
     for r, row in enumerate(sheet.rows, start=1):
         style = row.get("_style", "")
-        strong = style in ("heading", "closing", "subtotal", "total")
         cells = []
-        for i, col in enumerate(sheet.columns):
+        for i, col in enumerate(cols):
             text = _printed(row.get(col.key), col.kind)
-            cells.append(Paragraph(escape(text), bold if strong else base) if wraps[i] and text else text)
+            if not text and col.kind == "money" and style == "":
+                text = "–"
+                commands.append(("TEXTCOLOR", (i, r), (i, r), C(RULE)))
+            if wraps[i] and text:
+                cells.append(Paragraph(escape(text), para_for.get(style, base)))
+            else:
+                cells.append(text)
         data.append(cells)
-        if strong:
-            commands.append(("FONT", (0, r), (-1, r), "Helvetica-Bold", 7.5))
+
+        if style in STRONG:
+            commands.append(("FONT", (0, r), (-1, r), "Helvetica-Bold", 8.5))
         if style == "heading":
-            commands.append(("BACKGROUND", (0, r), (-1, r), colors.HexColor("#F7F5F0")))
+            commands += [
+                ("TEXTCOLOR", (0, r), (-1, r), C(NAVY)),
+                ("TOPPADDING", (0, r), (-1, r), 9),
+                ("LINEBELOW", (0, r), (-1, r), 0.6, C(RULE)),
+            ]
         elif style == "opening":
-            commands.append(("FONT", (0, r), (-1, r), "Helvetica-Oblique", 7.5))
-            commands.append(("TEXTCOLOR", (0, r), (-1, r), colors.HexColor("#555555")))
+            commands += [
+                ("FONT", (0, r), (-1, r), "Helvetica-Oblique", 8.5),
+                ("TEXTCOLOR", (0, r), (-1, r), C(MUTED)),
+                ("LINEBELOW", (0, r), (-1, r), 0.4, C(HAIR)),
+            ]
         elif style in ("closing", "subtotal"):
-            commands.append(("LINEABOVE", (0, r), (-1, r), 0.6, colors.HexColor("#999999")))
+            commands.append(("LINEABOVE", (0, r), (-1, r), 0.6, C(SLATE)))
         elif style == "total":
-            commands.append(("BACKGROUND", (0, r), (-1, r), colors.HexColor("#F0EDE5")))
-            commands.append(("LINEABOVE", (0, r), (-1, r), 0.9, colors.HexColor("#555555")))
-            commands.append(("LINEBELOW", (0, r), (-1, r), 0.9, colors.HexColor("#555555")))
+            commands += [
+                ("TEXTCOLOR", (0, r), (-1, r), C(NAVY)),
+                ("BACKGROUND", (0, r), (-1, r), C(BAND)),
+                ("LINEABOVE", (0, r), (-1, r), 0.9, C(NAVY)),
+                # The accountant's double rule under a final total.
+                ("LINEBELOW", (0, r), (-1, r), 0.6, C(NAVY), None, None, None, 2, 1.6),
+            ]
+        else:
+            commands.append(("LINEBELOW", (0, r), (-1, r), 0.4, C(HAIR)))
+        # Lines sit indented under their section heading.
+        if sectioned and style in ("", "opening", "closing", "subtotal"):
+            commands.append(("LEFTPADDING", (0, r), (0, r), 14))
     if not sheet.rows:
-        data.append(["Nothing to report for this period."] + [""] * (len(sheet.columns) - 1))
+        data.append(["Nothing to report for this period."] + [""] * (len(cols) - 1))
+        commands.append(("TEXTCOLOR", (0, 1), (-1, 1), C(MUTED)))
 
     table = LongTable(data, colWidths=widths, repeatRows=1)
     table.setStyle(TableStyle(commands))
 
-    story = [Paragraph(escape(COMPANY.upper()), brand_style), Paragraph(escape(sheet.title), title_style)]
+    story = [Paragraph(escape(sheet.title), title_style)]
     story += [Paragraph(escape(line), sub_style) for line in sheet.subtitle]
-    story += [Spacer(1, 8), table]
+    story += [Spacer(1, 12), table]
     if sheet.notes:
-        story.append(Spacer(1, 8))
+        story.append(Spacer(1, 10))
         story += [Paragraph(escape(n), note_style) for n in sheet.notes]
 
     printed = _stamp()
+    width, height = pagesize
+    top = height - margin
 
-    def footer(canvas, doc):
+    def chrome(canvas, page, total):
         canvas.saveState()
+        # Letterhead: the company on the left, how to reach it on the right,
+        # a teal rule beneath.
+        canvas.setFillColor(C(NAVY))
+        canvas.setFont("Helvetica-Bold", 10)
+        canvas.drawString(margin, top - 10, head["name"].upper(), charSpace=0.6)
+        canvas.setFont("Helvetica", 7.5)
+        canvas.setFillColor(C(MUTED))
+        canvas.drawRightString(width - margin, top - 4, head["postal"])
+        canvas.drawRightString(width - margin, top - 14, f"Tel {head['phone']}  ·  {head['email']}")
+        canvas.setStrokeColor(C(TEAL))
+        canvas.setLineWidth(1.4)
+        canvas.line(margin, top - 21, width - margin, top - 21)
+        # Footer
+        canvas.setStrokeColor(C(RULE))
+        canvas.setLineWidth(0.5)
+        canvas.line(margin, 1.15 * cm, width - margin, 1.15 * cm)
         canvas.setFont("Helvetica", 7)
-        canvas.setFillColor(colors.HexColor("#777777"))
-        canvas.drawString(margin, 0.7 * cm, f"{COMPANY} · {sheet.title} · Printed {printed}")
-        canvas.drawRightString(pagesize[0] - margin, 0.7 * cm, f"Page {doc.page}")
+        canvas.setFillColor(C(MUTED))
+        canvas.drawString(margin, 0.75 * cm, f"{sheet.title}  ·  Printed {printed}")
+        canvas.drawRightString(width - margin, 0.75 * cm, f"Page {page} of {total}")
         canvas.restoreState()
 
     out = io.BytesIO()
-    doc = SimpleDocTemplate(out, pagesize=pagesize, leftMargin=margin, rightMargin=margin,
-                            topMargin=margin, bottomMargin=1.5 * cm, title=sheet.title, author=COMPANY)
-    doc.build(story, onFirstPage=footer, onLaterPages=footer)
+    # The page frame pads its content by 6pt; pulling the margins out by that
+    # much lines the title and table up with the letterhead at ``margin``.
+    pad = 6
+    doc = SimpleDocTemplate(out, pagesize=pagesize, leftMargin=margin - pad, rightMargin=margin - pad,
+                            topMargin=margin + 32, bottomMargin=1.7 * cm,
+                            title=sheet.title, author=head["name"])
+    doc.build(story, canvasmaker=_canvas_class(chrome))
     return out.getvalue()
 
 
@@ -331,7 +586,7 @@ def file_response(sheet: Sheet, fmt: str, filename: str | None = None) -> HttpRe
 
 
 def export_format(request) -> str | None:
-    """``?export=csv|xlsx|pdf`` — ``format`` is DRF's own parameter."""
+    """``?export=csv|xlsx|pdf`` - ``format`` is DRF's own parameter."""
     from rest_framework.exceptions import ValidationError
 
     fmt = (request.query_params.get("export") or "").lower() or None
