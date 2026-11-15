@@ -7,8 +7,8 @@ import NavTree from "@/components/nav/NavTree";
 import { useAuth } from "@/hooks/useAuth";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useNavTree } from "@/hooks/useNavTree";
+import { roleLabel, userName } from "@/lib/access";
 import { cn } from "@/lib/cn";
-import { displayName } from "@/lib/displayName";
 import { linkHref, navItem, type NavNode } from "@/lib/nav";
 
 const STORAGE_KEY = "willkemedge-sidebar-collapsed";
@@ -60,7 +60,8 @@ export default function Sidebar() {
     return () => document.removeEventListener("keydown", onKey);
   }, [overlay]);
 
-  const handle = displayName(user?.email?.split("@")[0] ?? "");
+  const handle = userName(user);
+  const role = roleLabel(user);
   const initials =
     (handle || "??")
       .split(/[._\- ]/)
@@ -129,7 +130,7 @@ export default function Sidebar() {
           {!collapsed && (
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-medium text-white">{handle || "User"}</p>
-              <p className="text-[10px] uppercase tracking-[0.14em] text-white/45">Admin</p>
+              <p className="text-[10px] uppercase tracking-[0.14em] text-white/45">{role}</p>
             </div>
           )}
 

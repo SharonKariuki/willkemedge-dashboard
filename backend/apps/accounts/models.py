@@ -64,6 +64,11 @@ class User(AbstractUser):
     #: Access ends at the start of this day (Nairobi time). Required for an
     #: auditor - an audit is a visit, not a job - optional for anyone else.
     access_expires_on = models.DateField(null=True, blank=True)
+    #: This person's own changes to their role's capabilities (see
+    #: accounts.access.effective). Kept as changes, not a full list, so the
+    #: Users page can say exactly how they differ from their role.
+    extra_capabilities = models.JSONField(default=list, blank=True)
+    removed_capabilities = models.JSONField(default=list, blank=True)
 
     USERNAME_FIELD = "email"
     REQUIRED_FIELDS = ["username"]
