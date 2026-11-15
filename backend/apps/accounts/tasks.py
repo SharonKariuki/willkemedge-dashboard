@@ -44,3 +44,50 @@ def send_password_reset_email(self, user_id: int, token: str) -> None:
         logger.info("Password reset email sent to %s", user.email)
     except Exception as exc:
         raise self.retry(exc=exc, countdown=30 * (2 ** self.request.retries)) from exc
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=30)
+def send_invite_email(self, invite_id: int) -> None:
+    """Email an invited person the link to choose their password."""
+    from html import escape
+
+    from django.conf import settings
+
+    from apps.payments.notifications import send_email
+
+    from .models import AccountInvite
+
+    invite = AccountInvite.objects.select_related("user", "created_by").filter(pk=invite_id).first()
+    if invite is None or not invite.is_valid:
+        logger.info("send_invite_email: invite %s is gone or no longer valid", invite_id)
+        return
+
+    user = invite.user
+    frontend_url = getattr(settings, "FRONTEND_URL", "http://localhost:5173")
+    link = f"{frontend_url}/invite/{invite.token}"
+    inviter = invite.created_by
+    who = escape(inviter.get_full_name() or inviter.email) if inviter else "Wilkem Ventures"
+    name = escape(user.first_name or "there")
+
+    html = f"""
+<html><body style="font-family:Inter,Segoe UI,sans-serif;color:#0F172A;padding:24px;max-width:520px">
+  <p style="color:#0D9488;font-size:12px;font-weight:600;letter-spacing:.08em;margin:0 0 8px">
+    WILKEM VENTURES</p>
+  <h2 style="color:#0F2A43;margin:0 0 16px">You've been invited to the rental dashboard</h2>
+  <p>Hi {name},</p>
+  <p>{who} has given you access to the Wilkem Ventures rental dashboard as
+     <strong>{escape(user.get_role_display())}</strong>.</p>
+  <p>Choose your password to finish setting up your account. You'll sign in with
+     <strong>{escape(user.email)}</strong>.</p>
+  <p style="margin:24px 0"><a href="{link}" style="background:#0F2A43;color:#ffffff;padding:11px 22px;
+     border-radius:999px;text-decoration:none;font-weight:600">Set my password</a></p>
+  <p style="color:#64748B;font-size:12px">This link works once and expires in
+     {AccountInvite.EXPIRY_HOURS // 24} days. If you weren't expecting it, ignore this email
+     and no account will be opened.</p>
+</body></html>"""
+
+    try:
+        send_email(user.email, "Your invitation to the Wilkem Ventures dashboard", html)
+        logger.info("Invite email sent to %s", user.email)
+    except Exception as exc:
+        raise self.retry(exc=exc, countdown=30 * (2 ** self.request.retries)) from exc

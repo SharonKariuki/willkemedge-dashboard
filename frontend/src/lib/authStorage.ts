@@ -17,6 +17,10 @@ export interface StoredUser {
   last_name?: string;
   role?: "owner" | "accountant" | "caretaker" | "viewer";
   role_display?: string;
+  /** The superadmin (break-glass) account. */
+  is_superuser?: boolean;
+  /** May invite people, change roles and switch accounts off. Owner and superadmin. */
+  can_manage_users?: boolean;
   /** May record receipts. Owner and accountant. */
   can_record_money?: boolean;
   /** May waive arrears or void a payment. Owner only. */
