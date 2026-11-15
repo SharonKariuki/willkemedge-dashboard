@@ -9,6 +9,7 @@ import ErrorBoundary from "./ErrorBoundary";
 import GlobalSearch from "./GlobalSearch";
 import MobileNav from "./MobileNav";
 import NotificationBell from "./NotificationBell";
+import QuickActions from "./QuickActions";
 import Sidebar from "./Sidebar";
 
 export default function AuthLayout() {
@@ -38,6 +39,7 @@ export default function AuthLayout() {
           {/* Topbar — search, notifications, profile */}
           <header className="sticky top-0 z-30 flex items-center justify-end gap-2 border-b border-border/70 bg-app/80 px-2 py-1.5 backdrop-blur-md sm:px-4 lg:px-6">
             <GlobalSearch />
+            <QuickActions />
             {/* The bell reads the collections summary - money. */}
             {allowed(CAP.VIEW_FINANCE) && <NotificationBell />}
             <button

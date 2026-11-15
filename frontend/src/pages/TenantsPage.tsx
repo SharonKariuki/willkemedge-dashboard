@@ -26,6 +26,7 @@ import { optionalEmail } from "@/features/tenants/email";
 import { firstRentMonthForApi } from "@/features/tenants/firstRentMonth";
 import { EmailStatementsModal, Field, inputCls, KYC_TONE, RemindModal } from "@/features/tenants/shared";
 import { useBuildings } from "@/hooks/useBuildings";
+import { useOpenFromLink } from "@/hooks/useOpenFromLink";
 import { useCreateTenant, useTenants } from "@/hooks/useTenants";
 import { useUnits } from "@/hooks/useUnits";
 import { getErrorMessage } from "@/lib/apiError";
@@ -336,7 +337,8 @@ export default function TenantsPage() {
   // drills straight into the in-arrears list.
   const [payFilter, setPayFilter] = useState(searchParams.get("payment_status") ?? "");
   const [search, setSearch] = useState(searchParams.get("q") ?? "");
-  const [showForm, setShowForm] = useState(searchParams.get("new") === "1");
+  const [showForm, setShowForm] = useState(false);
+  useOpenFromLink(() => setShowForm(true));
   const [remindTenant, setRemindTenant] = useState<TenantListItem | null>(null);
   const [exporting, setExporting] = useState(false);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);

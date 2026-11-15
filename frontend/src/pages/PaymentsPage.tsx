@@ -30,6 +30,7 @@ import { TenantPicker } from "@/features/payments/TenantPicker";
 import { toChoices } from "@/features/payments/tenantChoices";
 import { VoidPaymentModal } from "@/features/payments/VoidPaymentModal";
 import { useAuth } from "@/hooks/useAuth";
+import { useOpenFromLink } from "@/hooks/useOpenFromLink";
 import {
   type Payment,
   useCollectionProgress,
@@ -147,6 +148,7 @@ export default function PaymentsPage() {
   const [sourceFilter, setSourceFilter] = useState("");
   const [tenantFilter, setTenantFilter] = useState<number | null>(null);
   const [showForm, setShowForm] = useState(false);
+  useOpenFromLink(() => setShowForm(true));
   const [showVoided, setShowVoided] = useState(false);
   const [voidTarget, setVoidTarget] = useState<Payment | null>(null);
 

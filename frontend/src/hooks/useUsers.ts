@@ -28,8 +28,13 @@ export interface ManagedUser {
   is_self: boolean;
   /** Caretakers only: the buildings they look after. */
   buildings: BuildingRef[];
-  /** Auditors: the last day before access ends (ISO date), or null for no end. */
+  /** Access ends at the start of this day (ISO date); required for an auditor. */
   access_expires_on: string | null;
+  /** This person's own changes to their role. */
+  extra_capabilities: string[];
+  removed_capabilities: string[];
+  /** What they can actually do, changes applied. */
+  capabilities: string[];
 }
 
 /** Who looks after what, and until when - sent with an invite or an edit. */
@@ -37,6 +42,20 @@ export interface AccessFields {
   role: string;
   buildings?: number[];
   access_expires_on?: string | null;
+  extra_capabilities?: string[];
+  removed_capabilities?: string[];
+}
+
+/** One line of the permission checklist, as the API will judge it. */
+export interface PermissionOption {
+  value: string;
+  area: string;
+  label: string;
+  hint: string;
+  /** Needs these on as well. */
+  requires: string[];
+  /** Whether the signed-in person may give it to someone whose role lacks it. */
+  grantable: boolean;
 }
 
 export interface RoleOption {
@@ -48,6 +67,11 @@ interface UsersResponse {
   users: ManagedUser[];
   /** The roles the signed-in person may give - the owner can't make another owner. */
   assignable_roles: RoleOption[];
+  permissions: PermissionOption[];
+  /** What each role includes before anyone's own changes. */
+  role_capabilities: Record<string, string[]>;
+  /** Roles limited to their buildings: their permissions can only be taken away. */
+  scoped_roles: string[];
 }
 
 export function useUsers() {

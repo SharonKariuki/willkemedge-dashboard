@@ -18,6 +18,7 @@ import {
   PageHeader, Skeleton, Table, TBody, TD, TH, THead, TR,
 } from "@/components/ui";
 import { useBuildings } from "@/hooks/useBuildings";
+import { useOpenFromLink } from "@/hooks/useOpenFromLink";
 import {
   useCreateManualIncome, useDeleteManualIncome, useIncomeAccounts, useManualIncome,
 } from "@/hooks/useManualIncome";
@@ -43,6 +44,7 @@ type FormData = z.infer<typeof schema>;
 export default function ManualIncomePage() {
   const now = new Date();
   const [showForm, setShowForm] = useState(false);
+  useOpenFromLink(() => setShowForm(true));
   const { data: income, isLoading, isError, refetch } = useManualIncome();
   const { data: buildings } = useBuildings();
   const { data: accounts } = useIncomeAccounts();

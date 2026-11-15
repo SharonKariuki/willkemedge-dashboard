@@ -8,8 +8,9 @@
  * controls the signed-in person may actually use.
  */
 import { MailPlus, Power, RotateCw, ShieldCheck, SlidersHorizontal, UserPlus } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import toast from "react-hot-toast";
+import { useSearchParams } from "react-router-dom";
 
 import {
   Badge,
@@ -27,6 +28,8 @@ import {
   THead,
   TR,
 } from "@/components/ui";
+import { PermissionChecklist } from "@/features/users/PermissionChecklist";
+import { type Changes, NO_CHANGES, type PermissionCatalog } from "@/features/users/permissions";
 import { useAuth } from "@/hooks/useAuth";
 import { useBuildings } from "@/hooks/useBuildings";
 import {
@@ -61,19 +64,22 @@ const tomorrowIso = () => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 };
 
-/** A role, plus the buildings (caretaker) or end date (auditor) it needs. */
+/** A role, the buildings (caretaker) or end date (auditor) it needs, and this person's own changes. */
 interface AccessDraft {
   role: string;
   buildings: number[];
   endsOn: string;
+  changes: Changes;
 }
 
-/** Why the draft can't be sent yet, mirroring the API's rules; null when it can. */
-function accessProblem(d: AccessDraft): string | null {
+/** Why the draft can't be sent yet, mirroring the API's rules; null when it can.
+ *  An end date already on the account and left alone (an audit that's over)
+ *  may stay; a new one must be in the future. */
+function accessProblem(d: AccessDraft, endsOnBefore = ""): string | null {
   if (!d.role) return "Pick a role.";
   if (d.role === "caretaker" && !d.buildings.length) return "Pick at least one building for the caretaker.";
   if (d.role === "auditor" && !d.endsOn) return "An auditor needs an end date.";
-  if (d.role === "auditor" && d.endsOn < tomorrowIso()) return "The end date must be in the future.";
+  if (d.endsOn && d.endsOn !== endsOnBefore && d.endsOn < tomorrowIso()) return "The end date must be in the future.";
   return null;
 }
 
@@ -82,20 +88,31 @@ function accessPayload(d: AccessDraft): AccessFields {
   return {
     role: d.role,
     buildings: d.role === "caretaker" ? d.buildings : [],
-    access_expires_on: d.role === "auditor" ? d.endsOn || null : null,
+    access_expires_on: d.endsOn || null,
+    extra_capabilities: d.changes.added,
+    removed_capabilities: d.changes.removed,
   };
 }
 
 function AccessFieldset({
   idPrefix,
   roles,
+  catalog,
   draft,
   onChange,
+  endsOnBefore = "",
+  heldBefore = [],
+  showPermissions = true,
 }: {
   idPrefix: string;
   roles: RoleOption[];
+  catalog: PermissionCatalog;
   draft: AccessDraft;
   onChange: (d: AccessDraft) => void;
+  endsOnBefore?: string;
+  heldBefore?: string[];
+  /** Off for the superadmin, who can do everything whatever is ticked. */
+  showPermissions?: boolean;
 }) {
   const { data: buildings, isLoading } = useBuildings();
   const toggle = (id: number) =>
@@ -111,7 +128,9 @@ function AccessFieldset({
         <select
           id={`${idPrefix}-role`}
           value={draft.role}
-          onChange={(e) => onChange({ ...draft, role: e.target.value })}
+          // A new role starts from its own defaults; changes made against
+          // the old one would mean something different here.
+          onChange={(e) => onChange({ ...draft, role: e.target.value, changes: NO_CHANGES })}
           className={inputCls}
         >
           {roles.map((r) => (
@@ -144,44 +163,70 @@ function AccessFieldset({
         </fieldset>
       )}
 
-      {draft.role === "auditor" && (
-        <div>
-          <label htmlFor={`${idPrefix}-ends`} className={labelCls}>Access ends on *</label>
-          <input
-            id={`${idPrefix}-ends`}
-            type="date"
-            min={tomorrowIso()}
-            value={draft.endsOn}
-            onChange={(e) => onChange({ ...draft, endsOn: e.target.value })}
-            className={inputCls}
-            aria-describedby={`${idPrefix}-ends-hint`}
-          />
-          <p id={`${idPrefix}-ends-hint`} className="mt-1.5 text-xs text-ink-500">
-            From this date they can't sign in, and anyone already signed in is stopped.
-          </p>
-        </div>
+      {showPermissions && catalog.permissions.length > 0 && (
+        <PermissionChecklist
+          idPrefix={idPrefix}
+          catalog={catalog}
+          role={draft.role}
+          changes={draft.changes}
+          heldBefore={heldBefore}
+          onChange={(changes) => onChange({ ...draft, changes })}
+        />
       )}
 
-      {draft.role && accessProblem(draft) && (
-        <p role="status" className="text-xs text-orange-600">{accessProblem(draft)}</p>
+      <div>
+        <label htmlFor={`${idPrefix}-ends`} className={labelCls}>
+          Access ends on{draft.role === "auditor" ? " *" : " (optional)"}
+        </label>
+        <input
+          id={`${idPrefix}-ends`}
+          type="date"
+          min={tomorrowIso()}
+          value={draft.endsOn}
+          onChange={(e) => onChange({ ...draft, endsOn: e.target.value })}
+          className={inputCls}
+          aria-describedby={`${idPrefix}-ends-hint`}
+        />
+        <p id={`${idPrefix}-ends-hint`} className="mt-1.5 text-xs text-ink-500">
+          {draft.role === "auditor"
+            ? "An audit is a visit: from this date they can't sign in, and an open session is stopped."
+            : "For temporary staff. Leave empty for no end."}
+        </p>
+      </div>
+
+      {draft.role && accessProblem(draft, endsOnBefore) && (
+        <p role="status" className="text-xs text-orange-600">{accessProblem(draft, endsOnBefore)}</p>
       )}
     </>
   );
 }
 
-function EditAccessModal({ user, roles, onClose }: { user: ManagedUser; roles: RoleOption[]; onClose: () => void }) {
+/** The labels behind someone's changes, for the list and its tooltip. */
+function changeLabels(user: ManagedUser, catalog: PermissionCatalog): string {
+  const label = (c: string) => catalog.permissions.find((p) => p.value === c)?.label ?? c;
+  return [
+    ...user.extra_capabilities.map((c) => `+ ${label(c)}`),
+    ...user.removed_capabilities.map((c) => `− ${label(c)}`),
+  ].join(", ");
+}
+
+function EditAccessModal({
+  user, roles, catalog, onClose,
+}: { user: ManagedUser; roles: RoleOption[]; catalog: PermissionCatalog; onClose: () => void }) {
   const update = useUpdateUser();
   const name = user.full_name || user.email;
   // An owner being edited by the superadmin keeps "owner" on the list.
   const choices = roles.some((r) => r.value === user.role)
     ? roles
     : [{ value: user.role, label: user.role_display }, ...roles];
+  const endsOnBefore = user.access_expires_on ?? "";
   const [draft, setDraft] = useState<AccessDraft>({
     role: user.role,
     buildings: user.buildings.map((b) => b.id),
-    endsOn: user.access_expires_on ?? "",
+    endsOn: endsOnBefore,
+    changes: { added: user.extra_capabilities, removed: user.removed_capabilities },
   });
-  const problem = accessProblem(draft);
+  const problem = accessProblem(draft, endsOnBefore);
 
   const save = async () => {
     if (problem) return;
@@ -198,7 +243,7 @@ function EditAccessModal({ user, roles, onClose }: { user: ManagedUser; roles: R
     <Modal
       open
       onClose={onClose}
-      size="md"
+      size="lg"
       eyebrow="Users"
       title={`Access for ${name}`}
       closeOnBackdrop={false}
@@ -212,7 +257,19 @@ function EditAccessModal({ user, roles, onClose }: { user: ManagedUser; roles: R
       }
     >
       <div className="space-y-4">
-        <AccessFieldset idPrefix="edit" roles={choices} draft={draft} onChange={setDraft} />
+        <AccessFieldset
+          idPrefix="edit"
+          roles={choices}
+          catalog={catalog}
+          draft={draft}
+          onChange={setDraft}
+          endsOnBefore={endsOnBefore}
+          heldBefore={user.role === draft.role ? user.extra_capabilities : []}
+          showPermissions={!user.is_superuser}
+        />
+        {user.is_superuser && (
+          <p className="text-xs text-ink-500">The superadmin can do everything, whatever the role says.</p>
+        )}
         <p className="text-[11px] leading-relaxed text-ink-500">
           Changes apply on their next click - nobody needs to sign out and back in.
         </p>
@@ -222,8 +279,21 @@ function EditAccessModal({ user, roles, onClose }: { user: ManagedUser; roles: R
 }
 
 /** "Block A, Block B" for a caretaker; "until 31 Dec 2026" for a dated account. */
-function AccessSummary({ user }: { user: ManagedUser }) {
+function AccessSummary({ user, catalog }: { user: ManagedUser; catalog: PermissionCatalog }) {
   const parts: string[] = [];
+  const changes = user.extra_capabilities.length + user.removed_capabilities.length;
+  const changeBadge = changes > 0 && !user.is_superuser && (
+    <span
+      className="ml-1.5 rounded bg-teal-600/10 px-1.5 py-0.5 text-[10px] font-semibold text-teal-700"
+      title={changeLabels(user, catalog)}
+    >
+      {[
+        user.extra_capabilities.length ? `+${user.extra_capabilities.length}` : "",
+        user.removed_capabilities.length ? `−${user.removed_capabilities.length}` : "",
+      ].filter(Boolean).join(" ")}
+      <span className="sr-only"> changes: {changeLabels(user, catalog)}</span>
+    </span>
+  );
   if (user.role === "caretaker") {
     parts.push(user.buildings.length ? user.buildings.map((b) => b.name).join(", ") : "No buildings yet");
   }
@@ -233,8 +303,12 @@ function AccessSummary({ user }: { user: ManagedUser }) {
     });
     parts.push(`ends ${end}`);
   }
-  if (!parts.length) return null;
-  return <span className="mt-0.5 block text-xs text-ink-500">{parts.join(" · ")}</span>;
+  return (
+    <>
+      {changeBadge}
+      {parts.length > 0 && <span className="mt-0.5 block text-xs text-ink-500">{parts.join(" · ")}</span>}
+    </>
+  );
 }
 
 const when = (iso: string | null) =>
@@ -265,7 +339,9 @@ function editable(user: ManagedUser, meIsSuperuser: boolean): boolean {
   return !user.is_superuser && user.role !== "owner";
 }
 
-function InviteModal({ roles, onClose }: { roles: RoleOption[]; onClose: () => void }) {
+function InviteModal({
+  roles, catalog, onClose,
+}: { roles: RoleOption[]; catalog: PermissionCatalog; onClose: () => void }) {
   const invite = useInviteUser();
   const [email, setEmail] = useState("");
   const [firstName, setFirstName] = useState("");
@@ -274,6 +350,7 @@ function InviteModal({ roles, onClose }: { roles: RoleOption[]; onClose: () => v
     role: roles.find((r) => r.value === "viewer")?.value ?? roles[0]?.value ?? "",
     buildings: [],
     endsOn: "",
+    changes: NO_CHANGES,
   });
   const problem = accessProblem(draft);
 
@@ -293,7 +370,7 @@ function InviteModal({ roles, onClose }: { roles: RoleOption[]; onClose: () => v
     <Modal
       open
       onClose={onClose}
-      size="md"
+      size="lg"
       eyebrow="Users"
       title="Invite someone"
       closeOnBackdrop={false}
@@ -342,7 +419,7 @@ function InviteModal({ roles, onClose }: { roles: RoleOption[]; onClose: () => v
             <input id="invite-last" value={lastName} onChange={(e) => setLastName(e.target.value)} className={inputCls} />
           </div>
         </div>
-        <AccessFieldset idPrefix="invite" roles={roles} draft={draft} onChange={setDraft} />
+        <AccessFieldset idPrefix="invite" roles={roles} catalog={catalog} draft={draft} onChange={setDraft} />
         <p className="text-[11px] leading-relaxed text-ink-500">
           They'll get an email with a link to choose their own password. The link works once and
           expires in 3 days. Nobody else ever sees their password.
@@ -402,6 +479,21 @@ export default function UsersPage() {
 
   const meIsSuperuser = Boolean(me?.is_superuser);
   const roles = data?.assignable_roles ?? [];
+  const catalog = useMemo<PermissionCatalog>(() => ({
+    permissions: data?.permissions ?? [],
+    roleCapabilities: data?.role_capabilities ?? {},
+    scopedRoles: data?.scoped_roles ?? [],
+  }), [data]);
+
+  // Quick actions → "Invite user" lands here with ?invite=1.
+  const [params, setParams] = useSearchParams();
+  const inviteOpen = inviting || (params.get("invite") === "1" && roles.length > 0);
+  const closeInvite = () => {
+    setInviting(false);
+    if (params.has("invite")) {
+      setParams((p) => { p.delete("invite"); return p; }, { replace: true });
+    }
+  };
 
   const run = async (user: ManagedUser, act: "resend" | "reactivate", done: string) => {
     try {
@@ -471,7 +563,7 @@ export default function UsersPage() {
                   </TD>
                   <TD>
                     <span className="text-sm text-ink-700" title={ROLE_HINTS[u.role]}>{u.role_display}</span>
-                    <AccessSummary user={u} />
+                    <AccessSummary user={u} catalog={catalog} />
                   </TD>
                   <TD><StatusBadge user={u} /></TD>
                   <TD className="text-sm text-ink-500">{when(u.last_login)}</TD>
@@ -531,8 +623,8 @@ export default function UsersPage() {
         {!meIsSuperuser && " Only the superadmin can add another owner/director."}
       </p>
 
-      {inviting && <InviteModal roles={roles} onClose={() => setInviting(false)} />}
-      {editing && <EditAccessModal user={editing} roles={roles} onClose={() => setEditing(null)} />}
+      {inviteOpen && <InviteModal roles={roles} catalog={catalog} onClose={closeInvite} />}
+      {editing && <EditAccessModal user={editing} roles={roles} catalog={catalog} onClose={() => setEditing(null)} />}
       {switchingOff && <SwitchOffModal user={switchingOff} onClose={() => setSwitchingOff(null)} />}
     </div>
   );

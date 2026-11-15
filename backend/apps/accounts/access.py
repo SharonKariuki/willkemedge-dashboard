@@ -54,13 +54,84 @@ ROLE_CAPABILITIES: dict[str, frozenset[str]] = {
 #: Roles whose view of the portfolio is limited to their assigned buildings.
 SCOPED_ROLES = frozenset({"caretaker"})
 
+#: A permission that only works with another one on: recording money is
+#: no use to someone who can't see the books. Taking the second away takes
+#: the first with it.
+REQUIRES: dict[str, frozenset[str]] = {
+    Cap.RECORD_MONEY: frozenset({Cap.VIEW_FINANCE}),
+    Cap.FORGIVE_MONEY: frozenset({Cap.VIEW_FINANCE}),
+    Cap.SEND_MESSAGES: frozenset({Cap.VIEW_FINANCE}),
+    Cap.MANAGE_PROPERTY: frozenset({Cap.VIEW_PROPERTY}),
+    Cap.RECORD_WATER: frozenset({Cap.VIEW_PROPERTY}),
+    Cap.LOG_MAINTENANCE: frozenset({Cap.VIEW_PROPERTY}),
+}
+
+#: Only the superadmin may give these to someone whose role lacks them:
+#: running the accounts, and writing money off.
+SUPERADMIN_GRANTS = frozenset({Cap.MANAGE_USERS, Cap.FORGIVE_MONEY})
+
+#: What the Access dialog lists, in order: (capability, area, label, what it allows).
+PERMISSIONS: list[tuple[str, str, str, str]] = [
+    (Cap.VIEW_FINANCE, "Money", "See the books",
+     "Dashboard, payments, arrears, expenses, income and reports."),
+    (Cap.RECORD_MONEY, "Money", "Record money",
+     "Record and edit payments, expenses, income and charges; reconcile."),
+    (Cap.FORGIVE_MONEY, "Money", "Void and write off",
+     "Void payments, waive arrears, give credits and refunds, settle deposits."),
+    (Cap.VIEW_PROPERTY, "Properties", "See properties",
+     "Buildings, units, tenants and maintenance."),
+    (Cap.MANAGE_PROPERTY, "Properties", "Manage properties",
+     "Add and edit buildings and units; move tenants in and out; KYC."),
+    (Cap.RECORD_WATER, "Water", "Record meter readings", "Capture water readings."),
+    (Cap.LOG_MAINTENANCE, "Maintenance", "Log maintenance", "Raise and update maintenance requests."),
+    (Cap.SEND_MESSAGES, "Messages", "Send messages", "SMS reminders and emailed statements."),
+    (Cap.VIEW_ACTIVITY, "Activity", "See the activity log", "Who did what, and when."),
+    (Cap.MANAGE_USERS, "Users", "Manage users", "Invite people, change their access, switch accounts off."),
+]
+LABELS = {cap: label for cap, _area, label, _hint in PERMISSIONS}
+
+
+def effective(role: str, added=(), removed=()) -> frozenset[str]:
+    """The role's capabilities, with this person's own changes applied.
+
+    A building-limited role can only lose capabilities: anything it gained
+    would reach records outside its buildings, which the scoping doesn't cover.
+    A capability whose requirement is gone goes too.
+    """
+    base = ROLE_CAPABILITIES.get(role, frozenset())
+    extra = frozenset() if role in SCOPED_ROLES else frozenset(added or ())
+    caps = set((base | extra) - frozenset(removed or ())) & Cap.ALL
+    changed = True
+    while changed:
+        changed = False
+        for cap in list(caps):
+            if not REQUIRES.get(cap, frozenset()) <= caps:
+                caps.discard(cap)
+                changed = True
+    return frozenset(caps)
+
 
 def capabilities(user) -> frozenset[str]:
     if not user or not getattr(user, "is_authenticated", False):
         return frozenset()
     if user.is_superuser:
         return Cap.ALL
-    return ROLE_CAPABILITIES.get(user.role, frozenset())
+    return effective(
+        user.role,
+        getattr(user, "extra_capabilities", None) or (),
+        getattr(user, "removed_capabilities", None) or (),
+    )
+
+
+def grantable(actor) -> frozenset[str]:
+    """What ``actor`` may give someone beyond their role: only what they hold
+    themselves, and never the superadmin's own grants."""
+    if actor.is_superuser:
+        return Cap.ALL
+    mine = capabilities(actor)
+    if Cap.MANAGE_USERS not in mine:
+        return frozenset()
+    return mine - SUPERADMIN_GRANTS
 
 
 def has_capability(user, capability: str) -> bool:
