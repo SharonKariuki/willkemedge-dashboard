@@ -6,7 +6,7 @@ from rest_framework import serializers
 from apps.expenses.models import ExpenseCategory
 from apps.tenants.models import Tenant
 
-from .models import Arrears, ChargeType, Payment, PaymentType, Transaction, UtilityCharge
+from .models import Arrears, ChargeType, Payment, PaymentSource, PaymentType, Transaction, UtilityCharge
 
 
 class PaymentSerializer(serializers.ModelSerializer):
@@ -39,6 +39,10 @@ class PaymentSerializer(serializers.ModelSerializer):
             "is_void",
             "voided_at",
             "void_reason",
+            "split_group",
+            "split_index",
+            "split_count",
+            "split_total",
             "created_at",
         ]
 
@@ -92,6 +96,45 @@ class PaymentCreateSerializer(serializers.ModelSerializer):
                 "period_month": (
                     f"{tenant.full_name}'s rent starts {first[1]}/{first[0]}. "
                     "Book this money to that month, or as a deposit."
+                )
+            })
+        return attrs
+
+
+class PaymentSplitPartSerializer(PaymentCreateSerializer):
+    """One tenancy's share of a split payment - the same checks as a single payment."""
+
+    class Meta(PaymentCreateSerializer.Meta):
+        fields = ["tenant", "amount", "period_month", "period_year", "payment_type"]
+
+
+class PaymentSplitSerializer(serializers.Serializer):
+    """One cheque or transfer shared across tenancies (``services.record_split_payment``)."""
+
+    amount = serializers.DecimalField(max_digits=12, decimal_places=2)
+    payment_date = serializers.DateField()
+    source = serializers.ChoiceField(choices=PaymentSource.choices, default=PaymentSource.CASH)
+    reference = serializers.CharField(max_length=100, required=False, allow_blank=True, default="")
+    notes = serializers.CharField(required=False, allow_blank=True, default="")
+    parts = PaymentSplitPartSerializer(many=True)
+
+    def validate_amount(self, value):
+        if value <= 0:
+            raise serializers.ValidationError("Amount must be positive.")
+        return value
+
+    def validate_parts(self, value):
+        if len(value) < 2:
+            raise serializers.ValidationError("Split the payment across at least two tenancies.")
+        return value
+
+    def validate(self, attrs):
+        allocated = sum((p["amount"] for p in attrs["parts"]), Decimal("0"))
+        if allocated != attrs["amount"]:
+            raise serializers.ValidationError({
+                "parts": (
+                    f"The parts add up to KES {allocated:,.2f} but KES {attrs['amount']:,.2f} "
+                    "was received. They must match exactly."
                 )
             })
         return attrs

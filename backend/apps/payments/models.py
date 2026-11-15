@@ -81,6 +81,16 @@ class Payment(models.Model):
     )
     notes = models.TextField(blank=True)
 
+    # --- Split (see services.record_split_payment) ---
+    # One cheque or transfer that pays for more than one tenancy - Sidai's
+    # Healthcare (MCG05) and Office & Physio (MCG08) on one cheque - is booked
+    # as one row per tenancy that share a group. Voiding any part voids the
+    # whole group, so a wrong split can't leave half the money booked.
+    split_group = models.CharField(max_length=32, blank=True, default="", db_index=True)
+    split_index = models.PositiveSmallIntegerField(null=True, blank=True)
+    split_count = models.PositiveSmallIntegerField(null=True, blank=True)
+    split_total = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+
     # --- Void (see services.void_payment) ---
     # Payments are immutable: a mistake is unwound by marking the row void and
     # posting a mirror-image journal entry, never by editing or deleting it.

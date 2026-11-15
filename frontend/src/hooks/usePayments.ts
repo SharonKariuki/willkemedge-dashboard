@@ -22,7 +22,48 @@ export interface Payment {
   is_void: boolean;
   voided_at: string | null;
   void_reason: string;
+  /** Set when one cheque/transfer was shared across tenancies; every part carries it. */
+  split_group?: string;
+  split_index?: number | null;
+  split_count?: number | null;
+  split_total?: string | null;
   created_at: string;
+}
+
+export interface SplitPart {
+  tenant: number;
+  amount: string;
+  period_month: number;
+  period_year: number;
+  payment_type?: string;
+}
+
+export interface SplitPaymentPayload {
+  amount: string;
+  payment_date: string;
+  source: string;
+  reference?: string;
+  notes?: string;
+  parts: SplitPart[];
+}
+
+/** One cheque or transfer booked across several tenancies, all or nothing. */
+export function useSplitPayment() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: SplitPaymentPayload) => {
+      const { data } = await api.post<Payment[]>("/payments/split/", payload);
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["payments"] });
+      qc.invalidateQueries({ queryKey: ["units"] });
+      qc.invalidateQueries({ queryKey: ["arrears"] });
+      qc.invalidateQueries({ queryKey: ["tenants"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
+      qc.invalidateQueries({ queryKey: ["reports"] });
+    },
+  });
 }
 
 

@@ -16,6 +16,7 @@ function PaymentLine({ payment, muted }: { payment: Payment; muted?: boolean }) 
   return (
     <li className="flex items-baseline justify-between gap-3 tabular-nums">
       <span className={muted ? "text-ink-500" : "text-ink-900"}>
+        {payment.split_group ? `${payment.unit_label} ${payment.tenant_name} · ` : ""}
         {payment.period_month}/{payment.period_year}
         {muted ? "" : " · this row"}
       </span>
@@ -55,9 +56,11 @@ export function VoidPaymentModal({
 
   const siblings = preview?.siblings ?? [];
   const isSplit = siblings.length > 0;
+  // One cheque shared across tenancies is one payment: it is voided whole.
+  const acrossTenancies = Boolean(payment.split_group);
   // Reassigning always unwinds the whole credit: the queue holds the full amount.
   const requeue = Boolean(preview?.requeueable) && fate === "requeue";
-  const single = scope === "single" && !requeue;
+  const single = scope === "single" && !requeue && !acrossTenancies;
   const willVoid = single ? 1 : siblings.length + 1;
   const willTotal = single ? payment.amount : (preview?.total ?? payment.amount);
 
@@ -71,7 +74,7 @@ export function VoidPaymentModal({
       const result = await voidPayment.mutateAsync({
         id: payment.id,
         reason: trimmed,
-        scope: requeue ? "reference" : scope,
+        scope: requeue || acrossTenancies ? "reference" : scope,
         requeue,
       });
       toast.success(
@@ -134,12 +137,16 @@ export function VoidPaymentModal({
         <div className="mt-4 rounded-md bg-warning-soft px-3 py-3">
           <p className="flex items-center gap-1.5 text-xs font-medium text-warning">
             <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-            This credit was split across {siblings.length + 1} payments
+            {acrossTenancies
+              ? `This payment was split across ${siblings.length + 1} tenancies`
+              : `This credit was split across ${siblings.length + 1} payments`}
           </p>
           <p className="mt-1.5 text-[11px] text-ink-500">
-            Reference {payment.reference} settled more than one period. Voiding
-            only the row you clicked would leave the rest of the money on the
-            tenant&apos;s account.
+            {acrossTenancies
+              ? `One ${money(payment.split_total ?? preview?.total ?? payment.amount)} payment${
+                  payment.reference ? ` (ref ${payment.reference})` : ""
+                } was shared between these tenancies. Voiding it voids every part, so none of the money is left booked.`
+              : `Reference ${payment.reference} settled more than one period. Voiding only the row you clicked would leave the rest of the money on the tenant's account.`}
           </p>
           <ul className="mt-2.5 space-y-1 border-t border-ink-200/70 pt-2.5 text-xs">
             <PaymentLine payment={payment} />
@@ -148,7 +155,7 @@ export function VoidPaymentModal({
             ))}
           </ul>
 
-          {!requeue && (
+          {!requeue && !acrossTenancies && (
             <fieldset className="mt-3 space-y-1.5 border-t border-ink-200/70 pt-2.5">
               <legend className="sr-only">How much to void</legend>
               <label className="flex items-start gap-2 text-xs text-ink-900">

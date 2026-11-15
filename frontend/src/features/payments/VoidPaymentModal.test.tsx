@@ -90,6 +90,39 @@ describe("VoidPaymentModal", () => {
     });
   });
 
+  it("voids every tenancy's part of a split payment, never one alone", async () => {
+    const split = {
+      split_group: "abc",
+      split_count: 2,
+      split_total: "205500.00",
+      reference: "CHQ004512",
+      source: "cheque",
+    };
+    const healthcare = payment({
+      ...split, split_index: 1, tenant_name: "Sidai Lonestar Healthcare", unit_label: "MCG05", amount: "123540.00",
+    });
+    const office = payment({
+      ...split, id: 2, split_index: 2, tenant_name: "Sidai Lonestar Office & Physio",
+      unit_label: "MCG08", amount: "81960.00",
+    });
+    preview.mockReturnValue(ok([office], "205500.00"));
+    render(<VoidPaymentModal payment={healthcare} onClose={() => {}} />);
+
+    expect(screen.getByText(/split across 2 tenancies/)).toBeInTheDocument();
+    expect(screen.getByText(/MCG08 Sidai Lonestar Office & Physio/)).toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: /this row only/i })).not.toBeInTheDocument();
+
+    await userEvent.type(screen.getByLabelText(/Reason/), "wrong split");
+    await userEvent.click(screen.getByRole("button", { name: /Void 2 payments/ }));
+
+    expect(mutateAsync).toHaveBeenCalledWith({
+      id: 1,
+      reason: "wrong split",
+      scope: "reference",
+      requeue: false,
+    });
+  });
+
   it("can be narrowed to the clicked row alone", async () => {
     preview.mockReturnValue(
       ok([payment({ id: 2, period_month: 7, amount: "5000.00" })], "10000.00"),

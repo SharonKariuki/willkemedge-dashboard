@@ -37,6 +37,7 @@ from .serializers import (
     MeterReadingSerializer,
     PaymentCreateSerializer,
     PaymentSerializer,
+    PaymentSplitSerializer,
     ReceiptSerializer,
     TransactionSerializer,
     UtilityChargeSerializer,
@@ -44,9 +45,11 @@ from .serializers import (
 from .services import (
     CreditNotRequeueable,
     IdempotencyConflict,
+    SplitPaymentError,
     get_collection_progress,
     live_credit_rows,
     process_payment,
+    record_split_payment,
     requeueable_credit,
     void_and_requeue_credit,
     void_payment,
@@ -245,6 +248,11 @@ class PaymentViewSet(viewsets.ModelViewSet):
                 "requeued_credit": event.pk,
             })
 
+        if scope == "single" and payment.split_group:
+            return Response(
+                {"detail": "This payment was split across tenancies; voiding it voids every part."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         targets = [payment] if scope == "single" else list(live_credit_rows(payment))
         for target in targets:
             void_payment(target, actor=request.user, reason=reason)
@@ -254,6 +262,61 @@ class PaymentViewSet(viewsets.ModelViewSet):
             **PaymentSerializer(payment).data,
             "voided_count": len(targets),
         })
+
+    @action(detail=False, methods=["post"], url_path="split")
+    def split(self, request):
+        """POST /api/payments/split/ - one cheque or transfer shared across tenancies.
+
+        Books one payment per part, all or nothing, and sends each tenancy its
+        own receipt once the whole split is saved.
+        """
+        serializer = PaymentSplitSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        try:
+            with db_transaction.atomic():
+                payments = record_split_payment(
+                    amount=data["amount"],
+                    payment_date=data["payment_date"],
+                    parts=data["parts"],
+                    source=data["source"],
+                    reference=data["reference"],
+                    notes=data["notes"],
+                    created_by=request.user,
+                )
+                for payment in payments:
+                    audit.record(
+                        actor=request.user,
+                        action="payment.create",
+                        object_type="payment",
+                        object_id=payment.pk,
+                        summary=(
+                            f"Recorded KES {payment.amount} for {payment.tenant} "
+                            f"({payment.period_month}/{payment.period_year}) - part "
+                            f"{payment.split_index} of {payment.split_count} of KES {payment.split_total}"
+                        ),
+                        new_values={
+                            "amount": payment.amount,
+                            "payment_type": payment.payment_type,
+                            "reference": payment.reference,
+                            "payment_date": payment.payment_date,
+                            "split_group": payment.split_group,
+                        },
+                    )
+                ids = [p.pk for p in payments]
+                db_transaction.on_commit(
+                    lambda: [send_payment_confirmation.delay(pk) for pk in ids]
+                )
+        except SplitPaymentError as exc:
+            return Response({"parts": [str(exc)]}, status=status.HTTP_400_BAD_REQUEST)
+        except IdempotencyConflict as exc:
+            return Response(
+                {"detail": str(exc), "existing_payment_id": exc.existing.pk},
+                status=status.HTTP_409_CONFLICT,
+            )
+        return Response(
+            PaymentSerializer(payments, many=True).data, status=status.HTTP_201_CREATED
+        )
 
     @action(detail=False, methods=["get"], url_path="recent")
     def recent(self, request):
