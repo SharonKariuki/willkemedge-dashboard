@@ -40,17 +40,17 @@ class CanForgiveMoney(BasePermission):
 
 
 class IsOwner(BasePermission):
-    """Owner/director only, for reading as well as writing.
+    """Who may read the activity log: the owner, the superadmin and an auditor.
 
-    Used for the activity log: it names who did what to whom, including other
-    staff's sign-ins, so it is not "read for everyone" like the money pages.
+    It names who did what to whom, including other staff's sign-ins, so it is
+    not "read for everyone" like the money pages. (The name predates the
+    auditor role; the check is the VIEW_ACTIVITY capability.)
     """
 
-    message = "Only the owner/director may view the activity log."
+    message = "Only the owner/director or an auditor may view the activity log."
 
     def has_permission(self, request, view):
-        return bool(
-            request.user
-            and request.user.is_authenticated
-            and getattr(request.user, "can_forgive_money", False)
-        )
+        from .access import Cap
+
+        user = request.user
+        return bool(user and user.is_authenticated and user.can(Cap.VIEW_ACTIVITY))

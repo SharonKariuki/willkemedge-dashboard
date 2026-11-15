@@ -58,6 +58,24 @@ def _check_target(actor: User, target: User) -> None:
         raise NotAllowed("Only the superadmin can change an owner/director or the superadmin account.")
 
 
+_UNSET = object()
+
+
+def _check_assignment(role: str, buildings, expires_on) -> None:
+    """What a role needs alongside it: buildings for a caretaker, an end date for an auditor."""
+    if role == Role.CARETAKER and not buildings:
+        raise UserAdminError("Choose at least one building for a caretaker to look after.")
+    if role == Role.AUDITOR and not expires_on:
+        raise UserAdminError("Set the date an auditor's access ends.")
+    if expires_on and expires_on <= timezone.localdate():
+        raise UserAdminError("The access end date must be in the future.")
+
+
+def _apply_assignment(user: User, role: str, buildings) -> None:
+    """Buildings only mean something for a caretaker; anyone else sees them all."""
+    user.buildings.set(buildings if role == Role.CARETAKER else [])
+
+
 def _revoke_sessions(user: User) -> None:
     from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken, OutstandingToken
 
@@ -72,13 +90,16 @@ def _send(invite: AccountInvite) -> None:
 
 
 @transaction.atomic
-def invite(actor: User, *, email: str, role: str, first_name: str = "", last_name: str = "") -> User:
+def invite(actor: User, *, email: str, role: str, first_name: str = "", last_name: str = "",
+           buildings=(), access_expires_on=None) -> User:
     if not actor.can_manage_users:
         raise NotAllowed("Only the owner or the superadmin can manage users.")
     email = (email or "").strip().lower()
     if not email:
         raise UserAdminError("Enter an email address.")
     _check_role(actor, role)
+    buildings = list(buildings or [])
+    _check_assignment(role, buildings, access_expires_on)
     existing = User.objects.filter(email__iexact=email).first()
     if existing:
         if existing.status == "invited":
@@ -89,10 +110,11 @@ def invite(actor: User, *, email: str, role: str, first_name: str = "", last_nam
     user = User(
         email=email, username=email[:150], role=role,
         first_name=first_name.strip()[:150], last_name=last_name.strip()[:150],
-        is_active=False, invited_by=actor, invited_at=now,
+        is_active=False, invited_by=actor, invited_at=now, access_expires_on=access_expires_on,
     )
     user.set_unusable_password()
     user.save()
+    _apply_assignment(user, role, buildings)
     link = AccountInvite.issue(user, created_by=actor)
     _send(link)
     audit.record(
@@ -119,26 +141,56 @@ def resend(actor: User, target: User) -> AccountInvite:
     return link
 
 
+def _snapshot(user: User) -> dict:
+    return {
+        "role": user.role, "first_name": user.first_name, "last_name": user.last_name,
+        "buildings": sorted(user.buildings.values_list("pk", flat=True)),
+        "access_expires_on": user.access_expires_on.isoformat() if user.access_expires_on else None,
+    }
+
+
 @transaction.atomic
 def update(actor: User, target: User, *, role: str | None = None,
-           first_name: str | None = None, last_name: str | None = None) -> User:
+           first_name: str | None = None, last_name: str | None = None,
+           buildings=None, access_expires_on=_UNSET) -> User:
     _check_target(actor, target)
-    old = {"role": target.role, "first_name": target.first_name, "last_name": target.last_name}
-    if role is not None and role != target.role:
-        _check_role(actor, role)
-        target.role = role
+    old = _snapshot(target)
+    new_role = role if role is not None else target.role
+    if new_role != target.role:
+        _check_role(actor, new_role)
+    new_buildings = list(buildings) if buildings is not None else list(target.buildings.all())
+    new_expiry = target.access_expires_on if access_expires_on is _UNSET else access_expires_on
+    if new_role == Role.CARETAKER and not new_buildings:
+        raise UserAdminError("Choose at least one building for a caretaker to look after.")
+    if new_role == Role.AUDITOR and not new_expiry:
+        raise UserAdminError("Set the date an auditor's access ends.")
+    # A new end date must be in the future; one already passed and left
+    # untouched (an audit that's over) is fine to keep on record.
+    if new_expiry and new_expiry != target.access_expires_on and new_expiry <= timezone.localdate():
+        raise UserAdminError("The access end date must be in the future.")
+
+    target.role = new_role
+    target.access_expires_on = new_expiry
     if first_name is not None:
         target.first_name = first_name.strip()[:150]
     if last_name is not None:
         target.last_name = last_name.strip()[:150]
-    new = {"role": target.role, "first_name": target.first_name, "last_name": target.last_name}
+    target.save(update_fields=["role", "first_name", "last_name", "access_expires_on"])
+    _apply_assignment(target, new_role, new_buildings)
+
+    new = _snapshot(target)
     if new != old:
-        target.save(update_fields=["role", "first_name", "last_name"])
+        if new["role"] != old["role"]:
+            summary = f"Changed {target.email}'s role to {target.get_role_display()}"
+        elif new["buildings"] != old["buildings"]:
+            summary = f"Changed the buildings {target.email} looks after"
+        elif new["access_expires_on"] != old["access_expires_on"]:
+            summary = f"Set {target.email}'s access to end {new['access_expires_on'] or 'never'}"
+        else:
+            summary = f"Updated {target.email}'s name"
         audit.record(
             action="user.update", object_type="user", object_id=target.pk, object_label=target.email,
-            summary=(f"Changed {target.email}'s role to {target.get_role_display()}"
-                     if new["role"] != old["role"] else f"Updated {target.email}'s name"),
-            actor=actor, old_values=old, new_values=new, is_financial=False,
+            summary=summary, actor=actor, old_values=old, new_values=new, is_financial=False,
         )
     return target
 

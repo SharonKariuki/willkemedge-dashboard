@@ -134,14 +134,14 @@ const keys = {
   refunds: (tenantId: number | string) => ["credits", tenantId, "refunds"] as const,
 };
 
-export function useCreditPosition(tenantId: number | string | null) {
+export function useCreditPosition(tenantId: number | string | null, enabled = true) {
   return useQuery<CreditPosition>({
     queryKey: keys.position(tenantId ?? ""),
     queryFn: async () => {
       const { data } = await api.get("/tenant-credits/position/", { params: { tenant: tenantId } });
       return data;
     },
-    enabled: !!tenantId,
+    enabled: !!tenantId && enabled,
   });
 }
 

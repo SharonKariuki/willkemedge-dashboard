@@ -13,7 +13,7 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from apps.accounts import audit
+from apps.accounts import access, audit
 from apps.accounts.permissions import CanForgiveMoney, CanRecordMoney
 from apps.tenants.models import Tenant
 
@@ -759,7 +759,19 @@ class UtilityChargeViewSet(viewsets.ReadOnlyModelViewSet):
         year = self.request.query_params.get("year")
         if month and year:
             qs = qs.filter(period_month=month, period_year=year)
-        return qs
+        user = self.request.user
+        if not user.can(access.Cap.VIEW_FINANCE):
+            # A caretaker reads the meter, not the account: water readings
+            # only, and only in the buildings they look after.
+            from . import books
+
+            qs = qs.filter(books.metered_q())
+        return access.scope(qs, user, "tenant__unit__building")
+
+    def _tenant_in_scope(self, tenant_id):
+        """The tenant a reading is for - 404 if it's outside the reader's buildings."""
+        return get_object_or_404(access.scope(Tenant.objects.all(), self.request.user, "unit__building"),
+                                 pk=tenant_id)
 
     @action(detail=False, methods=["get"], url_path="previous-reading")
     def previous_reading(self, request):
@@ -772,7 +784,7 @@ class UtilityChargeViewSet(viewsets.ReadOnlyModelViewSet):
         """
         from .meter_service import previous_reading_for
 
-        tenant = get_object_or_404(Tenant, pk=request.query_params.get("tenant"))
+        tenant = self._tenant_in_scope(request.query_params.get("tenant"))
         label = request.query_params.get("label") or "Water Usage"
 
         before_period = None
@@ -804,7 +816,7 @@ class UtilityChargeViewSet(viewsets.ReadOnlyModelViewSet):
         ser.is_valid(raise_exception=True)
         data = ser.validated_data
 
-        tenant = get_object_or_404(Tenant, pk=data["tenant"])
+        tenant = self._tenant_in_scope(data["tenant"])
         try:
             charge = bill_meter_reading(
                 tenant=tenant,

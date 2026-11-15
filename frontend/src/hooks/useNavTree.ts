@@ -3,6 +3,7 @@ import { useLocation } from "react-router-dom";
 
 import { useAuth } from "@/hooks/useAuth";
 import { useViewPreferences } from "@/hooks/useViewPreferences";
+import { can } from "@/lib/access";
 import { NAV_TREE, activePath, navItem, type NavNode, type ViewKey } from "@/lib/nav";
 
 const OPEN_KEY = "willkemedge-nav-open";
@@ -64,15 +65,15 @@ function prune(nodes: NavNode[], shown: (key: ViewKey) => boolean): NavNode[] {
  */
 export function useNavTree() {
   const { prefs } = useViewPreferences();
-  const isOwner = Boolean(useAuth().user?.can_forgive_money);
+  const { user } = useAuth();
   const { pathname, search } = useLocation();
 
   const shown = useCallback(
     (key: ViewKey) => {
       const item = navItem(key);
-      return (!item.togglable || prefs[key]) && (!item.ownerOnly || isOwner);
+      return (!item.togglable || prefs[key]) && (!item.requires || can(user, item.requires));
     },
-    [prefs, isOwner]
+    [prefs, user]
   );
 
   const tree = useMemo(() => prune(NAV_TREE, shown), [shown]);
