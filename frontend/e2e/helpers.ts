@@ -7,7 +7,19 @@ import type { Page } from "@playwright/test";
  * server.
  */
 
-const USER = { id: 1, email: "owner@wilkem.test", username: "owner", first_name: "Wilson", last_name: "Osoro" };
+// The owner: every capability, as /auth/me/ reports it. Without a role or
+// capabilities the app treats a user as read-only and hides the tools the
+// journeys below exercise (register a tenant, email statements).
+const USER = {
+  id: 1, email: "owner@wilkem.test", username: "owner", first_name: "Wilson", last_name: "Osoro",
+  role: "owner", is_superuser: false,
+  can_record_money: true, can_forgive_money: true, can_manage_users: true,
+  capabilities: [
+    "view_finance", "record_money", "forgive_money", "view_property", "manage_property",
+    "record_water", "log_maintenance", "send_messages", "view_activity", "manage_users",
+  ],
+  buildings: [], access_expires_on: null,
+};
 
 const DASHBOARD = {
   kpis: {
