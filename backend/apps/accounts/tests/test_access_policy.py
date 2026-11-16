@@ -252,3 +252,38 @@ def test_sign_in_history_is_your_own_unless_you_may_read_the_activity_log(db):
 
     everyone = _signed_in(auditor).get("/api/auth/login-audit/")
     assert {a["email"] for a in everyone.data} == {viewer.email, auditor.email, "osoro@example.com"}
+
+
+# ── money terms on the tenant record ─────────────────────────────────────────
+
+def test_managing_tenants_without_recording_money_leaves_billing_and_deposits_alone(estate):
+    from apps.accounts.access import Cap
+
+    _, d_unit, d_tenant = estate["D14"]
+    clerk = _person(Role.ACCOUNTANT)
+    clerk.removed_capabilities = [Cap.RECORD_MONEY]
+    clerk.save()
+    c = _signed_in(clerk)
+
+    # Contact details are the property side.
+    assert c.patch(f"/api/tenants/{d_tenant.pk}/", {"phone": "254711111111"}, format="json").status_code == 200
+    # Rent and deposit are money.
+    for change in ({"monthly_rent": "12000"}, {"deposit_paid": "5000"}, {"is_billable": False}):
+        resp = c.patch(f"/api/tenants/{d_tenant.pk}/", change, format="json")
+        assert resp.status_code == 403, change
+    d_tenant.refresh_from_db()
+    assert d_tenant.monthly_rent == Decimal("10000") and d_tenant.is_billable
+
+
+def test_resending_the_same_rent_is_not_a_change(estate):
+    from apps.accounts.access import Cap
+
+    _, _, d_tenant = estate["D14"]
+    clerk = _person(Role.ACCOUNTANT)
+    clerk.removed_capabilities = [Cap.RECORD_MONEY]
+    clerk.save()
+    # The edit form sends every field back; an unchanged rent must not block a phone fix.
+    resp = _signed_in(clerk).patch(
+        f"/api/tenants/{d_tenant.pk}/", {"phone": "254722222222", "monthly_rent": "10000.00"}, format="json",
+    )
+    assert resp.status_code == 200, resp.data

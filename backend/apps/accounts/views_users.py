@@ -34,7 +34,7 @@ class CanManageUsers(BasePermission):
 
     def has_permission(self, request, view):
         return bool(request.user and request.user.is_authenticated
-                    and getattr(request.user, "can_manage_users", False))
+                    and access.has_capability(request.user, access.Cap.MANAGE_USERS))
 
 
 def _refused(exc: user_admin.UserAdminError) -> Response:

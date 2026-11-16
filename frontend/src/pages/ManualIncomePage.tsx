@@ -17,11 +17,13 @@ import {
   Button, Card, DatePicker, EmptyState, ErrorState,
   PageHeader, Skeleton, Table, TBody, TD, TH, THead, TR,
 } from "@/components/ui";
+import { useAuth } from "@/hooks/useAuth";
 import { useBuildings } from "@/hooks/useBuildings";
 import { useOpenFromLink } from "@/hooks/useOpenFromLink";
 import {
   useCreateManualIncome, useDeleteManualIncome, useIncomeAccounts, useManualIncome,
 } from "@/hooks/useManualIncome";
+import { CAP, can } from "@/lib/access";
 import { getErrorMessage } from "@/lib/apiError";
 import { toDayFirst } from "@/lib/dates";
 import { formatKESWhole } from "@/lib/money";
@@ -45,6 +47,8 @@ export default function ManualIncomePage() {
   const now = new Date();
   const [showForm, setShowForm] = useState(false);
   useOpenFromLink(() => setShowForm(true));
+  const { user } = useAuth();
+  const canRecord = can(user, CAP.RECORD_MONEY);
   const { data: income, isLoading, isError, refetch } = useManualIncome();
   const { data: buildings } = useBuildings();
   const { data: accounts } = useIncomeAccounts();
@@ -89,15 +93,15 @@ export default function ManualIncomePage() {
         eyebrow="Income"
         title="Other Income"
         description="Record non-tenant income such as farm produce sales. Rent is recorded under Payments."
-        actions={
+        actions={canRecord ? (
           <Button onClick={() => setShowForm((v) => !v)}>
             <PlusCircle className="h-4 w-4" />
             {showForm ? "Cancel" : "Record Income"}
           </Button>
-        }
+        ) : undefined}
       />
 
-      {showForm && (
+      {showForm && canRecord && (
         <Card variant="glass" padding="md" className="animate-fade-up">
           <p className="mb-4 font-display text-lg font-semibold text-ink-900">New income entry</p>
           <form onSubmit={form.handleSubmit(onSubmit)} className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -173,6 +177,7 @@ export default function ManualIncomePage() {
                 <TD className="max-w-sm whitespace-normal">{i.description}</TD>
                 <TD className="text-right font-medium tabular-nums text-sage-600">{Number(i.amount).toLocaleString()}</TD>
                 <TD className="text-right">
+                  {canRecord && (
                   <button
                     onClick={() => remove.mutate(i.id)}
                     className="text-ink-400 hover:text-status-unpaid"
@@ -180,6 +185,7 @@ export default function ManualIncomePage() {
                   >
                     <Trash2 className="h-4 w-4" />
                   </button>
+                  )}
                 </TD>
               </TR>
             ))}

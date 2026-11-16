@@ -17,8 +17,10 @@ import {
   Badge, Button, Card, EmptyState, PageHeader, Skeleton,
   Table, TBody, TD, TH, THead, TR,
 } from "@/components/ui";
+import { useAuth } from "@/hooks/useAuth";
 import { useTenants } from "@/hooks/useTenants";
 import { useCaptureReading, usePreviousReading, useUtilityCharges } from "@/hooks/useWaterReadings";
+import { CAP, can } from "@/lib/access";
 import { getErrorMessage } from "@/lib/apiError";
 
 const inputCls =
@@ -40,6 +42,9 @@ const schema = z.object({
 type FormData = z.infer<typeof schema>;
 
 export default function WaterReadingsPage() {
+  // Anyone with the properties reads the history; capturing a reading takes the water permission.
+  const { user } = useAuth();
+  const canCapture = can(user, CAP.RECORD_WATER);
   const { data: tenants } = useTenants({ status: "active" });
   const capture = useCaptureReading();
 
@@ -128,6 +133,7 @@ export default function WaterReadingsPage() {
         description="Enter each unit's current meter reading. Consumption is billed at the building's tariff and appears as Other Charges on the statement."
       />
 
+      {canCapture && (
       <Card variant="glass" padding="md">
         <form onSubmit={form.handleSubmit(onSubmit)} className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <label className="block sm:col-span-2">
@@ -208,6 +214,7 @@ export default function WaterReadingsPage() {
           </div>
         </form>
       </Card>
+      )}
 
       {tenantId && (
         <Card padding="none">

@@ -19,6 +19,7 @@ import {
 } from "@/components/ui";
 import { TenantPicker } from "@/features/payments/TenantPicker";
 import { toChoices, type TenantChoice } from "@/features/payments/tenantChoices";
+import { useAuth } from "@/hooks/useAuth";
 import { useTenants } from "@/hooks/useTenants";
 import {
   useAssignCredit,
@@ -26,6 +27,7 @@ import {
   useUnmatchedCredits,
   type UnmatchedCredit,
 } from "@/hooks/useUnmatchedCredits";
+import { CAP, can } from "@/lib/access";
 import { getErrorMessage } from "@/lib/apiError";
 
 function formatKes(amount: string): string {
@@ -95,6 +97,10 @@ function CreditRow({
   const depositNum = Number(depositValue || 0);
   const splitValid = Number.isFinite(depositNum) && depositNum >= 0 && depositNum <= Number(credit.amount);
 
+  // Viewers and auditors see what's waiting; assigning it posts money.
+  const { user } = useAuth();
+  const canAssign = can(user, CAP.RECORD_MONEY);
+
   const pickTenant = (id: number | null) => {
     setTenantId(id);
     setDeposit(null);
@@ -139,6 +145,10 @@ function CreditRow({
         {new Date(credit.received_at).toLocaleString()}
       </TD>
       <TD>
+        {!canAssign ? (
+          <span className="text-xs text-ink-500">Assigning needs permission to record money.</span>
+        ) : (
+        <>
         <div className="flex items-center gap-2">
           <TenantPicker
             choices={tenants}
@@ -163,6 +173,8 @@ function CreditRow({
             stillToReceive={split.data?.deposit_still_to_receive}
             disabled={assign.isPending || split.isLoading}
           />
+        )}
+        </>
         )}
       </TD>
     </TR>

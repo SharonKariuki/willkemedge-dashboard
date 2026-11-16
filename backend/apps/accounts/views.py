@@ -7,7 +7,7 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.views import TokenRefreshView
 
 from . import audit
-from .permissions import IsOwner
+from .permissions import CanViewActivity
 from .serializers import (
     ChangePasswordSerializer,
     LoginSerializer,
@@ -44,7 +44,7 @@ class ClientIpDebugView(APIView):
     app sent for this request, so CLIENT_IP_HEADER / TRUSTED_PROXY_HOPS can be
     set from facts rather than guesses. Shows only the caller's own address."""
 
-    permission_classes = [IsOwner]
+    permission_classes = [CanViewActivity]
 
     def get(self, request):
         meta = request.META

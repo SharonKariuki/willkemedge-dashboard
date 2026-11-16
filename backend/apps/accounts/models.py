@@ -26,10 +26,8 @@ class Role(models.TextChoices):
     VIEWER = "viewer", "Viewer (read-only)"
 
 
-#: Roles allowed to record a payment or reconcile a bank credit.
-ROLES_RECORD_MONEY = frozenset({Role.OWNER, Role.ACCOUNTANT})
-#: Roles allowed to forgive or unwind money (waive arrears, void a payment).
-ROLES_FORGIVE_MONEY = frozenset({Role.OWNER})
+# What each role may do lives in apps.accounts.access (ROLE_CAPABILITIES), not
+# here: code asks for a capability, never for a role.
 
 
 class User(AbstractUser):

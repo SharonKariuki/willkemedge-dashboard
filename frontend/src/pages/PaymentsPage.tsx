@@ -40,6 +40,7 @@ import {
   useSplitPayment,
 } from "@/hooks/usePayments";
 import { useTenants } from "@/hooks/useTenants";
+import { CAP, can } from "@/lib/access";
 import { getErrorMessage } from "@/lib/apiError";
 import { cn } from "@/lib/cn";
 import { toDayFirst, todayIso } from "@/lib/dates";
@@ -155,7 +156,9 @@ export default function PaymentsPage() {
   // Voiding is owner-only on the API (CanForgiveMoney). Hiding the control for
   // everyone else keeps the UI honest about what it will let you finish.
   const { user } = useAuth();
-  const canVoid = Boolean(user?.can_forgive_money);
+  const canVoid = can(user, CAP.FORGIVE_MONEY);
+  // Viewers and auditors read the payments; recording one needs the money permission.
+  const canRecord = can(user, CAP.RECORD_MONEY);
 
   const handleDownloadReceipt = async (txnId: number) => {
     try {
@@ -288,7 +291,7 @@ export default function PaymentsPage() {
         eyebrow="Collections"
         title="Payments"
         description="Record rent payments and track monthly collection progress."
-        actions={
+        actions={canRecord ? (
           <div className="flex flex-wrap gap-2">
             <Button
               variant="gold"
@@ -298,7 +301,7 @@ export default function PaymentsPage() {
               {showForm ? "Cancel" : "Record Payment"}
             </Button>
           </div>
-        }
+        ) : undefined}
       />
 
       {/* Collection progress */}
@@ -341,7 +344,7 @@ export default function PaymentsPage() {
       )}
 
       {/* Record payment form */}
-      {showForm && (
+      {showForm && canRecord && (
         <Card variant="glass" padding="md" className="animate-fade-up">
           <div className="mb-5">
             <p className="font-display text-lg font-semibold text-ink-900">Record manual payment</p>
@@ -636,6 +639,7 @@ export default function PaymentsPage() {
                             <FileText className="h-3.5 w-3.5" />
                           </button>
                         )}
+                        {canRecord && (
                         <button
                           onClick={() => handleResendReceipt(p.id)}
                           disabled={resendReceipt.isPending}
@@ -644,6 +648,7 @@ export default function PaymentsPage() {
                         >
                           <Mail className="h-3.5 w-3.5" />
                         </button>
+                        )}
                         {canVoid && !p.is_void && (
                           <button
                             onClick={() => setVoidTarget(p)}

@@ -27,6 +27,7 @@ import {
   useSettlementPreview,
 } from "@/hooks/useDepositSettlements";
 import { useTenant } from "@/hooks/useTenants";
+import { CAP, can } from "@/lib/access";
 import { getErrorMessage } from "@/lib/apiError";
 import { todayIso } from "@/lib/dates";
 
@@ -156,7 +157,7 @@ export default function SettleDepositPage() {
     }
   }
 
-  if (!user?.can_forgive_money) {
+  if (!can(user, CAP.FORGIVE_MONEY)) {
     return (
       <ErrorState
         title="Only the owner can settle a deposit."

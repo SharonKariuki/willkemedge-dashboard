@@ -10,6 +10,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import ReconciliationPage from "./ReconciliationPage";
 
 const mutate = vi.fn();
+let me: Record<string, unknown> = { capabilities: ["view_finance", "record_money"] };
+
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: me }) }));
 
 vi.mock("react-hot-toast", () => ({ default: { success: vi.fn(), error: vi.fn() } }));
 
@@ -48,6 +51,7 @@ vi.mock("@/hooks/useUnmatchedCredits", () => ({
 describe("ReconciliationPage split", () => {
   beforeEach(() => {
     mutate.mockReset();
+    me = { capabilities: ["view_finance", "record_money"] };
     render(<ReconciliationPage />);
   });
 
@@ -83,5 +87,15 @@ describe("ReconciliationPage split", () => {
 
     expect(screen.getByText(/Between 0 and KES 27,000/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Assign" })).toBeDisabled();
+  });
+});
+
+describe("ReconciliationPage, read-only", () => {
+  it("shows a viewer what's waiting but not the controls to assign it", () => {
+    me = { capabilities: ["view_finance", "view_property"] };
+    render(<ReconciliationPage />);
+    expect(screen.getByText(/CB0385042/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Assign" })).toBeNull();
+    expect(screen.getByText(/Assigning needs permission to record money/)).toBeInTheDocument();
   });
 });
