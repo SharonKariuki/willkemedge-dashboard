@@ -1,6 +1,8 @@
 """Expense API views."""
 from rest_framework import viewsets
+from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
 
 from .models import Account, Expense, ExpenseCategory, ManualIncome
 from .serializers import (
@@ -9,6 +11,29 @@ from .serializers import (
     ExpenseSerializer,
     ManualIncomeSerializer,
 )
+from .voiding import void_entry
+
+
+class VoidInsteadOfDelete:
+    """Entries are voided with a reason, not deleted (see ``voiding.py``).
+
+    Lists include voided rows, marked ``is_void``, so the page can show them
+    struck through; ``?active=1`` leaves them out.
+    """
+
+    http_method_names = ["get", "post", "put", "patch", "head", "options"]
+
+    def filter_voided(self, qs):
+        if self.request.query_params.get("active") in ("1", "true"):
+            qs = qs.filter(voided_at__isnull=True)
+        return qs.select_related("voided_by")
+
+    @action(detail=True, methods=["post"])
+    def void(self, request, pk=None):
+        entry = void_entry(
+            self.get_object(), user=request.user, reason=request.data.get("reason", "")
+        )
+        return Response(self.get_serializer(entry).data)
 
 
 class AccountViewSet(viewsets.ReadOnlyModelViewSet):
@@ -40,7 +65,7 @@ class ExpenseCategoryViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [IsAuthenticated]
 
 
-class ExpenseViewSet(viewsets.ModelViewSet):
+class ExpenseViewSet(VoidInsteadOfDelete, viewsets.ModelViewSet):
     """
     CRUD for expenses.
 
@@ -77,10 +102,10 @@ class ExpenseViewSet(viewsets.ModelViewSet):
         elif unit:
             qs = qs.filter(unit_id=unit)
 
-        return qs
+        return self.filter_voided(qs)
 
 
-class ManualIncomeViewSet(viewsets.ModelViewSet):
+class ManualIncomeViewSet(VoidInsteadOfDelete, viewsets.ModelViewSet):
     """Non-tenant income (e.g. farm produce). Posts to the ledger on create.
 
     Income is rejected for expense-only properties (Baobab Karen / KRN) in the
@@ -99,4 +124,4 @@ class ManualIncomeViewSet(viewsets.ModelViewSet):
         building = self.request.query_params.get("building")
         if building:
             qs = qs.filter(building_id=building)
-        return qs
+        return self.filter_voided(qs)

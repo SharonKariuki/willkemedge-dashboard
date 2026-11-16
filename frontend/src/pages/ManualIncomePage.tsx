@@ -7,24 +7,26 @@
  * way.
  */
 import { zodResolver } from "@hookform/resolvers/zod";
-import { PlusCircle, Sprout, Trash2 } from "lucide-react";
+import { Ban, PlusCircle, Sprout } from "lucide-react";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import toast from "react-hot-toast";
 import { z } from "zod";
 
 import {
-  Button, Card, DatePicker, EmptyState, ErrorState,
+  Badge, Button, Card, DatePicker, EmptyState, ErrorState,
   PageHeader, Skeleton, Table, TBody, TD, TH, THead, TR,
 } from "@/components/ui";
 import { useAuth } from "@/hooks/useAuth";
 import { useBuildings } from "@/hooks/useBuildings";
 import { useOpenFromLink } from "@/hooks/useOpenFromLink";
 import {
-  useCreateManualIncome, useDeleteManualIncome, useIncomeAccounts, useManualIncome,
+  useCreateManualIncome, useIncomeAccounts, useManualIncome, useVoidManualIncome,
 } from "@/hooks/useManualIncome";
+import { askAndVoid, liveTotal } from "@/features/money/voidEntry";
 import { CAP, can } from "@/lib/access";
 import { getErrorMessage } from "@/lib/apiError";
+import { cn } from "@/lib/cn";
 import { toDayFirst } from "@/lib/dates";
 import { formatKESWhole } from "@/lib/money";
 
@@ -53,7 +55,7 @@ export default function ManualIncomePage() {
   const { data: buildings } = useBuildings();
   const { data: accounts } = useIncomeAccounts();
   const create = useCreateManualIncome();
-  const remove = useDeleteManualIncome();
+  const voidIncome = useVoidManualIncome();
 
   // Only income-allowing properties (farms, rentals) — never Baobab Karen.
   const incomeProperties = (buildings ?? []).filter((b) => b.allows_income !== false);
@@ -85,7 +87,7 @@ export default function ManualIncomePage() {
     );
   };
 
-  const total = income?.reduce((s, i) => s + parseFloat(i.amount), 0) ?? 0;
+  const total = liveTotal(income);
 
   return (
     <div className="space-y-6">
@@ -170,20 +172,28 @@ export default function ManualIncomePage() {
           </THead>
           <TBody>
             {income.map((i) => (
-              <TR key={i.id}>
+              <TR key={i.id} className={cn(i.is_void && "text-ink-400 [&_td]:line-through")}>
                 <TD className="text-ink-500">{toDayFirst(i.date)}</TD>
                 <TD>{i.building_name}</TD>
                 <TD className="text-ink-500">{i.account_code} · {i.account_name}</TD>
                 <TD className="max-w-sm whitespace-normal">{i.description}</TD>
                 <TD className="text-right font-medium tabular-nums text-sage-600">{Number(i.amount).toLocaleString()}</TD>
                 <TD className="text-right">
-                  {canRecord && (
+                  {i.is_void ? (
+                    <span className="inline-block" title={`Voided by ${i.voided_by_name ?? "someone"}: ${i.void_reason}`}>
+                      <Badge tone="neutral">Void</Badge>
+                    </span>
+                  ) : canRecord && (
                   <button
-                    onClick={() => remove.mutate(i.id)}
+                    type="button"
+                    onClick={() =>
+                      askAndVoid("income entry", (reason) => voidIncome.mutateAsync({ id: i.id, reason }))
+                    }
                     className="text-ink-400 hover:text-status-unpaid"
-                    aria-label={`Delete income ${i.description}`}
+                    aria-label={`Void income ${i.description}`}
+                    title="Void"
                   >
-                    <Trash2 className="h-4 w-4" />
+                    <Ban className="h-4 w-4" />
                   </button>
                   )}
                 </TD>

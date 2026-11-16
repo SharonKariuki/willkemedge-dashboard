@@ -1,5 +1,5 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { PlusCircle, Trash2 } from "lucide-react";
+import { Ban, PlusCircle } from "lucide-react";
 
 import { cloneElement, isValidElement, useId, useState } from "react";
 import { useForm } from "react-hook-form";
@@ -15,8 +15,9 @@ import { useBuildings } from "@/hooks/useBuildings";
 import { useOpenFromLink } from "@/hooks/useOpenFromLink";
 import {
   useCreateExpense,
-  useDeleteExpense, useExpenseCategories, useExpenses,
+  useExpenseCategories, useExpenses, useVoidExpense,
 } from "@/hooks/useExpenses";
+import { askAndVoid, liveTotal } from "@/features/money/voidEntry";
 import { useUnits } from "@/hooks/useUnits";
 import { CAP, can } from "@/lib/access";
 import { getErrorMessage } from "@/lib/apiError";
@@ -103,7 +104,7 @@ export default function ExpensesPage() {
   // independently, so a per-building refetch would fire on every keystroke.
   const { data: units } = useUnits();
   const createExpense = useCreateExpense();
-  const deleteExpense = useDeleteExpense();
+  const voidExpense = useVoidExpense();
 
   const form = useForm<ExpenseFormData>({
     resolver: zodResolver(expenseSchema),
@@ -149,7 +150,7 @@ export default function ExpensesPage() {
     );
   };
 
-  const total = expenses?.reduce((sum, e) => sum + parseFloat(e.amount), 0) ?? 0;
+  const total = liveTotal(expenses);
 
   return (
     <div className="space-y-6">
@@ -388,7 +389,7 @@ export default function ExpensesPage() {
             </THead>
             <TBody>
               {expenses.map((e) => (
-                <TR key={e.id}>
+                <TR key={e.id} className={cn(e.is_void && "text-ink-400 [&_td]:line-through")}>
                   <TD className="whitespace-nowrap text-ink-700">{toDayFirst(e.date)}</TD>
                   <TD className="whitespace-nowrap text-ink-500">
                     {e.building_name ?? <span className="italic">Portfolio</span>}
@@ -403,14 +404,25 @@ export default function ExpensesPage() {
                   </TD>
                   <TD className="font-mono text-[11px] text-ink-400">{e.reference || "—"}</TD>
                   <TD>
-                    {canRecord && (
+                    {e.is_void ? (
+                      // inline-block: the row's strike-through does not reach the badge
+                      <span
+                        className="inline-block"
+                        title={`Voided by ${e.voided_by_name ?? "someone"}: ${e.void_reason}`}
+                      >
+                        <Badge tone="neutral">Void</Badge>
+                      </span>
+                    ) : canRecord && (
                     <button
                       type="button"
-                      onClick={() => { if (window.confirm("Delete this expense?")) deleteExpense.mutate(e.id); }}
+                      onClick={() =>
+                        askAndVoid("expense", (reason) => voidExpense.mutateAsync({ id: e.id, reason }))
+                      }
                       className="rounded-md p-1.5 text-ink-400 hover:bg-status-unpaid/10 hover:text-status-unpaid"
-                      aria-label="Delete expense"
+                      aria-label="Void expense"
+                      title="Void"
                     >
-                      <Trash2 className="h-4 w-4" />
+                      <Ban className="h-4 w-4" />
                     </button>
                     )}
                   </TD>
