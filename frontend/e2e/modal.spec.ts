@@ -12,7 +12,7 @@ import { hasNoHorizontalScroll, mockApi, seedAuth } from "./helpers";
  */
 const OWNER = {
   id: 1, email: "owner@wilkem.test", username: "owner", first_name: "Wilson",
-  last_name: "Osoro", role: "owner", can_record_money: true, can_forgive_money: true,
+  last_name: "Osoro", role: "owner", capabilities: ["view_finance","record_money","forgive_money","view_property","manage_property","record_water","log_maintenance","send_messages","view_activity","manage_users"],
 };
 
 test.beforeEach(async ({ page }) => {

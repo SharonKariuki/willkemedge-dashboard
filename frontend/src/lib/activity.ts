@@ -40,6 +40,8 @@ export interface ActivityGroup {
   /** Everything else the same request wrote, newest first. */
   details: ActivityRow[];
   isFinancial: boolean;
+  /** Someone voided, cancelled or deleted an entry they made themselves. */
+  isOwnUndo: boolean;
 }
 
 /** Fold consecutive rows that share a request into one entry. */
@@ -60,6 +62,7 @@ export function groupActivity(rows: ActivityRow[]): ActivityGroup[] {
       head,
       details: members.filter((r) => r !== head),
       isFinancial: members.some((r) => r.is_financial),
+      isOwnUndo: members.some((r) => r.new_values?.self_reversal === true),
     };
   });
 }
