@@ -153,15 +153,18 @@ class ExpensesAPITests(APITestCase):
         assert len(resp.json()) == 1
         assert resp.json()[0]["description"] == "Portfolio-wide"
 
-    def test_update_and_delete_expense(self):
+    def test_update_then_void_expense(self):
         create = self.client.post("/api/expenses/", self._expense_payload(), format="json")
         eid = create.json()["id"]
         upd = self.client.patch(f"/api/expenses/{eid}/", {"amount": "2000.00"}, format="json")
         assert upd.status_code == 200
         assert Expense.objects.get(pk=eid).amount == Decimal("2000.00")
         delete = self.client.delete(f"/api/expenses/{eid}/")
-        assert delete.status_code == status.HTTP_204_NO_CONTENT
-        assert not Expense.objects.filter(pk=eid).exists()
+        assert delete.status_code == status.HTTP_405_METHOD_NOT_ALLOWED
+        void = self.client.post(f"/api/expenses/{eid}/void/", {"reason": "Duplicate"}, format="json")
+        assert void.status_code == 200
+        assert void.json()["is_void"] is True
+        assert Expense.objects.get(pk=eid).void_reason == "Duplicate"
 
     # --- Unit-scoped expenses ------------------------------------------
 

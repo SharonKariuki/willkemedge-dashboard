@@ -25,7 +25,29 @@ class ExpenseCategorySerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "account_code", "account_name", "created_at"]
 
 
-class ExpenseSerializer(serializers.ModelSerializer):
+VOID_FIELDS = ("is_void", "voided_at", "voided_by_name", "void_reason")
+
+
+def _voided_by_name(obj) -> str | None:
+    from apps.accounts.audit import actor_label
+
+    return actor_label(obj.voided_by) if obj.voided_by_id else None
+
+
+class VoidFieldsMixin(serializers.Serializer):
+    is_void = serializers.BooleanField(read_only=True)
+    voided_by_name = serializers.SerializerMethodField()
+
+    def get_voided_by_name(self, obj):
+        return _voided_by_name(obj)
+
+    def update(self, instance, validated_data):
+        if instance.is_void:
+            raise serializers.ValidationError({"detail": "A voided entry cannot be edited."})
+        return super().update(instance, validated_data)
+
+
+class ExpenseSerializer(VoidFieldsMixin, serializers.ModelSerializer):
     category_name = serializers.CharField(source="category.name", read_only=True)
     building_name = serializers.CharField(source="building.name", read_only=True, default=None)
     unit_label = serializers.CharField(source="unit.label", read_only=True, default=None)
@@ -49,8 +71,12 @@ class ExpenseSerializer(serializers.ModelSerializer):
             "notes",
             "created_at",
             "updated_at",
+            *VOID_FIELDS,
         ]
-        read_only_fields = ["id", "category_name", "building_name", "unit_label", "created_at", "updated_at"]
+        read_only_fields = [
+            "id", "category_name", "building_name", "unit_label", "created_at", "updated_at",
+            *VOID_FIELDS,
+        ]
 
     def validate_period_month(self, value):
         if not 1 <= value <= 12:
@@ -114,7 +140,7 @@ class ExpenseSerializer(serializers.ModelSerializer):
         return attrs
 
 
-class ManualIncomeSerializer(serializers.ModelSerializer):
+class ManualIncomeSerializer(VoidFieldsMixin, serializers.ModelSerializer):
     building_name = serializers.CharField(source="building.name", read_only=True)
     account_code = serializers.CharField(source="account.code", read_only=True)
     account_name = serializers.CharField(source="account.name", read_only=True)
@@ -126,10 +152,10 @@ class ManualIncomeSerializer(serializers.ModelSerializer):
             "account", "account_code", "account_name",
             "amount", "description", "reference",
             "period_month", "period_year", "notes",
-            "created_at", "updated_at",
+            "created_at", "updated_at", *VOID_FIELDS,
         ]
         read_only_fields = ["id", "building_name", "account_code", "account_name",
-                            "created_at", "updated_at"]
+                            "created_at", "updated_at", *VOID_FIELDS]
 
     def validate_amount(self, value):
         if value <= 0:

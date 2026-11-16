@@ -16,6 +16,11 @@ export interface ManualIncome {
   period_month: number;
   period_year: number;
   notes: string;
+  /** Voided entries stay listed, struck through, and count toward no total. */
+  is_void: boolean;
+  voided_at: string | null;
+  voided_by_name: string | null;
+  void_reason: string;
 }
 
 export function useManualIncome(month?: number, year?: number, building?: number | null) {
@@ -55,10 +60,18 @@ export function useCreateManualIncome() {
   });
 }
 
-export function useDeleteManualIncome() {
+/** Income is voided with a reason, never deleted. */
+export function useVoidManualIncome() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (id: number) => { await api.delete(`/manual-income/${id}/`); },
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ["manual-income"] }),
+    mutationFn: async ({ id, reason }: { id: number; reason: string }) => {
+      const { data } = await api.post(`/manual-income/${id}/void/`, { reason });
+      return data as ManualIncome;
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["manual-income"] });
+      void qc.invalidateQueries({ queryKey: ["dashboard"] });
+      void qc.invalidateQueries({ queryKey: ["reports"] });
+    },
   });
 }

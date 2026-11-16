@@ -97,6 +97,7 @@ REVERSALS = frozenset({
     "payment.void", "credit.void", "refund.cancel", "refund.void",
     "tenant.deposit_settlement_void",
     "payment.delete", "utility_charge.delete", "expense.delete", "manual_income.delete",
+    "expense.void", "manual_income.void",
 })
 
 #: Where the entry's maker is kept, for entries whose creation is not itself

@@ -30,6 +30,11 @@ export interface Expense {
   notes: string;
   created_at: string;
   updated_at: string;
+  /** Voided entries stay listed, struck through, and count toward no total. */
+  is_void: boolean;
+  voided_at: string | null;
+  voided_by_name: string | null;
+  void_reason: string;
 }
 
 export function useExpenseCategories() {
@@ -96,11 +101,13 @@ export function useCreateExpense() {
   });
 }
 
-export function useDeleteExpense() {
+/** Expenses are voided with a reason, never deleted. */
+export function useVoidExpense() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (id: number) => {
-      await api.delete(`/expenses/${id}/`);
+    mutationFn: async ({ id, reason }: { id: number; reason: string }) => {
+      const { data } = await api.post(`/expenses/${id}/void/`, { reason });
+      return data as Expense;
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["expenses"] });

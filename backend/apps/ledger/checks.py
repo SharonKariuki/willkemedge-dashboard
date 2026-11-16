@@ -135,6 +135,17 @@ def _check_complete() -> CheckResult:
     unreversed = sorted(voided - reversal.get("payment", set()))
     if unreversed:
         missing["voided payment without reversal"] = unreversed
+    from apps.expenses.models import Expense, ManualIncome
+
+    for st, label, qs in (
+        ("expense", "voided expense without reversal",
+         Expense.objects.filter(voided_at__isnull=False, category__account__isnull=False)),
+        ("manual_income", "voided income without reversal",
+         ManualIncome.objects.filter(voided_at__isnull=False)),
+    ):
+        gap = sorted(set(qs.values_list("pk", flat=True)) - reversal.get(st, set()))
+        if gap:
+            missing[label] = gap
     detail = "; ".join(f"{k}: {v[:10]}" for k, v in missing.items())
     return CheckResult("Every record is posted", not missing, detail or "nothing missing")
 

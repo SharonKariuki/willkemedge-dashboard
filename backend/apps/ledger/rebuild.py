@@ -95,10 +95,16 @@ def rebuild() -> Counter:
             if e.category_id and e.category.account_id:
                 posting.post_expense(e, replace=True)
                 done["expenses"] += 1
+                if e.voided_at:
+                    _repost_reversal("expense", e.pk, lambda _on, e=e: posting.reverse_expense(e))
 
         for m in ManualIncome.objects.select_related("account", "building"):
             posting.post_manual_income(m, replace=True)
             done["manual income"] += 1
+            if m.voided_at:
+                _repost_reversal(
+                    "manual_income", m.pk, lambda _on, m=m: posting.reverse_manual_income(m)
+                )
 
         for c in TenantCredit.objects.select_related("tenant__unit__building", "expense_category__account"):
             posting.post_tenant_credit(c, replace=True)
