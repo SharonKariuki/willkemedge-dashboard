@@ -53,7 +53,7 @@ vi.mock("@/hooks/useTenants", () => ({
 }));
 
 vi.mock("@/hooks/useAuth", () => ({
-  useAuth: () => ({ user: { can_forgive_money: true } }),
+  useAuth: () => ({ user: { capabilities: ["view_finance", "forgive_money"] } }),
 }));
 
 function renderPage(path: string, element: React.ReactNode) {

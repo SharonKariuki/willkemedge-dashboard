@@ -45,7 +45,7 @@ vi.mock("@/hooks/useTenants", () => ({
 }));
 
 vi.mock("@/hooks/useAuth", () => ({
-  useAuth: () => ({ user: { can_forgive_money: canForgive } }),
+  useAuth: () => ({ user: { capabilities: canForgive ? ["view_finance", "forgive_money"] : ["view_finance"] } }),
 }));
 
 function renderPage() {

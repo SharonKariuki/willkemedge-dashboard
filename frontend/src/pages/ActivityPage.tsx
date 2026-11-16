@@ -40,8 +40,16 @@ function KindBadge({ group }: { group: ActivityGroup }) {
     return <Badge tone="partial">Failed sign-in</Badge>;
   }
   if (head.kind === "auth") return <Badge tone="neutral">Sign-in</Badge>;
-  if (group.isFinancial) return <Badge tone="coral">Money</Badge>;
-  return null;
+  const own = group.isOwnUndo ? <Badge tone="partial">Own entry</Badge> : null;
+  if (group.isFinancial) {
+    return (
+      <>
+        <Badge tone="coral">Money</Badge>
+        {own}
+      </>
+    );
+  }
+  return own;
 }
 
 function Diff({ row }: { row: ActivityRow }) {

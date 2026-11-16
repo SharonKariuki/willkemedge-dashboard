@@ -50,6 +50,14 @@ describe("groupActivity", () => {
     expect(groups[1].head.id).toBe(1);
   });
 
+  it("marks an entry where someone undid their own work", () => {
+    const groups = groupActivity([
+      row(2, { kind: "event", action: "payment.void", new_values: { self_reversal: true } }),
+      row(1, { kind: "event", action: "payment.void" }),
+    ]);
+    expect(groups.map((g) => g.isOwnUndo)).toEqual([true, false]);
+  });
+
   it("heads a command's group with its announcement, which is written first", () => {
     const groups = groupActivity([
       row(3, { request_id: "cmd" }),

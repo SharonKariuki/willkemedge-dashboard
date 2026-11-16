@@ -90,6 +90,58 @@ def _write(**fields):
         return AuditLog.objects.create(**fields)
 
 
+#: Actions that undo an entry. When the person undoing it is the one who made
+#: it, the row says so, so the director can see it without anyone being
+#: blocked: with one director, a second approver is not always there.
+REVERSALS = frozenset({
+    "payment.void", "credit.void", "refund.cancel", "refund.void",
+    "tenant.deposit_settlement_void",
+    "payment.delete", "utility_charge.delete", "expense.delete", "manual_income.delete",
+})
+
+#: Where the entry's maker is kept, for entries whose creation is not itself
+#: a logged ".create" row.
+_MAKER_MODELS = {
+    "payment": "payments.Payment",
+    "tenant_credit": "payments.TenantCredit",
+    "refund": "payments.Refund",
+    "deposit_settlement": "payments.DepositSettlement",
+    "utility_charge": "payments.UtilityCharge",
+}
+
+
+def _maker_id(object_type: str, object_id: int):
+    """Who made the entry: its created_by, else the actor of its ".create" row."""
+    from django.apps import apps
+
+    from .models import AuditLog
+
+    label = _MAKER_MODELS.get(object_type)
+    if label:
+        model = apps.get_model(label)
+        maker = model.objects.filter(pk=object_id).values_list("created_by_id", flat=True).first()
+        if maker:
+            return maker
+    return (
+        AuditLog.objects.filter(
+            object_type=object_type, object_id=object_id, action=f"{object_type}.create"
+        )
+        .order_by("id")
+        .values_list("actor_id", flat=True)
+        .first()
+    )
+
+
+def _is_own_entry(action: str, object_type: str, object_id, user) -> bool:
+    if action not in REVERSALS or not object_id or not getattr(user, "pk", None):
+        return False
+    try:
+        return _maker_id(object_type, object_id) == user.pk
+    except Exception:  # noqa: BLE001 — the flag is a courtesy, never a failure
+        logger.exception("audit: could not find who made %s#%s", object_type, object_id)
+        return False
+
+
 def record(
     *,
     action: str,
@@ -150,6 +202,11 @@ def record(
                 summary=f"Server command run: manage.py {_command_line(ctx.argv)}"[:255],
                 is_financial=False,
             )
+
+        new_values = dict(new_values or {})
+        if _is_own_entry(action, object_type, object_id, user):
+            new_values["self_reversal"] = True
+            summary = f"{summary} (their own entry)"
 
         return _write(
             **common,

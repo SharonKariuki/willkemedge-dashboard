@@ -30,7 +30,7 @@ const labels = async () => {
 
 describe("Quick actions", () => {
   it("gives the owner everything, starting with inviting someone", async () => {
-    renderAs({ role: "owner", is_superuser: false, can_forgive_money: true });
+    renderAs({ role: "owner", is_superuser: false, capabilities: ["view_finance","record_money","forgive_money","view_property","manage_property","record_water","log_maintenance","send_messages","view_activity","manage_users"] });
     const items = await labels();
     expect(items[0]).toMatch(/Invite someone/);
     expect(items).toHaveLength(10);

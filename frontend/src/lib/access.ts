@@ -47,21 +47,11 @@ export const CAP = {
 
 export type Capability = (typeof CAP)[keyof typeof CAP];
 
-/**
- * A session saved before capabilities existed has only the old money flags;
- * read them until `/auth/me/` refreshes it, rather than locking anyone out.
- */
-function legacy(user: StoredUser): Capability[] {
-  if (user.can_forgive_money) return Object.values(CAP);
-  const base: Capability[] = [CAP.VIEW_FINANCE, CAP.VIEW_PROPERTY];
-  return user.can_record_money
-    ? [...base, CAP.RECORD_MONEY, CAP.MANAGE_PROPERTY, CAP.RECORD_WATER, CAP.LOG_MAINTENANCE, CAP.SEND_MESSAGES]
-    : base;
-}
-
 export function capabilitiesOf(user: StoredUser | null | undefined): Capability[] {
   if (!user) return [];
-  return (user.capabilities as Capability[] | undefined) ?? legacy(user);
+  // A session saved before capabilities existed has none; `/auth/me/` refreshes
+  // it on load, so until then it is shown nothing rather than guessed at.
+  return (user.capabilities as Capability[] | undefined) ?? [];
 }
 
 export function can(user: StoredUser | null | undefined, cap: Capability): boolean {
