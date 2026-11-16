@@ -81,9 +81,11 @@ class UserListView(APIView):
             user = user_admin.invite(request.user, **s.validated_data)
         except user_admin.UserAdminError as exc:
             return _refused(exc)
-        user = _users().get(pk=user.pk)
-        return Response(ManagedUserSerializer(user, context={"request": request}).data,
-                        status=status.HTTP_201_CREATED)
+        # The invite is saved; the email is a separate step that can fail on
+        # its own. Say so rather than erroring - Resend can try again.
+        email_error = user_admin.email_invite(user)
+        data = ManagedUserSerializer(_users().get(pk=user.pk), context={"request": request}).data
+        return Response({**data, "email_error": email_error}, status=status.HTTP_201_CREATED)
 
 
 class UserDetailView(APIView):
@@ -116,7 +118,12 @@ class UserActionView(APIView):
             self.ACTIONS[action](request.user, target)
         except user_admin.UserAdminError as exc:
             return _refused(exc)
-        return Response(ManagedUserSerializer(_users().get(pk=pk), context={"request": request}).data)
+        target.refresh_from_db()
+        # Resend always issues a new link; switching back on an account that
+        # never accepted its invite does too.
+        email_error = user_admin.email_invite(target) if target.status == "invited" else None
+        data = ManagedUserSerializer(_users().get(pk=pk), context={"request": request}).data
+        return Response({**data, "email_error": email_error})
 
 
 class InviteDetailView(APIView):

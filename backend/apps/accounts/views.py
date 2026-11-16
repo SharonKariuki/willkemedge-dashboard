@@ -223,7 +223,15 @@ class PasswordResetRequestView(APIView):
         try:
             user = User.objects.get(email=email, is_active=True)
             token_obj = PasswordResetToken.create_for_user(user)
-            send_password_reset_email.delay(user.id, token_obj.token)
+            try:
+                send_password_reset_email.delay(user.id, token_obj.token)
+            except Exception:  # noqa: BLE001
+                # Production runs tasks eagerly with no worker, so a failed
+                # send surfaces here. Log it; the answer stays the same either
+                # way, so it can't be used to learn which emails exist.
+                import logging
+
+                logging.getLogger(__name__).exception("Password reset email to %s failed", email)
             _record_auth("auth.password_reset_request", f"Password reset link requested for {email}", email)
         except User.DoesNotExist:
             pass  # Silent — don't reveal whether email exists

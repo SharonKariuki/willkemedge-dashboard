@@ -81,7 +81,11 @@ export function useUsers() {
   });
 }
 
-function useUserMutation<TVars>(fn: (vars: TVars) => Promise<ManagedUser>) {
+/** Invite and resend answer with the account plus how the email went:
+ *  null when it was sent, otherwise why it wasn't (the invite still stands). */
+export type ManagedUserResult = ManagedUser & { email_error?: string | null };
+
+function useUserMutation<TVars>(fn: (vars: TVars) => Promise<ManagedUserResult>) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: fn,

@@ -46,9 +46,18 @@ def send_password_reset_email(self, user_id: int, token: str) -> None:
         raise self.retry(exc=exc, countdown=30 * (2 ** self.request.retries)) from exc
 
 
-@shared_task(bind=True, max_retries=3, default_retry_delay=30)
-def send_invite_email(self, invite_id: int) -> None:
-    """Email an invited person the link to choose their password."""
+class EmailNotSent(Exception):
+    """The mail backend skipped the message (no credentials, or a suppressed recipient)."""
+
+
+def deliver_invite_email(invite) -> None:
+    """Send the invite now. Raises if it doesn't go, so the caller can say why.
+
+    Called straight from the request rather than through Celery: production
+    has no worker (tasks run eagerly), and an eager task's retry surfaced as a
+    server error after the invite was already saved - with no email sent and
+    no reason shown.
+    """
     from html import escape
 
     from django.conf import settings
@@ -56,11 +65,6 @@ def send_invite_email(self, invite_id: int) -> None:
     from apps.payments.notifications import send_email
 
     from .models import AccountInvite
-
-    invite = AccountInvite.objects.select_related("user", "created_by").filter(pk=invite_id).first()
-    if invite is None or not invite.is_valid:
-        logger.info("send_invite_email: invite %s is gone or no longer valid", invite_id)
-        return
 
     user = invite.user
     frontend_url = getattr(settings, "FRONTEND_URL", "http://localhost:5173")
@@ -86,8 +90,24 @@ def send_invite_email(self, invite_id: int) -> None:
      and no account will be opened.</p>
 </body></html>"""
 
+    if not send_email(user.email, "Your invitation to the Wilkem Ventures dashboard", html):
+        raise EmailNotSent(
+            "The server skipped it: either email isn't set up on the server, or this address belongs "
+            "to a tenant and tenant email is switched off."
+        )
+    logger.info("Invite email sent to %s", user.email)
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=30)
+def send_invite_email(self, invite_id: int) -> None:
+    """For a Celery worker, if one is ever run. The dashboard calls deliver_invite_email directly."""
+    from .models import AccountInvite
+
+    invite = AccountInvite.objects.select_related("user", "created_by").filter(pk=invite_id).first()
+    if invite is None or not invite.is_valid:
+        logger.info("send_invite_email: invite %s is gone or no longer valid", invite_id)
+        return
     try:
-        send_email(user.email, "Your invitation to the Wilkem Ventures dashboard", html)
-        logger.info("Invite email sent to %s", user.email)
+        deliver_invite_email(invite)
     except Exception as exc:
         raise self.retry(exc=exc, countdown=30 * (2 ** self.request.retries)) from exc
