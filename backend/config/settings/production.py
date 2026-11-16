@@ -98,3 +98,25 @@ if SENTRY_DSN:
         # Never ship PII (tenant names, emails, payment refs) to Sentry.
         send_default_pii=False,
     )
+
+# ── Logging ─────────────────────────────────────────────────────────────────
+# Render keeps whatever the process writes to the console. Without this, a
+# server error (500) left no traceback there at all - only the access line -
+# and app warnings ("Email failed to …") went nowhere.
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "plain": {"format": "%(levelname)s %(name)s: %(message)s"},
+    },
+    "handlers": {
+        "console": {"class": "logging.StreamHandler", "formatter": "plain"},
+    },
+    "root": {"handlers": ["console"], "level": "INFO"},
+    "loggers": {
+        # Request errors (500s) with their traceback.
+        "django.request": {"handlers": ["console"], "level": "ERROR", "propagate": False},
+        # Keep Django's own chatter (SQL, autoreload) out.
+        "django": {"handlers": ["console"], "level": "WARNING", "propagate": False},
+    },
+}

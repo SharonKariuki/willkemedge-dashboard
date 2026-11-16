@@ -221,6 +221,20 @@ describe("UsersPage, signed in as the owner", () => {
     });
   });
 
+  it("says when the invite is saved but its email didn't send", async () => {
+    const toast = (await import("react-hot-toast")).default;
+    vi.mocked(toast.success).mockClear();
+    vi.mocked(toast.error).mockClear();
+    mutate.mockResolvedValueOnce({ email_error: "the mail server refused the sign-in (SMTPAuthenticationError: 535)" });
+    renderPage();
+    await userEvent.click(screen.getByRole("button", { name: /Invite someone/ }));
+    const dialog = screen.getByRole("dialog");
+    await userEvent.type(within(dialog).getByLabelText(/Email/), "mary@example.com");
+    await userEvent.click(within(dialog).getByRole("button", { name: /Send invite/ }));
+    expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/saved, but the email didn't send: the mail server refused/), expect.anything());
+    expect(toast.success).not.toHaveBeenCalledWith("Invite sent to mary@example.com");
+  });
+
   it("opens the invite straight away from the quick actions link", () => {
     renderPage("/users?invite=1");
     expect(within(screen.getByRole("dialog")).getByText("Invite someone")).toBeInTheDocument();
