@@ -117,8 +117,15 @@ def on_payment_deleted(sender, instance, **kwargs):
 
 @receiver(post_save, sender="expenses.Expense")
 def on_expense_saved(sender, instance, created, **kwargs):
-    """Post on create; re-post on edit. Skip if no GL account is mapped."""
+    """Post on create; re-post on edit. Skip if no GL account is mapped.
+
+    A voided expense is skipped, like a voided payment: its entry stays as it
+    was and ``expenses.voiding`` posts the reversal.
+    """
     from apps.ledger.posting import post_expense
+
+    if getattr(instance, "voided_at", None):
+        return
 
     if not (instance.category_id and instance.category.account_id):
         logger.warning(
@@ -150,8 +157,11 @@ def on_expense_deleted(sender, instance, **kwargs):
 
 @receiver(post_save, sender="expenses.ManualIncome")
 def on_manual_income_saved(sender, instance, created, **kwargs):
-    """Post non-tenant income (e.g. farm produce); re-post on edit."""
+    """Post non-tenant income (e.g. farm produce); re-post on edit. Voided: skipped."""
     from .posting import post_manual_income
+
+    if getattr(instance, "voided_at", None):
+        return
 
     _safe_post(
         source_type="manual_income", source_id=instance.pk, kind="normal", operation="post",

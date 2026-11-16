@@ -84,14 +84,14 @@ class TestFarmIncome:
         assert resp.status_code == 400
         assert "account" in resp.json()
 
-    def test_deleting_income_reverses_the_ledger_entry(self, client, farm, income_account):
+    def test_voiding_income_reverses_the_ledger_entry(self, client, farm, income_account):
         resp = client.post("/api/manual-income/", {
             "date": "2026-06-10", "building": farm.id, "account": income_account.id,
             "amount": "45000.00", "description": "Maize sale",
             "period_month": 6, "period_year": 2026,
         }, format="json")
         iid = resp.json()["id"]
-        client.delete(f"/api/manual-income/{iid}/")
+        client.post(f"/api/manual-income/{iid}/void/", {"reason": "Entered twice"}, format="json")
         assert JournalEntry.objects.filter(
             source_type="manual_income", source_id=iid, kind="reversal"
         ).exists()

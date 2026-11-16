@@ -6,6 +6,7 @@ ExpenseCategory: reusable tag the user picks when recording an expense;
     each category maps to one expense Account so the P&L groups by GL code.
 Expense: an immutable financial record of money spent.
 """
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
 
@@ -74,8 +75,31 @@ class ExpenseCategory(models.Model):
         return self.name
 
 
-class Expense(models.Model):
-    """An immutable record of money spent on property operations."""
+class Voidable(models.Model):
+    """Voided, not deleted: a mistake stays on record, struck through, with who
+    voided it, when and why, and drops out of every total. The ledger keeps the
+    original entry and adds its mirror-image reversal (see ``voiding.py``)."""
+
+    voided_at = models.DateTimeField(null=True, blank=True)
+    voided_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    void_reason = models.CharField(max_length=255, blank=True)
+
+    class Meta:
+        abstract = True
+
+    @property
+    def is_void(self) -> bool:
+        return self.voided_at is not None
+
+
+class Expense(Voidable):
+    """A record of money spent on property operations. Voided, never deleted."""
 
     date = models.DateField(help_text="Date the expense was incurred.")
     building = models.ForeignKey(
@@ -190,7 +214,7 @@ class Expense(models.Model):
         return f"{self.category.name} — KES {self.amount} ({self.period_month}/{self.period_year})"
 
 
-class ManualIncome(models.Model):
+class ManualIncome(Voidable):
     """Non-tenant income recorded by hand — e.g. farm produce sales.
 
     Rent flows through Payment (which requires a tenant + unit). Income from
