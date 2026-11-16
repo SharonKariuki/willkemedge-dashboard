@@ -35,7 +35,9 @@ import {
   type NotificationTemplate,
   type SendNotificationPayload,
 } from "@/hooks/useNotifications";
+import { useAuth } from "@/hooks/useAuth";
 import { useTenants } from "@/hooks/useTenants";
+import { CAP, can } from "@/lib/access";
 import { getErrorMessage } from "@/lib/apiError";
 import { cn } from "@/lib/cn";
 
@@ -129,6 +131,8 @@ function SmartInsertDropdown({ onInsert }: { onInsert: (value: string) => void }
 }
 
 export default function NotificationsPage() {
+  const { user } = useAuth();
+  const canSend = can(user, CAP.SEND_MESSAGES);
   const { data: templates, isLoading: templatesLoading } = useNotificationTemplates();
   const { data: tenants, isLoading: tenantsLoading } = useTenants({ status: "active" });
   const { data: history, isLoading: historyLoading, isError: historyError, refetch: refetchHistory } = useNotifications();
@@ -469,10 +473,14 @@ export default function NotificationsPage() {
             </span>{" "}
             via <span className="font-semibold text-ink-900">{channel === "both" ? "SMS + Email" : channel.toUpperCase()}</span>.
           </p>
-          <Button onClick={submit} loading={sendNotification.isPending}>
-            <Send className="h-4 w-4" />
-            Send notification
-          </Button>
+          {canSend ? (
+            <Button onClick={submit} loading={sendNotification.isPending}>
+              <Send className="h-4 w-4" />
+              Send notification
+            </Button>
+          ) : (
+            <span className="text-xs text-ink-500">Sending needs permission to send messages.</span>
+          )}
         </div>
       </Card>
 
