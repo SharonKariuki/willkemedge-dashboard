@@ -24,7 +24,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import AuditLog, User
-from .permissions import IsOwner
+from .permissions import CanViewActivity
 
 DEFAULT_LIMIT = 100
 MAX_LIMIT = 200
@@ -61,7 +61,7 @@ def _int(value: str | None, name: str) -> int | None:
 
 
 class ActivityLogView(APIView):
-    permission_classes = [IsOwner]
+    permission_classes = [CanViewActivity]
 
     def get(self, request):
         p = request.query_params

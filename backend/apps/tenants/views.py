@@ -61,6 +61,31 @@ def render_to_pdf(template_src, context_dict=None):
 
 
 
+#: Terms on the tenant record that set what the tenant is billed or what the
+#: books hold for them. Managing a tenancy (contacts, notice, KYC) is a property
+#: job; changing these is recording money, so it needs both.
+MONEY_TERMS = (
+    "monthly_rent", "deposit_paid", "agreed_deposit", "is_billable",
+    "billing_frequency", "vat_exempt", "first_rent_month",
+)
+
+
+def _changed_money_terms(serializer) -> list[str]:
+    """The money terms this edit actually changes - the form resends them all."""
+    instance, data = serializer.instance, serializer.validated_data
+    return [f for f in MONEY_TERMS if f in data and data[f] != getattr(instance, f)]
+
+
+def _require_money(user, fields) -> None:
+    from rest_framework.exceptions import PermissionDenied
+
+    if fields and not access.has_capability(user, access.Cap.RECORD_MONEY):
+        raise PermissionDenied(
+            "Changing what a tenant is billed or holds on deposit needs permission to record money "
+            f"({', '.join(fields)})."
+        )
+
+
 class TenantViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
@@ -206,6 +231,9 @@ class TenantViewSet(viewsets.ModelViewSet):
 
     def _register(self, serializer):
         data = serializer.validated_data
+        # A non-zero deposit is booked to the ledger as it is registered.
+        if Decimal(str(data.get("deposit_paid") or 0)) != 0:
+            _require_money(self.request.user, ["deposit_paid"])
         tenant = serializer.save()
         move_in_tenant(tenant)
         record_initial_deposit(
@@ -227,6 +255,7 @@ class TenantViewSet(viewsets.ModelViewSet):
         """
         from rest_framework.exceptions import ValidationError
 
+        _require_money(self.request.user, _changed_money_terms(serializer))
         before = serializer.instance.deposit_paid
         after = serializer.validated_data.get("deposit_paid", before)
         with transaction.atomic():

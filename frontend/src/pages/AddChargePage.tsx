@@ -29,6 +29,7 @@ import { type ChargeTypeOption, useAddCharge, useChargeOptions } from "@/hooks/u
 import { useCreditPosition } from "@/hooks/useCredits";
 import { useTenant } from "@/hooks/useTenants";
 import type { ChargeTypeValue } from "@/hooks/useWaterReadings";
+import { CAP, can } from "@/lib/access";
 import { getErrorMessage } from "@/lib/apiError";
 import { toDayFirst, todayIso } from "@/lib/dates";
 import { formatBalanceKES } from "@/lib/money";
@@ -98,7 +99,7 @@ export default function AddChargePage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { user } = useAuth();
-  const isOwner = Boolean(user?.can_forgive_money);
+  const isOwner = can(user, CAP.FORGIVE_MONEY);
   const { data: tenant, isLoading: tenantLoading } = useTenant(id ?? null);
   const { data: position, isLoading: positionLoading } = useCreditPosition(isOwner ? id ?? null : null);
   const { data: options, isLoading: optionsLoading } = useChargeOptions(isOwner);

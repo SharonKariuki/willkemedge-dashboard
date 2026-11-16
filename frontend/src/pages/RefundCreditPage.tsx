@@ -21,6 +21,7 @@ import { Field, inputCls } from "@/features/tenants/shared";
 import { useAuth } from "@/hooks/useAuth";
 import { type Refund, useCreateRefund, useCreditPosition, useTenantCredits } from "@/hooks/useCredits";
 import { useTenant } from "@/hooks/useTenants";
+import { CAP, can } from "@/lib/access";
 import { getErrorMessage } from "@/lib/apiError";
 import { todayIso } from "@/lib/dates";
 import { formatBalanceKES } from "@/lib/money";
@@ -91,7 +92,7 @@ export default function RefundCreditPage() {
     }
   }
 
-  if (!user?.can_forgive_money) {
+  if (!can(user, CAP.FORGIVE_MONEY)) {
     return (
       <ErrorState
         title="Only the owner can refund a credit."

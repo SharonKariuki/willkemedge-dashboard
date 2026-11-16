@@ -10,6 +10,7 @@ import {
   Badge, Button, Card, DatePicker, EmptyState, ErrorState,
   PageHeader, Skeleton, Table, TBody, TD, TH, THead, TR,
 } from "@/components/ui";
+import { useAuth } from "@/hooks/useAuth";
 import { useBuildings } from "@/hooks/useBuildings";
 import { useOpenFromLink } from "@/hooks/useOpenFromLink";
 import {
@@ -17,6 +18,7 @@ import {
   useDeleteExpense, useExpenseCategories, useExpenses,
 } from "@/hooks/useExpenses";
 import { useUnits } from "@/hooks/useUnits";
+import { CAP, can } from "@/lib/access";
 import { getErrorMessage } from "@/lib/apiError";
 import { cn } from "@/lib/cn";
 import { toDayFirst } from "@/lib/dates";
@@ -82,6 +84,9 @@ export default function ExpensesPage() {
   const [filterUnit, setFilterUnit] = useState<"" | "none" | string>("");
   const [showForm, setShowForm] = useState(false);
   useOpenFromLink(() => setShowForm(true));
+  // Recording or deleting an expense posts to the books; reading them doesn't.
+  const { user } = useAuth();
+  const canRecord = can(user, CAP.RECORD_MONEY);
 
   const buildingParam: number | "none" | null =
     filterBuilding === "" ? null : filterBuilding === "none" ? "none" : Number(filterBuilding);
@@ -153,7 +158,7 @@ export default function ExpensesPage() {
         title="Expenses & Accounting"
         description="Record operating costs and access your full accounting suite."
         actions={
-          mainTab === "expenses" ? (
+          mainTab === "expenses" && canRecord ? (
             <Button onClick={() => setShowForm((v) => !v)}>
               <PlusCircle className="h-4 w-4" />
               {showForm ? "Cancel" : "Record Expense"}
@@ -257,7 +262,7 @@ export default function ExpensesPage() {
       </Card>
 
       {/* Expense form */}
-      {showForm && (
+      {showForm && canRecord && (
         <Card variant="glass" padding="md" className="animate-fade-up">
           <p className="mb-5 font-display text-lg font-semibold text-ink-900">Record expense</p>
           <form onSubmit={form.handleSubmit(onSubmitExpense)} className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -398,6 +403,7 @@ export default function ExpensesPage() {
                   </TD>
                   <TD className="font-mono text-[11px] text-ink-400">{e.reference || "—"}</TD>
                   <TD>
+                    {canRecord && (
                     <button
                       type="button"
                       onClick={() => { if (window.confirm("Delete this expense?")) deleteExpense.mutate(e.id); }}
@@ -406,6 +412,7 @@ export default function ExpensesPage() {
                     >
                       <Trash2 className="h-4 w-4" />
                     </button>
+                    )}
                   </TD>
                 </TR>
               ))}

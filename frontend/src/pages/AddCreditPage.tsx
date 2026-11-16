@@ -24,6 +24,7 @@ import { Field, inputCls } from "@/features/tenants/shared";
 import { useAuth } from "@/hooks/useAuth";
 import { type CreditReasonValue, useAddCredit, useCreditPosition } from "@/hooks/useCredits";
 import { useTenant } from "@/hooks/useTenants";
+import { CAP, can } from "@/lib/access";
 import { getErrorMessage } from "@/lib/apiError";
 import { toDayFirst, todayIso } from "@/lib/dates";
 import { formatBalanceKES } from "@/lib/money";
@@ -123,7 +124,7 @@ export default function AddCreditPage() {
     }
   }
 
-  if (!user?.can_forgive_money) {
+  if (!can(user, CAP.FORGIVE_MONEY)) {
     return (
       <ErrorState
         title="Only the owner can add a credit."
