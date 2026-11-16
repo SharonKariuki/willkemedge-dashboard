@@ -27,6 +27,7 @@ from .serializers import (
     TenantListSerializer,
     live_payments,
     rent_roll_balances,
+    sees_money,
 )
 from .services import (
     IDENTITY_FIELDS,
@@ -107,7 +108,13 @@ class TenantViewSet(viewsets.ModelViewSet):
         if kyc:
             qs = qs.filter(kyc_status=kyc)
 
-        payment_status = self.request.query_params.get("payment_status")
+        # Filtering by who owes says who owes, balance or not - so it's for
+        # those who may see the books; anyone else gets the list unfiltered.
+        payment_status = (
+            self.request.query_params.get("payment_status")
+            if access.has_capability(self.request.user, access.Cap.VIEW_FINANCE)
+            else None
+        )
         if payment_status == "in_arrears":
             qs = qs.filter(outstanding_balance__gt=0)
         elif payment_status == "paid":
@@ -133,7 +140,8 @@ class TenantViewSet(viewsets.ModelViewSet):
         here keeps the list at three queries however long it gets.
         """
         context = super().get_serializer_context()
-        if self.action == "list":
+        # Nobody without the books is shown a balance, so don't price one.
+        if self.action == "list" and sees_money(context):
             page = getattr(self, "_page_for_balances", None)
             if page is not None:
                 context["rent_roll_balances"] = rent_roll_balances(page)

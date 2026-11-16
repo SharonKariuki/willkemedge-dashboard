@@ -15,6 +15,7 @@ import {
 } from "@/components/ui";
 import { useActivity, type ActivityFilters } from "@/hooks/useActivity";
 import { useAuth } from "@/hooks/useAuth";
+import { CAP, can } from "@/lib/access";
 import {
   SOURCE_LABELS,
   changedFields,
@@ -140,7 +141,8 @@ export default function ActivityPage() {
     return () => window.clearTimeout(t);
   }, [search]);
 
-  const isOwner = Boolean(user?.can_forgive_money);
+  // The owner, the superadmin and an auditor - or anyone given the activity log.
+  const isOwner = can(user, CAP.VIEW_ACTIVITY);
   const { data, isLoading, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } =
     useActivity(filters, isOwner);
 
@@ -162,8 +164,8 @@ export default function ActivityPage() {
         <Card>
           <EmptyState
             icon={<Lock className="h-5 w-5" />}
-            title="Only the director can see the activity log."
-            description="It records what every member of staff does in the system, so it is kept to the owner's account."
+            title="Your access doesn't include the activity log."
+            description="It records what every member of staff does in the system, so it's kept to the owner, the superadmin and auditors."
           />
         </Card>
       </div>
