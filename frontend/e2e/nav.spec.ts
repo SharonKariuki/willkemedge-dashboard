@@ -21,7 +21,7 @@ const desktopOnly = (name: string) => test.skip(name !== "chromium", "the sideba
 
 /** Signs in as the owner: the only role that sees the Activity Log. */
 async function asOwner(page: Page) {
-  const owner = { id: 1, email: "owner@wilkem.test", username: "owner", can_forgive_money: true };
+  const owner = { id: 1, email: "owner@wilkem.test", username: "owner", capabilities: ["view_finance","record_money","forgive_money","view_property","manage_property","record_water","log_maintenance","send_messages","view_activity","manage_users"] };
   await page.route("**/api/auth/me**", (r) =>
     r.fulfill({ contentType: "application/json", body: JSON.stringify(owner) })
   );

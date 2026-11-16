@@ -25,12 +25,6 @@ export interface StoredUser {
   access_expires_on?: string | null;
   /** The superadmin (break-glass) account. */
   is_superuser?: boolean;
-  /** May invite people, change roles and switch accounts off. Owner and superadmin. */
-  can_manage_users?: boolean;
-  /** May record receipts. Owner and accountant. */
-  can_record_money?: boolean;
-  /** May waive arrears or void a payment. Owner only. */
-  can_forgive_money?: boolean;
 }
 
 export const authStorage = {
