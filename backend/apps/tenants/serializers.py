@@ -148,7 +148,44 @@ class TenantDocumentSerializer(serializers.ModelSerializer):
         return bool(obj.file) and obj.file.storage.exists(obj.file.name)
 
 
-class TenantListSerializer(serializers.ModelSerializer):
+#: What a tenant owes, has paid and holds on deposit. The property side
+#: (who lives where, rent, contacts, KYC) is for anyone who sees properties;
+#: this is for those who may see the books - not a caretaker.
+MONEY_FIELDS = (
+    "balance", "payment_status", "deposit_paid", "deposit_months", "expected_deposit",
+    "deposit_shortfall", "agreed_deposit", "deposit_is_agreed", "deposit_refund_percentage",
+    "deposit_refund_amount", "total_paid", "total_arrears",
+)
+
+
+def sees_money(context) -> bool:
+    """Whether the request behind this serializer may see the books.
+
+    No request (a management command, an export built in code) means a trusted
+    caller, so nothing is hidden.
+    """
+    from apps.accounts import access
+
+    request = context.get("request")
+    if request is None or not getattr(request, "user", None):
+        return True
+    return access.has_capability(request.user, access.Cap.VIEW_FINANCE)
+
+
+class HidesMoneyMixin:
+    """Leaves the money fields off - not merely blanked, and never computed -
+    for someone without the books. The API's access policy already keeps them
+    off the payment pages; this closes the same door on the tenant record."""
+
+    def get_fields(self):
+        fields = super().get_fields()
+        if not sees_money(self.context):
+            for name in MONEY_FIELDS:
+                fields.pop(name, None)
+        return fields
+
+
+class TenantListSerializer(HidesMoneyMixin, serializers.ModelSerializer):
     full_name = serializers.CharField(read_only=True)
     unit_label = serializers.CharField(source="unit.label", read_only=True)
     building_name = serializers.CharField(source="unit.building.name", read_only=True)
@@ -192,7 +229,7 @@ class TenantListSerializer(serializers.ModelSerializer):
         return "in_arrears" if self._outstanding(obj) > 0 else "paid"
 
 
-class TenantDetailSerializer(serializers.ModelSerializer):
+class TenantDetailSerializer(HidesMoneyMixin, serializers.ModelSerializer):
     full_name = serializers.CharField(read_only=True)
     unit_label = serializers.CharField(source="unit.label", read_only=True)
     building_name = serializers.CharField(source="unit.building.name", read_only=True)

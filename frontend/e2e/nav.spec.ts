@@ -28,9 +28,22 @@ async function asOwner(page: Page) {
   await page.addInitScript((u) => localStorage.setItem("wk_user", JSON.stringify(u)), owner);
 }
 
+/** Signs in as a read-only viewer: every page in the menu, but not the Activity Log. */
+async function asViewer(page: Page) {
+  const viewer = {
+    id: 2, email: "viewer@wilkem.test", username: "viewer", role: "viewer",
+    capabilities: ["view_finance", "view_property"],
+  };
+  await page.route("**/api/auth/me**", (r) =>
+    r.fulfill({ contentType: "application/json", body: JSON.stringify(viewer) })
+  );
+  await page.addInitScript((u) => localStorage.setItem("wk_user", JSON.stringify(u)), viewer);
+}
+
 test.beforeEach(async ({ page }) => {
   await mockApi(page);
   await seedAuth(page);
+  await asViewer(page);
 });
 
 test("the phone drawer reaches every page and closes once one is chosen", async ({ page }) => {
@@ -49,7 +62,7 @@ test("the phone drawer reaches every page and closes once one is chosen", async 
   for (const href of [...PAGES, ...TAB_LINKS]) {
     await expect(drawer.locator(`a[href="${href}"]`), `${href} missing from the drawer`).toHaveCount(1);
   }
-  // Not the owner: no Activity Log.
+  // A viewer: no Activity Log.
   await expect(drawer.locator('a[href="/activity"]')).toHaveCount(0);
 
   await drawer.getByRole("link", { name: "Tenant Statements" }).click();

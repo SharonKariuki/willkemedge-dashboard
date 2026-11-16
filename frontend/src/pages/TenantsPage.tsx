@@ -25,10 +25,12 @@ import { FirstRentMonthField } from "@/features/tenants/FirstRentMonthField";
 import { optionalEmail } from "@/features/tenants/email";
 import { firstRentMonthForApi } from "@/features/tenants/firstRentMonth";
 import { EmailStatementsModal, Field, inputCls, KYC_TONE, RemindModal } from "@/features/tenants/shared";
+import { useAuth } from "@/hooks/useAuth";
 import { useBuildings } from "@/hooks/useBuildings";
 import { useOpenFromLink } from "@/hooks/useOpenFromLink";
 import { useCreateTenant, useTenants } from "@/hooks/useTenants";
 import { useUnits } from "@/hooks/useUnits";
+import { CAP, can } from "@/lib/access";
 import { getErrorMessage } from "@/lib/apiError";
 import { cn } from "@/lib/cn";
 import { toDayFirst, todayIso } from "@/lib/dates";
@@ -330,6 +332,12 @@ function FilterSelect({
 export default function TenantsPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  // A caretaker sees the roster for their buildings, not what anyone owes:
+  // the API leaves the balances off, so the columns and tools for them go too.
+  const { user } = useAuth();
+  const seesMoney = can(user, CAP.VIEW_FINANCE);
+  const canMessage = can(user, CAP.SEND_MESSAGES);
+  const canRegister = can(user, CAP.MANAGE_PROPERTY);
   const [statusFilter, setStatusFilter] = useState("");
   const [kycFilter, setKycFilter] = useState("");
   const [buildingFilter, setBuildingFilter] = useState<number | "">("");
@@ -447,23 +455,27 @@ export default function TenantsPage() {
           description={`${activeCount} active · ${tenants?.length ?? 0} total on file${pendingKycCount > 0 ? ` · ${pendingKycCount} pending KYC` : ""}.`}
           actions={
             <div className="flex items-center gap-2">
-              <Button
-                variant="glass"
-                onClick={handleExport}
-                disabled={exporting || !tenants?.length}
-              >
-                <Download className="h-4 w-4" />
-                {exporting ? "Exporting…" : "Export CSV"}
-              </Button>
-              <Button onClick={() => setShowForm(!showForm)}>
-                {showForm ? <X className="h-4 w-4" /> : <UserPlus className="h-4 w-4" />}
-                {showForm ? "Cancel" : "Register Tenant"}
-              </Button>
+              {seesMoney && (
+                <Button
+                  variant="glass"
+                  onClick={handleExport}
+                  disabled={exporting || !tenants?.length}
+                >
+                  <Download className="h-4 w-4" />
+                  {exporting ? "Exporting…" : "Export CSV"}
+                </Button>
+              )}
+              {canRegister && (
+                <Button onClick={() => setShowForm(!showForm)}>
+                  {showForm ? <X className="h-4 w-4" /> : <UserPlus className="h-4 w-4" />}
+                  {showForm ? "Cancel" : "Register Tenant"}
+                </Button>
+              )}
             </div>
           }
         />
 
-        {showForm && (
+        {showForm && canRegister && (
           <Card variant="glass" padding="md" className="animate-fade-up">
             <p className="mb-4 font-display text-lg font-semibold text-ink-900">New tenant</p>
             <CreateTenantForm onClose={() => setShowForm(false)} />
@@ -494,12 +506,14 @@ export default function TenantsPage() {
               onChange={setStatusFilter}
               options={STATUSES}
             />
-            <FilterSelect
-              label="Filter by payment status"
-              value={payFilter}
-              onChange={setPayFilter}
-              options={PAY_FILTERS}
-            />
+            {seesMoney && (
+              <FilterSelect
+                label="Filter by payment status"
+                value={payFilter}
+                onChange={setPayFilter}
+                options={PAY_FILTERS}
+              />
+            )}
             <FilterSelect
               label="Filter by KYC status"
               value={kycFilter}
@@ -550,6 +564,7 @@ export default function TenantsPage() {
               <Table minWidth={1180}>
                 <THead>
                   <TR>
+                    {canMessage && (
                     <TH className="w-10">
                       <input
                         type="checkbox"
@@ -563,12 +578,13 @@ export default function TenantsPage() {
                         className="h-4 w-4 accent-sage-500"
                       />
                     </TH>
+                    )}
                     <TH>Tenant</TH>
                     <TH>Building</TH>
                     <TH>Unit</TH>
                     <TH>Phone</TH>
                     <TH className="text-right">Rent (KES)</TH>
-                    <TH className="text-right">Balance (KES)</TH>
+                    {seesMoney && <TH className="text-right">Balance (KES)</TH>}
                     <TH>Move-in</TH>
                     <TH>Status</TH>
                     <TH>KYC</TH>
@@ -591,6 +607,7 @@ export default function TenantsPage() {
                         }
                       }}
                     >
+                      {canMessage && (
                       <TD onClick={(e) => e.stopPropagation()}>
                         <input
                           type="checkbox"
@@ -602,6 +619,7 @@ export default function TenantsPage() {
                           className="h-4 w-4 accent-sage-500 disabled:cursor-not-allowed disabled:opacity-40"
                         />
                       </TD>
+                      )}
                       <TD>
                         {/* w-max: a flex box reports a smaller min-content width
                             than its items need, so the column is sized too
@@ -620,11 +638,13 @@ export default function TenantsPage() {
                       <TD>{t.unit_label}</TD>
                       <TD className="font-mono text-xs">{t.phone}</TD>
                       <TD className="text-right font-medium tabular-nums">{Number(t.monthly_rent).toLocaleString()}</TD>
-                      <TD className="text-right tabular-nums">
-                        <span className={cn("font-medium", Number(t.balance) > 0 ? "text-coral-600" : "text-sage-600")}>
-                          {formatBalance(t.balance)}
-                        </span>
-                      </TD>
+                      {seesMoney && (
+                        <TD className="text-right tabular-nums">
+                          <span className={cn("font-medium", Number(t.balance) > 0 ? "text-coral-600" : "text-sage-600")}>
+                            {formatBalance(t.balance)}
+                          </span>
+                        </TD>
+                      )}
                       <TD className="text-ink-500">{toDayFirst(t.move_in_date)}</TD>
                       <TD>
                         {/* Siblings in the cell's own inline flow, deliberately
@@ -648,7 +668,7 @@ export default function TenantsPage() {
                         <Badge tone={KYC_TONE[t.kyc_status]} withDot>{t.kyc_status_display}</Badge>
                       </TD>
                       <TD className="text-right">
-                        {t.payment_status === "in_arrears" && t.status !== "moved_out" ? (
+                        {canMessage && t.payment_status === "in_arrears" && t.status !== "moved_out" ? (
                           <Button
                             size="sm"
                             variant="glass"
@@ -689,16 +709,18 @@ export default function TenantsPage() {
                   }}
                 >
                   <div className="flex items-start gap-3">
-                    <input
-                      type="checkbox"
-                      checked={selectedIds.includes(t.id)}
-                      onClick={(e) => e.stopPropagation()}
-                      onChange={() => toggleTenant(t.id)}
-                      disabled={!t.email}
-                      aria-label={`Select ${t.full_name} for a statement email`}
-                      title={t.email ? `Email statement to ${t.email}` : NO_EMAIL_HINT}
-                      className="mt-1 h-4 w-4 shrink-0 accent-sage-500 disabled:cursor-not-allowed disabled:opacity-40"
-                    />
+                    {canMessage && (
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.includes(t.id)}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={() => toggleTenant(t.id)}
+                        disabled={!t.email}
+                        aria-label={`Select ${t.full_name} for a statement email`}
+                        title={t.email ? `Email statement to ${t.email}` : NO_EMAIL_HINT}
+                        className="mt-1 h-4 w-4 shrink-0 accent-sage-500 disabled:cursor-not-allowed disabled:opacity-40"
+                      />
+                    )}
                     <img src={avatarFor(t.full_name)} alt="" aria-hidden className="h-10 w-10 rounded-full" />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-start justify-between gap-2">
@@ -716,15 +738,17 @@ export default function TenantsPage() {
                         <a href={`tel:${t.phone}`} onClick={(e) => e.stopPropagation()} className="flex items-center gap-1 text-sage-600">
                           <Phone className="h-3 w-3" />{t.phone}
                         </a>
-                        <p className={cn("font-medium tabular-nums", t.payment_status === "in_arrears" ? "text-coral-600" : "text-ink-900")}>
-                          {t.payment_status === "in_arrears"
-                            ? `KES ${formatBalance(t.balance)} due`
-                            : Number(t.balance) < 0
-                              ? `KES ${formatBalance(t.balance)}`
-                              : "Paid up"}
-                        </p>
+                        {seesMoney && (
+                          <p className={cn("font-medium tabular-nums", t.payment_status === "in_arrears" ? "text-coral-600" : "text-ink-900")}>
+                            {t.payment_status === "in_arrears"
+                              ? `KES ${formatBalance(t.balance)} due`
+                              : Number(t.balance) < 0
+                                ? `KES ${formatBalance(t.balance)}`
+                                : "Paid up"}
+                          </p>
+                        )}
                       </div>
-                      {t.payment_status === "in_arrears" && t.status !== "moved_out" && (
+                      {canMessage && t.payment_status === "in_arrears" && t.status !== "moved_out" && (
                         <div className="mt-2 flex justify-end">
                           <Button
                             size="sm"

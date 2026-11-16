@@ -24,7 +24,7 @@ import {
 import SmsBalanceCard from "@/components/SmsBalanceCard";
 import { useAuth } from "@/hooks/useAuth";
 import { useViewPreferences } from "@/hooks/useViewPreferences";
-import { roleLabel, userName } from "@/lib/access";
+import { CAP, can, roleLabel, userName } from "@/lib/access";
 import { api } from "@/lib/api";
 import { getErrorMessage } from "@/lib/apiError";
 import { avatarFor } from "@/lib/images";
@@ -130,6 +130,8 @@ export default function SettingsPage() {
     }
   };
 
+  // The API sends everyone's sign-ins only to those allowed the activity log.
+  const seesEveryone = can(user, CAP.VIEW_ACTIVITY);
   const displayUserName = userName(user) || "User";
   const role = roleLabel(user);
 
@@ -363,7 +365,7 @@ export default function SettingsPage() {
         <CardHeader>
           <div className="flex items-center gap-2">
             <Shield className="h-4 w-4 text-coral-500" />
-            <CardTitle>Login activity</CardTitle>
+            <CardTitle>{seesEveryone ? "Login activity (everyone)" : "Your sign-ins"}</CardTitle>
           </div>
           {audit && <Badge tone="neutral">{audit.length} recent attempts</Badge>}
         </CardHeader>

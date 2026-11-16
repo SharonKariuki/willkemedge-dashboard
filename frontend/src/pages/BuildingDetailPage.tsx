@@ -15,8 +15,11 @@ import {
   Table, TBody, TD, TH, THead, TR,
 } from "@/components/ui";
 import { EmailStatementsModal } from "@/features/tenants/shared";
+import { BuildingCaretakers } from "@/features/users/BuildingCaretakers";
+import { useAuth } from "@/hooks/useAuth";
 import { useBuilding } from "@/hooks/useBuildings";
 import { useTenants } from "@/hooks/useTenants";
+import { CAP, can } from "@/lib/access";
 import { formatBalanceKES, formatKES } from "@/lib/money";
 
 const KES = formatKES;
@@ -27,6 +30,11 @@ export default function BuildingDetailPage() {
   const { data: building, isLoading, isError, refetch } = useBuilding(id ?? "");
   const { data: tenants } = useTenants(id ? { building: id } : undefined);
   const [sendingStatements, setSendingStatements] = useState(false);
+  const { user } = useAuth();
+  // Balances and statements are the books; a caretaker sees who lives where.
+  const seesMoney = can(user, CAP.VIEW_FINANCE);
+  const canMessage = can(user, CAP.SEND_MESSAGES);
+  const managesUsers = can(user, CAP.MANAGE_USERS);
 
   if (isLoading) {
     return <div className="space-y-4">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-20" />)}</div>;
@@ -78,6 +86,7 @@ export default function BuildingDetailPage() {
             {building.property_type_display ? ` · ${building.property_type_display}` : ""}
           </p>
         </div>
+        {canMessage && (
         <div className="text-right">
           <Button
             variant="outline"
@@ -99,7 +108,10 @@ export default function BuildingDetailPage() {
             </p>
           )}
         </div>
+        )}
       </div>
+
+      {managesUsers && <BuildingCaretakers buildingId={building.id} buildingName={building.name} />}
 
       {units.length === 0 ? (
         <EmptyState icon={<DoorOpen className="h-5 w-5" />} title="No units" description="This property has no units yet." />
@@ -109,7 +121,9 @@ export default function BuildingDetailPage() {
             <THead>
               <TR>
                 <TH>Unit</TH><TH>Type</TH><TH>Tenant</TH>
-                <TH className="text-right">Rent</TH><TH className="text-right">Balance</TH><TH>Status</TH>
+                <TH className="text-right">Rent</TH>
+                {seesMoney && <TH className="text-right">Balance</TH>}
+                <TH>Status</TH>
               </TR>
             </THead>
             <TBody>
@@ -145,13 +159,15 @@ export default function BuildingDetailPage() {
                     <TD className="text-content-muted">{u.classification_display}</TD>
                     <TD>{tenant ? tenant.full_name : <span className="text-content-muted">Vacant</span>}</TD>
                     <TD className="text-right tabular-nums">{KES(u.monthly_rent)}</TD>
-                    <TD className="text-right tabular-nums">
-                      {tenant ? (
-                        <span className={tenant.payment_status === "in_arrears" ? "text-orange-600" : "text-sage-600"}>
-                          {formatBalanceKES(tenant.balance)}
-                        </span>
-                      ) : "—"}
-                    </TD>
+                    {seesMoney && (
+                      <TD className="text-right tabular-nums">
+                        {tenant ? (
+                          <span className={tenant.payment_status === "in_arrears" ? "text-orange-600" : "text-sage-600"}>
+                            {formatBalanceKES(tenant.balance)}
+                          </span>
+                        ) : "—"}
+                      </TD>
+                    )}
                     <TD>
                       <Badge tone={u.status === "vacant" ? "neutral" : "sage"} withDot>{u.status_display}</Badge>
                     </TD>
