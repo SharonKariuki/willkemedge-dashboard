@@ -34,8 +34,8 @@ def _client(user=None):
 
 @pytest.fixture(autouse=True)
 def emails():
-    with mock.patch("apps.accounts.tasks.send_invite_email.delay") as task:
-        yield task
+    with mock.patch("apps.accounts.tasks.deliver_invite_email") as send:
+        yield send
 
 
 @pytest.fixture
@@ -71,7 +71,9 @@ def test_owner_invites_a_caretaker(owner, emails, django_capture_on_commit_callb
     assert not jane.is_active and not jane.has_usable_password()
     assert jane.invited_by == owner
     link = AccountInvite.objects.get(user=jane)
-    emails.assert_called_once_with(link.pk)
+    emails.assert_called_once()
+    assert emails.call_args.args[0].pk == link.pk
+    assert resp.data["email_error"] is None
     assert AuditLog.objects.filter(action="user.invite", object_id=jane.pk).exists()
 
 

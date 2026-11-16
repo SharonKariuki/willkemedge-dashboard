@@ -332,6 +332,18 @@ function StatusBadge({ user }: { user: ManagedUser }) {
   return <Badge tone="paid" withDot>Active</Badge>;
 }
 
+/** The invite is saved either way; say plainly when its email didn't go, and why. */
+function reportEmail(emailError: string | null | undefined, sent: string) {
+  if (!emailError) {
+    toast.success(sent);
+    return;
+  }
+  toast.error(
+    `The invite is saved, but the email didn't send: ${emailError}. Fix that, then use Resend invite.`,
+    { duration: 15000 },
+  );
+}
+
 /** Whether the signed-in person may change this account (mirrors the API's rule). */
 function editable(user: ManagedUser, meIsSuperuser: boolean): boolean {
   if (user.is_self) return false;
@@ -358,8 +370,10 @@ function InviteModal({
     e.preventDefault();
     if (problem) return;
     try {
-      await invite.mutateAsync({ email: email.trim(), first_name: firstName, last_name: lastName, ...accessPayload(draft) });
-      toast.success(`Invite sent to ${email.trim()}`);
+      const saved = await invite.mutateAsync({
+        email: email.trim(), first_name: firstName, last_name: lastName, ...accessPayload(draft),
+      });
+      reportEmail(saved.email_error, `Invite sent to ${email.trim()}`);
       onClose();
     } catch (err) {
       toast.error(getErrorMessage(err, "Could not send the invite"));
@@ -497,8 +511,8 @@ export default function UsersPage() {
 
   const run = async (user: ManagedUser, act: "resend" | "reactivate", done: string) => {
     try {
-      await action.mutateAsync({ id: user.id, action: act });
-      toast.success(done);
+      const saved = await action.mutateAsync({ id: user.id, action: act });
+      reportEmail(saved.email_error, done);
     } catch (err) {
       toast.error(getErrorMessage(err, "That didn't work"));
     }

@@ -116,10 +116,49 @@ def _revoke_sessions(user: User) -> None:
         BlacklistedToken.objects.get_or_create(token=outstanding)
 
 
-def _send(invite: AccountInvite) -> None:
-    from .tasks import send_invite_email
+def _mail_error(exc: Exception) -> str:
+    """Why an email didn't go, in words the owner can act on, with the detail kept."""
+    import smtplib
+    import socket
 
-    transaction.on_commit(lambda: send_invite_email.delay(invite.pk))
+    from .tasks import EmailNotSent
+
+    if isinstance(exc, EmailNotSent):
+        return str(exc)
+    if isinstance(exc, smtplib.SMTPAuthenticationError):
+        reason = "the mail server refused the sign-in - the email password set on the server may be wrong or revoked"
+    elif isinstance(exc, smtplib.SMTPRecipientsRefused):
+        reason = "the mail server refused this address"
+    elif isinstance(exc, smtplib.SMTPSenderRefused):
+        reason = "the mail server refused the sender address"
+    elif isinstance(exc, (socket.timeout, TimeoutError, ConnectionError, smtplib.SMTPServerDisconnected)):
+        reason = "the server couldn't reach the mail server"
+    else:
+        reason = "sending failed"
+    return f"{reason} ({type(exc).__name__}: {str(exc)[:200]})"
+
+
+def email_invite(user: User) -> str | None:
+    """Send the person their live invite link now.
+
+    Called after the invite is saved, outside its transaction: the invite
+    stands whether or not the email goes. Returns None when it was sent, or
+    why it wasn't - so the page can say so, and Resend can be tried again.
+    """
+    import logging
+
+    from .tasks import deliver_invite_email
+
+    link = (AccountInvite.objects.select_related("user", "created_by")
+            .filter(user=user, used=False).order_by("-created_at").first())
+    if link is None or not link.is_valid:
+        return None
+    try:
+        deliver_invite_email(link)
+    except Exception as exc:  # noqa: BLE001 - every failure is reported, none should 500
+        logging.getLogger(__name__).exception("Invite email to %s failed", user.email)
+        return _mail_error(exc)
+    return None
 
 
 @transaction.atomic
@@ -150,8 +189,7 @@ def invite(actor: User, *, email: str, role: str, first_name: str = "", last_nam
     user.set_unusable_password()
     user.save()
     _apply_assignment(user, role, buildings)
-    link = AccountInvite.issue(user, created_by=actor)
-    _send(link)
+    AccountInvite.issue(user, created_by=actor)  # emailed by email_invite once this commits
     summary = f"Invited {email} as {user.get_role_display()}"
     if added or removed:
         summary += f" ({_describe_changes(added, removed)})"
@@ -171,7 +209,6 @@ def resend(actor: User, target: User) -> AccountInvite:
     link = AccountInvite.issue(target, created_by=actor)
     target.invited_at = timezone.now()
     target.save(update_fields=["invited_at"])
-    _send(link)
     audit.record(
         action="user.invite_resend", object_type="user", object_id=target.pk, object_label=target.email,
         summary=f"Re-sent the invite to {target.email}", actor=actor, is_financial=False,
@@ -285,10 +322,9 @@ def reactivate(actor: User, target: User) -> User:
         # They never chose a password: back to "invited", with a fresh link.
         target.is_active = False
         target.save(update_fields=["is_active", "deactivated_at"])
-        link = AccountInvite.issue(target, created_by=actor)
+        AccountInvite.issue(target, created_by=actor)
         target.invited_at = timezone.now()
         target.save(update_fields=["invited_at"])
-        _send(link)
     else:
         target.is_active = True
         target.save(update_fields=["is_active", "deactivated_at"])
