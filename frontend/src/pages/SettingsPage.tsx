@@ -24,8 +24,9 @@ import {
 import SmsBalanceCard from "@/components/SmsBalanceCard";
 import { useAuth } from "@/hooks/useAuth";
 import { useViewPreferences } from "@/hooks/useViewPreferences";
+import { roleLabel, userName } from "@/lib/access";
 import { api } from "@/lib/api";
-import { displayName } from "@/lib/displayName";
+import { getErrorMessage } from "@/lib/apiError";
 import { avatarFor } from "@/lib/images";
 import { NAV_ITEMS } from "@/lib/nav";
 import type { StoredUser } from "@/lib/types";
@@ -72,7 +73,7 @@ function passwordErrorMessage(err: unknown): string {
 }
 
 export default function SettingsPage() {
-  const { user: rawUser, logout } = useAuth();
+  const { user: rawUser, logout, updateUser } = useAuth();
   const user = rawUser as StoredUser | null;
   const qc = useQueryClient();
   const { data: audit, isLoading, isError, refetch } = useLoginAudit();
@@ -84,8 +85,6 @@ export default function SettingsPage() {
   const [profileForm, setProfileForm] = useState({
     first_name: user?.first_name ?? "",
     last_name: user?.last_name ?? "",
-    email: user?.email ?? "",
-    phone: (user?.phone as string | undefined) ?? "",
   });
   const [pwForm, setPwForm] = useState({ current_password: "", new_password: "", confirm_password: "" });
   const [pwEditing, setPwEditing] = useState(false);
@@ -93,15 +92,17 @@ export default function SettingsPage() {
 
   const saveProfile = useMutation({
     mutationFn: async (data: typeof profileForm) => {
-      const res = await api.patch("/auth/me/", data);
+      const res = await api.patch<StoredUser>("/auth/me/", data);
       return res.data;
     },
-    onSuccess: () => {
+    onSuccess: (me) => {
       toast.success("Profile updated");
-      qc.invalidateQueries({ queryKey: ["me"] });
+      // The sidebar, top bar and this page all read the signed-in person.
+      updateUser(me);
+      qc.invalidateQueries({ queryKey: ["users"] });
       setEditing(false);
     },
-    onError: () => toast.error("Failed to update profile"),
+    onError: (err) => toast.error(getErrorMessage(err, "Failed to update profile")),
   });
 
   const handlePwSave = async () => {
@@ -129,9 +130,8 @@ export default function SettingsPage() {
     }
   };
 
-  const displayUserName = user?.first_name && user?.last_name
-    ? `${user.first_name} ${user.last_name}`
-    : displayName(user?.email?.split("@")[0]) || "User";
+  const displayUserName = userName(user) || "User";
+  const role = roleLabel(user);
 
   return (
     <div className="space-y-6">
@@ -155,17 +155,25 @@ export default function SettingsPage() {
             <span className="absolute bottom-0 right-0 h-5 w-5 rounded-full border-2 border-canvas bg-status-paid" />
           </div>
           <div className="min-w-0 flex-1">
-            <Badge tone="sage" withDot>Admin</Badge>
+            <Badge tone="sage" withDot>{role}</Badge>
             <p className="mt-2 font-display text-2xl font-semibold text-ink-900">
               {displayUserName}
             </p>
             <p className="flex items-center gap-1.5 text-sm text-ink-500">
               <Mail className="h-3.5 w-3.5" />
-              {displayName(user?.email)}
+              {user?.email}
             </p>
           </div>
           <div className="flex gap-2 mt-2 sm:mt-0">
-            <Button variant="outline" size="sm" onClick={() => setEditing(!editing)}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                // Start from what's saved now, not what was there when the page opened.
+                setProfileForm({ first_name: user?.first_name ?? "", last_name: user?.last_name ?? "" });
+                setEditing(!editing);
+              }}
+            >
               {editing ? <X className="h-4 w-4" /> : <Pencil className="h-4 w-4" />}
               {editing ? "Cancel" : "Edit profile"}
             </Button>
@@ -199,26 +207,11 @@ export default function SettingsPage() {
                   placeholder="Last name"
                 />
               </div>
-              <div>
-                <label className="mb-1 block text-xs font-medium uppercase tracking-wider text-gray-500">Email address</label>
-                <input
-                  type="email"
-                  className={inputCls}
-                  value={profileForm.email}
-                  onChange={(e) => setProfileForm((f) => ({ ...f, email: e.target.value }))}
-                  placeholder="Email"
-                />
-              </div>
-              <div>
-                <label className="mb-1 block text-xs font-medium uppercase tracking-wider text-gray-500">Phone number</label>
-                <input
-                  className={inputCls}
-                  value={profileForm.phone}
-                  onChange={(e) => setProfileForm((f) => ({ ...f, phone: e.target.value }))}
-                  placeholder="+254…"
-                />
-              </div>
             </div>
+            <p className="mt-3 text-xs text-gray-500">
+              You sign in with <span className="font-medium text-gray-700">{user?.email}</span>. To change it,
+              ask the superadmin - it's your login, so it isn't changed from here.
+            </p>
             <div className="mt-4 flex justify-end gap-2">
               <button
                 onClick={() => setEditing(false)}
@@ -255,15 +248,11 @@ export default function SettingsPage() {
             </div>
             <div className="flex items-center justify-between gap-3 rounded-md bg-white/40 p-3 dark:bg-white/5">
               <dt className="text-ink-500">Email</dt>
-              <dd className="truncate font-medium text-ink-900">{displayName(user?.email)}</dd>
-            </div>
-            <div className="flex items-center justify-between gap-3 rounded-md bg-white/40 p-3 dark:bg-white/5">
-              <dt className="text-ink-500">Username</dt>
-              <dd className="truncate font-medium text-ink-900">{displayName(user?.username)}</dd>
+              <dd className="truncate font-medium text-ink-900">{user?.email}</dd>
             </div>
             <div className="flex items-center justify-between gap-3 rounded-md bg-white/40 p-3 dark:bg-white/5">
               <dt className="text-ink-500">Role</dt>
-              <dd><Badge tone="sage">Administrator</Badge></dd>
+              <dd><Badge tone="sage">{role}</Badge></dd>
             </div>
           </dl>
         </Card>
@@ -423,7 +412,7 @@ export default function SettingsPage() {
                       </Badge>
                     )}
                   </TD>
-                  <TD>{displayName(a.email)}</TD>
+                  <TD>{a.email}</TD>
                   <TD className="font-mono text-[11px] text-ink-500">{a.ip_address || "—"}</TD>
                   <TD className="text-ink-500">{new Date(a.attempted_at).toLocaleString()}</TD>
                 </TR>
