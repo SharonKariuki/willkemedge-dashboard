@@ -6,7 +6,6 @@
  * enforces the same rules on every request whatever the browser shows.
  */
 import type { StoredUser } from "@/lib/authStorage";
-import { displayName } from "@/lib/displayName";
 
 const ROLE_NAMES: Record<string, string> = {
   owner: "Owner",
@@ -30,7 +29,7 @@ export function userName(user: StoredUser | null | undefined): string {
   const full = [user.first_name, user.last_name].map((s) => s?.trim()).filter(Boolean).join(" ");
   if (full) return full;
   if (user.is_superuser) return "Superadmin";
-  return displayName(user.email?.split("@")[0] ?? "") || roleLabel(user);
+  return user.email?.split("@")[0] || roleLabel(user);
 }
 
 export const CAP = {
