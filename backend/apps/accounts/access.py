@@ -168,6 +168,8 @@ RULES: list[tuple[re.Pattern, object, object]] = [(re.compile(p), r, w) for p, r
     (r"^payments/(coop|cron)/", None, None),
     # A tenant's money is financial even on the tenant record.
     (r"^tenants/[^/]+/(payment-history|statement-pdf)/", Cap.VIEW_FINANCE, Cap.VIEW_FINANCE),
+    # The roster export is a list of balances.
+    (r"^tenants/export/", Cap.VIEW_FINANCE, Cap.VIEW_FINANCE),
     (r"^tenants/([^/]+/)?email-statements?/", Cap.VIEW_FINANCE, Cap.SEND_MESSAGES),
     (r"^(buildings|units|tenants)/", Cap.VIEW_PROPERTY, Cap.MANAGE_PROPERTY),
     (r"^maintenance/", Cap.VIEW_PROPERTY, Cap.LOG_MAINTENANCE),

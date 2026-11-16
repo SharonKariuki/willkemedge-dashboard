@@ -202,3 +202,53 @@ def test_me_tells_the_browser_what_the_person_may_do(estate):
     me = _signed_in(_person(Role.CARETAKER, [donholm])).get("/api/auth/me/").data
     assert set(me["capabilities"]) == set(access.ROLE_CAPABILITIES["caretaker"])
     assert me["buildings"] == [{"id": donholm.pk, "name": "Donholm Estate"}]
+
+
+# ── what the books keep to themselves ────────────────────────────────────────
+
+def test_caretaker_sees_the_roster_but_no_balances_or_deposits(estate):
+    donholm, _, d_tenant = estate["D14"]
+    c = _signed_in(_person(Role.CARETAKER, [donholm]))
+
+    row = c.get("/api/tenants/").data
+    row = (row["results"] if isinstance(row, dict) else row)[0]
+    assert row["full_name"] and row["unit_label"] == "D14"
+    for money in ("balance", "payment_status", "deposit_paid"):
+        assert money not in row
+
+    detail = c.get(f"/api/tenants/{d_tenant.pk}/").data
+    for money in ("deposit_paid", "expected_deposit", "total_paid", "total_arrears", "payment_status"):
+        assert money not in detail
+    assert detail["monthly_rent"]
+
+
+def test_the_books_still_carry_balances(estate):
+    row = _signed_in(_person(Role.VIEWER)).get("/api/tenants/").data
+    row = (row["results"] if isinstance(row, dict) else row)[0]
+    assert "balance" in row and "payment_status" in row
+
+
+def test_caretaker_cannot_export_balances_or_filter_by_who_owes(estate):
+    donholm, _, _ = estate["D14"]
+    c = _signed_in(_person(Role.CARETAKER, [donholm]))
+    assert c.get("/api/tenants/export/").status_code == 403
+    # The filter is ignored rather than answered: the list is the same either way.
+    assert _ids(c.get("/api/tenants/?payment_status=in_arrears")) == _ids(c.get("/api/tenants/"))
+
+
+# ── sign-in history ──────────────────────────────────────────────────────────
+
+def test_sign_in_history_is_your_own_unless_you_may_read_the_activity_log(db):
+    from apps.accounts.models import LoginAttempt
+
+    viewer = _person(Role.VIEWER)
+    auditor = _person(Role.AUDITOR, expires=timezone.localdate() + dt.timedelta(days=30))
+    for email in (viewer.email, auditor.email, "osoro@example.com"):
+        LoginAttempt.objects.create(email=email, ip_address="10.0.0.1", user_agent="x", successful=True)
+
+    mine = _signed_in(viewer).get("/api/auth/login-audit/")
+    assert mine.status_code == 200
+    assert {a["email"] for a in mine.data} == {viewer.email}
+
+    everyone = _signed_in(auditor).get("/api/auth/login-audit/")
+    assert {a["email"] for a in everyone.data} == {viewer.email, auditor.email, "osoro@example.com"}
