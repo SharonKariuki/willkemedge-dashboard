@@ -8,6 +8,8 @@ import logging
 
 from celery import shared_task
 
+from apps.common.task_retry import retry_later
+
 logger = logging.getLogger(__name__)
 
 
@@ -43,7 +45,7 @@ def send_password_reset_email(self, user_id: int, token: str) -> None:
         send_email(user.email, "Reset your password — Dr. Osoro Dashboard", html)
         logger.info("Password reset email sent to %s", user.email)
     except Exception as exc:
-        raise self.retry(exc=exc, countdown=30 * (2 ** self.request.retries)) from exc
+        return retry_later(self, exc, 30 * (2 ** self.request.retries))
 
 
 class EmailNotSent(Exception):
@@ -110,4 +112,4 @@ def send_invite_email(self, invite_id: int) -> None:
     try:
         deliver_invite_email(invite)
     except Exception as exc:
-        raise self.retry(exc=exc, countdown=30 * (2 ** self.request.retries)) from exc
+        return retry_later(self, exc, 30 * (2 ** self.request.retries))

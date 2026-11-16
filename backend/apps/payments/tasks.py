@@ -26,6 +26,8 @@ from celery import shared_task
 from django.db import models
 from django.utils import timezone
 
+from apps.common.task_retry import retry_later
+
 from .billing_calendar import (
     billed_through,
     next_period,
@@ -116,7 +118,7 @@ def send_payment_confirmation(self, payment_id: int) -> None:
         _notify_tenant_payment(payment.tenant, payment.amount, ref, payment.payment_date)
     except Exception as exc:
         logger.warning("send_payment_confirmation retry %s: %s", self.request.retries, exc)
-        raise self.retry(exc=exc, countdown=60 * (2 ** self.request.retries)) from exc
+        return retry_later(self, exc, 60 * (2 ** self.request.retries))
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)
@@ -144,7 +146,7 @@ def send_deposit_receipt(self, tenant_id: int, amount: str, reference: str, paym
         _notify_tenant_payment(tenant, Decimal(str(amount)), reference, pay_date)
     except Exception as exc:
         logger.warning("send_deposit_receipt retry %s: %s", self.request.retries, exc)
-        raise self.retry(exc=exc, countdown=60 * (2 ** self.request.retries)) from exc
+        return retry_later(self, exc, 60 * (2 ** self.request.retries))
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=120)
@@ -216,7 +218,7 @@ def send_unmatched_credit_alert(self, event_id: int) -> None:
                 "Unmatched bank credit", email_body))
     except Exception as exc:
         logger.warning("send_unmatched_credit_alert retry %s: %s", self.request.retries, exc)
-        raise self.retry(exc=exc, countdown=120 * (2 ** self.request.retries)) from exc
+        return retry_later(self, exc, 120 * (2 ** self.request.retries))
 
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=300)
@@ -278,7 +280,7 @@ def send_daily_reconciliation(self, target_iso: str | None = None) -> None:
             send_sms(phone, sms)
     except Exception as exc:
         logger.warning("send_daily_reconciliation retry %s: %s", self.request.retries, exc)
-        raise self.retry(exc=exc, countdown=300 * (2 ** self.request.retries)) from exc
+        return retry_later(self, exc, 300 * (2 ** self.request.retries))
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=120)
@@ -342,7 +344,7 @@ def send_reversal_authorization_alert(self, event_id: int) -> None:
                 "Bank reversal — authorization required", email_body))
     except Exception as exc:
         logger.warning("send_reversal_authorization_alert retry %s: %s", self.request.retries, exc)
-        raise self.retry(exc=exc, countdown=120 * (2 ** self.request.retries)) from exc
+        return retry_later(self, exc, 120 * (2 ** self.request.retries))
 
 
 # ---------------------------------------------------------------------------
