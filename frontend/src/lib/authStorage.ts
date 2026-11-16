@@ -56,6 +56,10 @@ export const authStorage = {
     localStorage.setItem(REFRESH_KEY, refresh);
     localStorage.setItem(USER_KEY, JSON.stringify(user));
   },
+  /** Keep the stored copy in step when the person edits their own profile. */
+  setUser(user: StoredUser) {
+    localStorage.setItem(USER_KEY, JSON.stringify(user));
+  },
   /**
    * Store the result of a token refresh. The API rotates refresh tokens and
    * blacklists the one it was given, so a returned refresh token MUST replace

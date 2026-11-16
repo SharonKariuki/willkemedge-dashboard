@@ -178,6 +178,13 @@ class UpdateUserSerializer(serializers.Serializer):
     removed_capabilities = serializers.ListField(child=serializers.CharField(), required=False)
 
 
+class ProfileSerializer(serializers.Serializer):
+    """What a person may change about themselves from Settings."""
+
+    first_name = serializers.CharField(required=False, allow_blank=True, max_length=150)
+    last_name = serializers.CharField(required=False, allow_blank=True, max_length=150)
+
+
 class AcceptInviteSerializer(serializers.Serializer):
     token = serializers.CharField()
     new_password = serializers.CharField(write_only=True, min_length=12, trim_whitespace=False)

@@ -13,6 +13,7 @@ from .serializers import (
     LoginSerializer,
     LogoutSerializer,
     PasswordResetConfirmSerializer,
+    ProfileSerializer,
     UserSerializer,
 )
 from .services import (
@@ -175,6 +176,25 @@ class MeView(APIView):
 
     def get(self, request, *args, **kwargs):
         return Response(UserSerializer(request.user).data)
+
+    def patch(self, request, *args, **kwargs):
+        """Your own name. The sign-in email is not changed here: it is the
+        login identity, so it moves only through the superadmin."""
+        s = ProfileSerializer(data=request.data, partial=True)
+        s.is_valid(raise_exception=True)
+        user = request.user
+        old = {"first_name": user.first_name, "last_name": user.last_name}
+        for field, value in s.validated_data.items():
+            setattr(user, field, value.strip())
+        new = {"first_name": user.first_name, "last_name": user.last_name}
+        if new != old:
+            user.save(update_fields=list(s.validated_data))
+            audit.record(
+                action="user.profile_update", object_type="user", object_id=user.pk,
+                object_label=user.email, summary=f"Changed their name to {user.get_full_name() or '(none)'}",
+                actor=user, old_values=old, new_values=new, is_financial=False,
+            )
+        return Response(UserSerializer(user).data)
 
 
 RefreshView = TokenRefreshView
